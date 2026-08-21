@@ -8,6 +8,7 @@
 
 import type {
   Action,
+  Claimant,
   Collision,
   IndicatorSection,
   LedRequest,
@@ -38,7 +39,7 @@ export interface Row {
   /** The driver reports this section's channel as never confirmed against hardware. */
   unverified: boolean;
   /** Other rows reaching the same indicator pin. Named at the pin, where the clash physically is. */
-  sharedWith: string[];
+  sharedWith: Claimant[];
 }
 
 export interface Group {
@@ -62,17 +63,17 @@ export function requestFor(base: LedBase, action: Action): LedRequest {
 }
 
 /**
- * The label the backend uses for a section inside a collision, mapped back to a row label.
+ * Everyone else on this row's pin.
  *
- * `aiCollisions` names its claimants `payment`, `bag-tag left`, `semaphore green` — flat strings,
- * because at that layer there are no rows. Matching on the tail word rather than the whole string
- * keeps the two vocabularies from having to agree on formatting.
+ * Matched on the claimant's id, which is the same scheme rows are keyed by, so the marker rendered
+ * at the pin can navigate to the row it names. An earlier version matched the display label against
+ * the row's group and label, and silently found nothing for every claimant whose label was not just
+ * its section name — including `semaphore green`, the one collision the driver ships with.
  */
-function claims(collisions: Collision[], ...words: string[]): string[] {
-  const mine = words.join(" ");
+function claims(collisions: Collision[], key: string): Claimant[] {
   return collisions
-    .filter((collision) => collision.labels.some((label) => label === mine))
-    .flatMap((collision) => collision.labels.filter((label) => label !== mine));
+    .filter((collision) => collision.claimants.some((claimant) => claimant.id === key))
+    .flatMap((collision) => collision.claimants.filter((claimant) => claimant.id !== key));
 }
 
 export function groupsFor(vocabulary: Vocabulary): Group[] {
@@ -91,7 +92,7 @@ export function groupsFor(vocabulary: Vocabulary): Group[] {
         actions,
         base: { section },
         unverified: unverified.includes(section),
-        sharedWith: claims(collisions, section),
+        sharedWith: claims(collisions, `indicator:${section}`),
       })),
     },
     {
@@ -104,7 +105,7 @@ export function groupsFor(vocabulary: Vocabulary): Group[] {
         actions,
         base: { section: "bagTagPrinter", side },
         unverified: unverified.includes("bagTagPrinter"),
-        sharedWith: claims(collisions, "bag-tag", side),
+        sharedWith: claims(collisions, `bagTag:${side}`),
       })),
     },
     {
@@ -132,7 +133,7 @@ export function groupsFor(vocabulary: Vocabulary): Group[] {
         actions,
         base: { section: "semaphore", color },
         unverified: unverified.includes("semaphore"),
-        sharedWith: claims(collisions, "semaphore", color),
+        sharedWith: claims(collisions, `semaphore:${color}`),
       })),
     },
   ];
@@ -176,9 +177,17 @@ export const UNOBSERVED: Observation = { verdict: "untested", note: "" };
  * they cannot get back.
  */
 export function parseObservations(stored: string): Observations {
-  const raw = JSON.parse(stored) as Record<string, Partial<Observation>>;
+  let raw: unknown;
+  try {
+    raw = JSON.parse(stored);
+  }
+  catch {
+    return {};
+  }
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return {};
+
   const parsed: Observations = {};
-  for (const [key, value] of Object.entries(raw)) {
+  for (const [key, value] of Object.entries(raw as Record<string, Partial<Observation>>)) {
     if (!value || typeof value !== "object") continue;
     const known = VERDICTS.includes(value.verdict as Verdict);
     parsed[key] = {
@@ -196,10 +205,12 @@ export interface Tally {
 }
 
 export function tally(rows: Row[], observations: Observations): Tally[] {
-  return VERDICTS.map((verdict) => ({
-    verdict,
-    count: rows.filter((row) => (observations[row.key] ?? UNOBSERVED).verdict === verdict).length,
-  }));
+  const counted = new Map<Verdict, number>(VERDICTS.map((verdict) => [verdict, 0]));
+  for (const row of rows) {
+    const { verdict } = observations[row.key] ?? UNOBSERVED;
+    counted.set(verdict, (counted.get(verdict) ?? 0) + 1);
+  }
+  return VERDICTS.map((verdict) => ({ verdict, count: counted.get(verdict) ?? 0 }));
 }
 
 /**
@@ -217,10 +228,8 @@ export function evidenceMarkdown(
 ): string {
   const rows = groups.flatMap((group) => group.rows);
   const seen = (key: string): Observation => observations[key] ?? UNOBSERVED;
-  const labelOf = (key: string): string => {
-    const row = rows.find((candidate) => candidate.key === key);
-    return row ? `${row.group} / ${row.label}` : key;
-  };
+  const labels = new Map(rows.map((row) => [row.key, `${row.group} / ${row.label}`]));
+  const labelOf = (key: string): string => labels.get(key) ?? key;
   const cell = (text: string) => text.replaceAll("|", "\\|");
 
   const counts = tally(rows, observations);

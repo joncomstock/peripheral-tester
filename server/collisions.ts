@@ -20,31 +20,52 @@ export interface AiChannels {
   readonly semaphore: Readonly<Record<string, readonly number[]>>;
 }
 
+/**
+ * One section addressing a channel.
+ *
+ * `id` is the claimant's identity in the driver's own vocabulary — `kind:name`, where the name is
+ * whatever discriminates that kind (a section, a bag-tag side, a semaphore colour). It exists
+ * because the UI has to get from "who else is on this pin" back to the row for that section, and
+ * doing it by matching `label` meant two layers had to agree on formatting forever. They did not:
+ * `semaphore green` never matched the row it named, so the marker for the shipped default collision
+ * navigated nowhere.
+ *
+ * `label` is for reading. Never match on it.
+ */
+export interface Claimant {
+  readonly id: string;
+  readonly label: string;
+}
+
 export interface Collision {
   readonly channel: number;
-  /** Every section sharing the channel, e.g. `["payment", "semaphore green"]`. */
-  readonly labels: readonly string[];
+  /** Every section sharing the channel, in the order the map declares them. */
+  readonly claimants: readonly Claimant[];
 }
 
 export function aiCollisions(channels: AiChannels): Collision[] {
-  const byChannel = new Map<number, string[]>();
-  const add = (channel: number, label: string) => {
-    const labels = byChannel.get(channel);
-    if (labels) labels.push(label);
-    else byChannel.set(channel, [label]);
+  const byChannel = new Map<number, Claimant[]>();
+  const add = (channel: number, claimant: Claimant) => {
+    const claimants = byChannel.get(channel);
+    if (claimants) claimants.push(claimant);
+    else byChannel.set(channel, [claimant]);
   };
 
-  for (const [section, channel] of Object.entries(channels.indicators)) add(channel, section);
-  for (const [side, channel] of Object.entries(channels.bagTag)) add(channel, `bag-tag ${side}`);
+  for (const [section, channel] of Object.entries(channels.indicators)) {
+    add(channel, { id: `indicator:${section}`, label: section });
+  }
+  for (const [side, channel] of Object.entries(channels.bagTag)) {
+    add(channel, { id: `bagTag:${side}`, label: `bag-tag ${side}` });
+  }
   for (const [color, lamps] of Object.entries(channels.semaphore)) {
     // Semaphore yellow is red and green lit together, so it necessarily reuses both their channels.
     // Reporting that as a collision would bury the real ones in noise it can do nothing about.
     if (lamps.length > 1) continue;
-    for (const channel of lamps) add(channel, `semaphore ${color}`);
+    for (const channel of lamps) add(channel, { id: `semaphore:${color}`, label: `semaphore ${color}` });
   }
 
   return [...byChannel]
-    .filter(([, labels]) => labels.length > 1)
-    .map(([channel, labels]) => ({ channel, labels }))
+    .filter(([, claimants]) => claimants.length > 1)
+    .map(([channel, claimants]) => ({ channel, claimants }))
     .sort((a, b) => a.channel - b.channel);
 }

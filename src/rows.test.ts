@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Vocabulary } from "./api.ts";
-import { evidenceMarkdown, groupsFor, requestFor, tally } from "./rows.ts";
+import { evidenceMarkdown, groupsFor, parseObservations, requestFor, tally } from "./rows.ts";
 
 /** Shaped like a real `/api/vocabulary` payload, trimmed to a few rows per group. */
 const vocabulary: Vocabulary = {
@@ -15,7 +15,13 @@ const vocabulary: Vocabulary = {
   sides: [{ side: "left", channel: 8 }],
   stripColors: [{ color: "green", channel: 4 }, { color: "blue", channel: 2 }],
   semaphoreColors: [{ color: "green", channels: [1] }, { color: "yellow", channels: [6, 1] }],
-  collisions: [{ channel: 1, labels: ["payment", "semaphore green"] }],
+  collisions: [{
+    channel: 1,
+    claimants: [
+      { id: "indicator:payment", label: "payment" },
+      { id: "semaphore:green", label: "semaphore green" },
+    ],
+  }],
   unverified: ["payment", "cardReader"],
 };
 
@@ -48,8 +54,32 @@ describe("groupsFor", () => {
 
   it("names each side of a shared pin on both rows", () => {
     // The clash is stated at the pin rather than in a banner, so both ends have to carry it.
-    expect(row("indicator:payment").sharedWith).toEqual(["semaphore green"]);
-    expect(row("semaphore:green").sharedWith).toEqual(["payment"]);
+    expect(row("indicator:payment").sharedWith).toEqual([{ id: "semaphore:green", label: "semaphore green" }]);
+    expect(row("semaphore:green").sharedWith).toEqual([{ id: "indicator:payment", label: "payment" }]);
+  });
+
+  it("carries a claimant id that is an actual row key, for every kind of claimant", () => {
+    // The marker at the pin navigates by this id. Matching the display label against the row's
+    // group and label instead found nothing for `semaphore green` or `bag-tag left` — including the
+    // one collision the driver ships with — and the click silently did nothing.
+    const shared = {
+      ...vocabulary,
+      collisions: [{
+        channel: 1,
+        claimants: [
+          { id: "indicator:payment", label: "payment" },
+          { id: "bagTag:left", label: "bag-tag left" },
+          { id: "semaphore:green", label: "semaphore green" },
+        ],
+      }],
+    };
+    const keys = new Set(groupsFor(shared).flatMap((group) => group.rows).map((r) => r.key));
+    const named = groupsFor(shared)
+      .flatMap((group) => group.rows)
+      .flatMap((r) => r.sharedWith.map((claimant) => claimant.id));
+
+    expect(named.length).toBeGreaterThan(0);
+    for (const id of named) expect(keys.has(id)).toBe(true);
   });
 
   it("leaves a section off a shared pin unmarked", () => {
@@ -107,6 +137,50 @@ describe("tally", () => {
       { verdict: "unlit", count: 0 },
     ]);
   });
+});
+
+describe("parseObservations", () => {
+  it("keeps a record this build understands", () => {
+    const stored = '{"indicator:payment":{"verdict":"astray","insteadOf":"semaphore:green","note":"dim"}}';
+    expect(parseObservations(stored)).toEqual({
+      "indicator:payment": { verdict: "astray", insteadOf: "semaphore:green", note: "dim" },
+    });
+  });
+
+  it("resets a verdict from an older schema but keeps the operator's note", () => {
+    // v1 wrote "wrong-lamp". Reading it back put `undefined` in the exported record, because there
+    // is no label for it. The note is the part they cannot retype from memory, so it survives.
+    const stored = '{"indicator:payment":{"verdict":"wrong-lamp","note":"semaphore green lit"}}';
+    expect(parseObservations(stored)).toEqual({
+      "indicator:payment": { verdict: "untested", insteadOf: undefined, note: "semaphore green lit" },
+    });
+  });
+
+  it("fills in fields a stored record is missing", () => {
+    expect(parseObservations('{"strip:blue":{"verdict":"correct"}}')).toEqual({
+      "strip:blue": { verdict: "correct", insteadOf: undefined, note: "" },
+    });
+  });
+
+  it("drops entries that are not objects rather than trusting them", () => {
+    expect(parseObservations('{"a":null,"b":"nonsense","c":{"verdict":"correct","note":""}}')).toEqual({
+      "c": { verdict: "correct", insteadOf: undefined, note: "" },
+    });
+  });
+
+  it("refuses a note that is not a string", () => {
+    expect(parseObservations('{"a":{"verdict":"correct","note":42}}').a.note).toBe("");
+  });
+
+  it("survives a stored record that is not an object at all", () => {
+    // The caller guards the storage API; this guards its own input, because it is exported and
+    // reachable from anywhere.
+    expect(parseObservations("{not json")).toEqual({});
+    expect(parseObservations("null")).toEqual({});
+    expect(parseObservations('"a string"')).toEqual({});
+    expect(parseObservations("[1,2,3]")).toEqual({});
+  });
+
 });
 
 describe("evidenceMarkdown", () => {

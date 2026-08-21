@@ -9,7 +9,29 @@ const defaults = {
 };
 
 Deno.test("finds payment against semaphore green in the shipped defaults", () => {
-  assertEquals(aiCollisions(defaults), [{ channel: 1, labels: ["payment", "semaphore green"] }]);
+  assertEquals(aiCollisions(defaults), [{
+    channel: 1,
+    claimants: [
+      { id: "indicator:payment", label: "payment" },
+      { id: "semaphore:green", label: "semaphore green" },
+    ],
+  }]);
+});
+
+Deno.test("identifies each kind of claimant so the UI can find its row without matching text", () => {
+  // The ids are the driver's vocabulary, and the same scheme the tester's rows are keyed by. Reading
+  // "who else is on this pin" off the label instead is what broke navigation for semaphore and
+  // bag-tag claimants; these three shapes are the contract that replaced it.
+  const custom = {
+    indicators: { payment: 1 },
+    bagTag: { left: 1 },
+    semaphore: { green: [1] },
+  };
+  assertEquals(aiCollisions(custom)[0].claimants.map((claimant) => claimant.id), [
+    "indicator:payment",
+    "bagTag:left",
+    "semaphore:green",
+  ]);
 });
 
 Deno.test("the strip's own channels never collide with indicators", () => {
@@ -33,7 +55,19 @@ Deno.test("a corrected payment channel clears the collision", () => {
 Deno.test("a collision a custom config introduces is found too", () => {
   const custom = { ...defaults, bagTag: { left: 3, right: 9 } };
   assertEquals(aiCollisions(custom), [
-    { channel: 1, labels: ["payment", "semaphore green"] },
-    { channel: 3, labels: ["passportReader", "bag-tag left"] },
+    {
+      channel: 1,
+      claimants: [
+        { id: "indicator:payment", label: "payment" },
+        { id: "semaphore:green", label: "semaphore green" },
+      ],
+    },
+    {
+      channel: 3,
+      claimants: [
+        { id: "indicator:passportReader", label: "passportReader" },
+        { id: "bagTag:left", label: "bag-tag left" },
+      ],
+    },
   ]);
 });

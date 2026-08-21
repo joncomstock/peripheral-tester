@@ -14,10 +14,59 @@ import {
 } from "./rows.ts";
 
 const MAX_LINES = 500;
-const storageKey = (portName: string) => `ier-lightboard-tester:observations:${portName}`;
+
+/**
+ * Storage schema. Bumped when the shape of an {@link Observation} changes.
+ *
+ * v1 held the older verdict names and put `undefined` into the exported record when this build read
+ * it back. `parseObservations` now guards that, but the version is what makes the next change
+ * explicit rather than silent. v1 records are not migrated: it was never run outside development.
+ */
+const SCHEMA = "v2";
+const storageKey = (portName: string) => `ier-lightboard-tester:${SCHEMA}:${portName}`;
+
+/**
+ * Storage that cannot take the page down with it.
+ *
+ * `getItem` and `setItem` throw in private browsing and when the quota is gone. An unguarded read
+ * threw into the boot chain and surfaced as "no backend on this port", blaming the wrong thing
+ * entirely; an unguarded write threw out of an effect.
+ */
+function readObservations(portName: string): Observations {
+  try {
+    const stored = localStorage.getItem(storageKey(portName));
+    return stored ? parseObservations(stored) : {};
+  }
+  catch {
+    return {};
+  }
+}
+
+function writeObservations(portName: string, observations: Observations): boolean {
+  try {
+    localStorage.setItem(storageKey(portName), JSON.stringify(observations));
+    return true;
+  }
+  catch {
+    return false;
+  }
+}
 
 /** Kinds carrying something the board said that the driver could not account for. */
 const UNEXPECTED = ["warned", "data"];
+
+/** A shape warning names the token in quotes: `'AI;3=O' answered with 'AI;3=O@', expected 'AI@'`. */
+const ANSWERED_WITH = /answered with '([^']+)'/;
+
+/* Static, so it is not rebuilt on every render. States the row grammar once for the whole bay. */
+const GRAMMAR = (
+  <div className="grammar" aria-hidden="true">
+    <span className="grammar__step">Section</span>
+    <span className="grammar__step">You send</span>
+    <span className="grammar__step">It reaches</span>
+    <span className="grammar__step">Your eyes saw</span>
+  </div>
+);
 
 export function App() {
   const [vocabulary, setVocabulary] = useState<Vocabulary | null>(null);
@@ -42,8 +91,7 @@ export function App() {
       setDoors(status.doors);
       setEntries(status.log.slice(-MAX_LINES));
       // Read before the persisting effect can run, so a refresh mid-run does not wipe the record.
-      const stored = localStorage.getItem(storageKey(loaded.portName));
-      if (stored) setObservations(parseObservations(stored));
+      setObservations(readObservations(loaded.portName));
     })().catch((err: Error) => {
       if (live) setUnreachable(err.message);
     });
@@ -66,7 +114,11 @@ export function App() {
 
   useEffect(() => {
     if (!vocabulary) return;
-    localStorage.setItem(storageKey(vocabulary.portName), JSON.stringify(observations));
+    // The record is the deliverable of the run, so a storage failure is said out loud rather than
+    // swallowed — the operator can still copy it before the tab closes.
+    if (!writeObservations(vocabulary.portName, observations)) {
+      append({ at: "", kind: "failed", text: "the browser refused to save the record — copy it before closing this tab" });
+    }
   }, [vocabulary, observations]);
 
   const groups = useMemo(() => (vocabulary ? groupsFor(vocabulary) : []), [vocabulary]);
@@ -79,6 +131,8 @@ export function App() {
     [vocabulary, groups, observations],
   );
   const counts = useMemo(() => tally(rows, observations), [rows, observations]);
+  // Keyed on the log alone: typing a note used to rescan every entry with a regex on each keystroke.
+  const unexpected = useMemo(() => distinctUnexpected(entries), [entries]);
   const recorded = rows.length - (counts.find((entry) => entry.verdict === "untested")?.count ?? 0);
 
   const failed = (err: Error) => append({ at: "", kind: "failed", text: err.message });
@@ -104,12 +158,12 @@ export function App() {
     setObservations((previous) => ({ ...previous, [key]: { ...(previous[key] ?? UNOBSERVED), ...change } }));
 
   /** Jump to the other section sharing a pin — the clash is only useful if you can see both ends. */
-  const callOut = useCallback((label: string) => {
-    const target = rows.find((row) => `${row.group} / ${row.label}`.toLowerCase().endsWith(label.toLowerCase()) || row.label === label);
+  const callOut = useCallback((key: string) => {
+    const target = rowRefs.current.get(key);
     if (!target) return;
-    rowRefs.current.get(target.key)?.scrollIntoView({ block: "center", behavior: "smooth" });
-    setCalled(target.key);
-  }, [rows]);
+    target.scrollIntoView({ block: "center", behavior: "smooth" });
+    setCalled(key);
+  }, []);
 
   if (unreachable) {
     return (
@@ -134,7 +188,6 @@ export function App() {
 
   const kinds = ["everything", ...new Set(entries.map((entry) => entry.kind))];
   const shown = kindFilter === "everything" ? entries : entries.filter((entry) => entry.kind === kindFilter);
-  const unexpected = distinctUnexpected(entries);
 
   return (
     <div className="rig">
@@ -188,12 +241,7 @@ export function App() {
             Darken every lamp
           </button>
 
-          <div className="grammar" aria-hidden="true">
-            <span className="grammar__step">Section</span>
-            <span className="grammar__step">You send</span>
-            <span className="grammar__step">It reaches</span>
-            <span className="grammar__step">Your eyes saw</span>
-          </div>
+          {GRAMMAR}
 
           {groups.map((group) => (
             <Bay
@@ -316,9 +364,8 @@ function distinctUnexpected(entries: LogEntry[]): { text: string; count: number 
   const counted = new Map<string, number>();
   for (const entry of entries) {
     if (!UNEXPECTED.includes(entry.kind)) continue;
-    // A shape warning names the token in quotes: `'AI;3=O' answered with 'AI;3=O@', expected 'AI@'`.
     // The token is what the operator needs; the sentence around it is the same every time.
-    const quoted = entry.text.match(/answered with '([^']+)'/);
+    const quoted = entry.text.match(ANSWERED_WITH);
     const text = quoted ? quoted[1] : entry.text;
     counted.set(text, (counted.get(text) ?? 0) + 1);
   }
@@ -337,7 +384,7 @@ function Bay(
     rowRefs: React.MutableRefObject<Map<string, HTMLDivElement>>;
     onSend: (row: Row, action: Action) => void;
     onObserve: (key: string, change: Partial<Observation>) => void;
-    onCallOut: (label: string) => void;
+    onCallOut: (key: string) => void;
     onSpent: (key: string) => void;
   },
 ) {
@@ -351,7 +398,7 @@ function Bay(
           observation={observations[row.key] ?? UNOBSERVED}
           firing={fired[row.key] ?? 0}
           called={called === row.key}
-          others={rows.filter((candidate) => candidate.key !== row.key)}
+          rows={rows}
           register={(element) => {
             if (element) rowRefs.current.set(row.key, element);
             else rowRefs.current.delete(row.key);
@@ -373,16 +420,16 @@ function Bay(
  * software, which is why the last cell belongs to the operator.
  */
 function Wire(
-  { row, observation, firing, called, others, register, onSend, onObserve, onCallOut, onSpent }: {
+  { row, observation, firing, called, rows, register, onSend, onObserve, onCallOut, onSpent }: {
     row: Row;
     observation: Observation;
     firing: number;
     called: boolean;
-    others: Row[];
+    rows: Row[];
     register: (element: HTMLDivElement | null) => void;
     onSend: (action: Action) => void;
     onObserve: (change: Partial<Observation>) => void;
-    onCallOut: (label: string) => void;
+    onCallOut: (key: string) => void;
     onSpent: () => void;
   },
 ) {
@@ -416,9 +463,9 @@ function Wire(
 
       <div className="wire__cell">
         <span className="pin">{row.channels}</span>
-        {row.sharedWith.map((label) => (
-          <button className="pin__shared" key={label} onClick={() => onCallOut(label)}>
-            + {label}
+        {row.sharedWith.map((claimant) => (
+          <button className="pin__shared" key={claimant.id} onClick={() => onCallOut(claimant.id)}>
+            + {claimant.label}
           </button>
         ))}
       </div>
@@ -450,7 +497,7 @@ function Wire(
                 aria-label={`which lamp lit instead of ${row.label}`}
               >
                 <option value="">choose a lamp</option>
-                {others.map((other) => (
+                {rows.filter((other) => other.key !== row.key).map((other) => (
                   <option key={other.key} value={other.key}>{other.group} / {other.label}</option>
                 ))}
               </select>

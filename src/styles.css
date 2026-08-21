@@ -4,8 +4,19 @@
  * The rule this whole sheet is built on: **the interface never depicts a lit lamp.** This tool sits
  * next to a physical board, and the one thing it must not do is look more authoritative than the
  * board. So the signal path on every row stops at the terminal pin — exactly where the software's
- * knowledge stops — and saturated colour is spent only where a human has confirmed something with
- * their eyes. Everything the machine merely claims stays grey.
+ * knowledge stops.
+ *
+ * Colour is spent on three things and on nothing else, and each has its own token:
+ *
+ *  1. **A verdict a person set** — `--correct` / `--astray` / `--dark`, only ever on the row it
+ *     belongs to and only after someone looked at the board.
+ *  2. **The wire, and what came back along it** — `--copper`: pins, shared channels, mappings the
+ *     driver never confirmed, replies it did not expect, and the focus ring.
+ *  3. **The tool reporting on itself** — `--alarm`: mock mode, a command that failed, a dropped
+ *     stream. Not a claim about a lamp; a claim about whether this page can be trusted at all.
+ *
+ * Nothing the machine says about a lamp is ever coloured. The single reading that gets colour is a
+ * service door standing open, in `--astray`, because a door is not a lamp.
  *
  * Dark, and deliberately so: judging whether a dim amber LED is lit is much harder next to a bright
  * screen. Dark-only for the same reason — there is no light theme to fall back to.
@@ -28,16 +39,24 @@
   --legend: #868e99;
   --ink: #dfe3e8;
 
-  /* The one accent. Connection semantics only: wires, pins, shared channels, doubt about wiring. */
+  /* Wire semantics only: pins, shared channels, unconfirmed mappings, unexpected replies, focus. */
   --copper: #b4763f;
   --copper-dim: #6b4526;
 
-  /* Earned by human confirmation. These four are the only saturated colours on the page. */
+  /* Earned by human confirmation. Only ever on the row someone judged. */
   --correct: #6fbf8b;
   --astray: #d9a13b;
   /* Lifted from #c2565a, which measured 3.88:1 on the panel and failed AA on a state that means
      something. 5.38:1. */
   --dark: #d97276;
+
+  /*
+   * The tool talking about itself: mock mode, a failed command, a dropped stream. The same hue as
+   * the "no light" verdict on purpose — red is red — but its own token, so tuning one axis cannot
+   * silently move the other, and so a use site declares which axis it is on. Alarms always carry a
+   * border or an uppercase tag; a verdict never does, which is what keeps them apart on screen.
+   */
+  --alarm: #d97276;
 
   --display: "Saira Condensed", "Arial Narrow", sans-serif;
   --mono: "IBM Plex Mono", ui-monospace, Consolas, monospace;
@@ -154,7 +173,7 @@ body {
 }
 
 .dial__value--mock {
-  color: var(--dark);
+  color: var(--alarm);
 }
 
 /* ---------------------------------------------------------------- thesis */
@@ -197,7 +216,7 @@ body {
   gap: calc(var(--step) * 3);
   margin: 0 0 calc(var(--step) * 8);
   padding: calc(var(--step) * 3) calc(var(--step) * 4);
-  border: 1px solid var(--dark);
+  border: 1px solid var(--alarm);
   background: #1d1416;
   max-width: 74ch;
 }
@@ -208,7 +227,7 @@ body {
   font-size: 11px;
   letter-spacing: 0.18em;
   text-transform: uppercase;
-  color: var(--dark);
+  color: var(--alarm);
   white-space: nowrap;
 }
 
@@ -735,6 +754,8 @@ body {
 }
 
 .stream__line {
+  content-visibility: auto;
+  contain-intrinsic-size: 0 34px;
   padding: calc(var(--step) * 1) 0;
   border-top: 1px solid #1e222a;
   color: #a8b0ba;
@@ -774,7 +795,7 @@ body {
 .stream__line--error .stream__kind,
 .stream__line--failed .stream__kind,
 .stream__line--disconnect .stream__kind {
-  color: var(--dark);
+  color: var(--alarm);
 }
 
 .filter {
@@ -868,8 +889,8 @@ body {
 .copy {
   padding: calc(var(--step) * 2) calc(var(--step) * 5);
   background: var(--panel);
-  border: 1px solid var(--copper-dim);
-  color: var(--copper);
+  border: 1px solid var(--rail);
+  color: var(--ink);
   font-family: var(--display);
   font-weight: 600;
   font-size: 12px;
@@ -879,7 +900,7 @@ body {
 }
 
 .copy:hover {
-  border-color: var(--copper);
+  border-color: #3c434f;
   background: var(--pad);
 }
 
@@ -909,7 +930,7 @@ body {
 .gate__detail {
   font-family: var(--mono);
   font-size: 12px;
-  color: var(--dark);
+  color: var(--alarm);
   margin: 0 0 calc(var(--step) * 4);
   word-break: break-word;
 }

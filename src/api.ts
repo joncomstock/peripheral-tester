@@ -45,10 +45,22 @@ export interface LogEntry {
   text: string;
 }
 
+/**
+ * One section addressing a channel.
+ *
+ * `id` is the claimant's identity in the driver's vocabulary and is the same scheme rows are keyed
+ * by, so a marker can find the row it names. `label` is for reading; matching on it is what broke
+ * this once already.
+ */
+export interface Claimant {
+  id: string;
+  label: string;
+}
+
 /** Indicator channels addressed by more than one section, computed from the live map. */
 export interface Collision {
   channel: number;
-  labels: string[];
+  claimants: Claimant[];
 }
 
 /** `/api/vocabulary` — the driver's own vocabularies plus the channel map of the wired board. */

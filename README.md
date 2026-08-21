@@ -133,9 +133,14 @@ pin it reaches, what your eyes saw — and the signal path stops at the pin, whi
 software's knowledge stops. The one animation, a pulse along the wire when you fire a command, stops
 there too.
 
-**Saturated colour means a person confirmed something.** Green, amber and red appear only on a
-verdict an operator set. Everything the machine merely claims is grey. The single exception is a
-service door standing open, which is amber for attention, because a door is not a lamp.
+**Colour is spent on three things and nothing else.** A verdict a person set, on the row they judged.
+The wire and what came back along it — copper, for pins, shared channels, mappings the driver never
+confirmed and replies it did not expect. And the tool reporting on itself — alarm red, for mock mode,
+a failed command, a dropped stream, which is a claim about whether this page can be trusted rather
+than a claim about a lamp. Alarms always carry a border or an uppercase tag; a verdict never does.
+
+**Nothing the machine says about a lamp is ever coloured.** The one reading that gets colour is a
+service door standing open, amber for attention, because a door is not a lamp.
 
 **A shared pin is stated at the pin.** Two sections on one channel is the defect this tool exists to
 settle, so it is named on both rows beside the terminal rather than in a banner elsewhere, and the

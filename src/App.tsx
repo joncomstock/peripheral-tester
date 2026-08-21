@@ -152,7 +152,7 @@ export function App() {
           <Card title="Component indicators" aside="One indicator each">
             <div className="indicators">
               {controls.indicators.map((control) => (
-                <Row
+                <LampControl
                   key={control.key}
                   control={control}
                   mode={modeOf(commanded, control.key)}
@@ -167,7 +167,7 @@ export function App() {
           <div className="pair">
             <Card title="Bag tag printer" aside="Two sides">
               {controls.bagTag.map((control) => (
-                <Row
+                <LampControl
                   key={control.key}
                   control={control}
                   mode={modeOf(commanded, control.key)}
@@ -187,13 +187,12 @@ export function App() {
                 </div>
                 <div className="sem-rows">
                   {controls.semaphore.map((control) => (
-                    <Row
+                    <TowerControl
                       key={control.key}
                       control={control}
                       mode={modeOf(commanded, control.key)}
                       enabled={open}
                       onSend={send}
-                      bare
                     />
                   ))}
                 </div>
@@ -205,14 +204,13 @@ export function App() {
             <div className="strip">
               <div className="strip-rows">
                 {controls.strip.map((control) => (
-                  <Row
+                  <StripControl
                     key={control.key}
                     control={control}
                     mode={modeOf(commanded, control.key)}
                     color={lampColor(control.label)}
                     enabled={open}
                     onSend={send}
-                    inline
                   />
                 ))}
               </div>
@@ -304,42 +302,82 @@ function Card(
   );
 }
 
-function Row(
-  { control, mode, color, enabled, onSend, bare, inline }: {
-    control: Control;
-    mode: Action;
-    color?: string;
-    enabled: boolean;
-    onSend: (control: Control, action: Action) => void;
-    /** The semaphore rows sit beside the tower, which already shows their lamps. */
-    bare?: boolean;
-    /** The strip rows flow inline rather than stacking. */
-    inline?: boolean;
-  },
-) {
-  // Derived from the control's own actions, so a strip row cannot grow a Blink button.
+/**
+ * What every control needs to drive its section.
+ *
+ * The variants below differ only in what they render around this; each is explicit about what it
+ * shows, rather than one component switching on flags. `bare` and `inline` booleans used to do that
+ * job, which allowed a combination that meant nothing and left `color` optional in a type where it
+ * was only ever optional for one of the three.
+ */
+interface Driven {
+  control: Control;
+  mode: Action;
+  enabled: boolean;
+  onSend: (control: Control, action: Action) => void;
+}
+
+/** A control with its own lamp: the component indicators and the bag-tag sides. */
+function LampControl({ control, mode, color, enabled, onSend }: Driven & { color: string }) {
+  return (
+    <div className="ctl">
+      <span style={lampStyle(color, mode)} />
+      <ControlName control={control} />
+      <Segments control={control} mode={mode} enabled={enabled} onSend={onSend} />
+    </div>
+  );
+}
+
+/** A semaphore colour. No lamp of its own: the tower beside it shows both lamps. */
+function TowerControl({ control, mode, enabled, onSend }: Driven) {
+  return (
+    <div className="ctl">
+      <ControlName control={control} />
+      <Segments control={control} mode={mode} enabled={enabled} onSend={onSend} />
+    </div>
+  );
+}
+
+/** A strip colour. Flows inline with the other colours, above the preview. */
+function StripControl({ control, mode, color, enabled, onSend }: Driven & { color: string }) {
+  return (
+    <div className="ctl ctl-inline">
+      <span style={lampStyle(color, mode)} />
+      <ControlName control={control} />
+      <Segments control={control} mode={mode} enabled={enabled} onSend={onSend} />
+    </div>
+  );
+}
+
+function ControlName({ control }: { control: Control }) {
+  return (
+    <>
+      <span className="ctl-label">{control.label}</span>
+      <span className="chip">ch {control.channel}</span>
+    </>
+  );
+}
+
+/** On / Blink / Off. Which segments exist comes from the control's own actions. */
+function Segments({ control, mode, enabled, onSend }: Driven) {
+  // Derived, so a strip control cannot grow a Blink button.
   const segments = control.actions.includes("blink")
     ? [["on", "On"], ["blink", "Blink"], ["off", "Off"]] as const
     : [["on", "On"], ["off", "Off"]] as const;
 
   return (
-    <div className={inline ? "ctl ctl-inline" : "ctl"}>
-      {!bare && color && <span style={lampStyle(color, mode)} />}
-      <span className="ctl-label">{control.label}</span>
-      <span className="chip">ch {control.channel}</span>
-      <div className="seg" data-enabled={enabled}>
-        {segments.map(([action, text], index) => (
-          <button
-            key={action}
-            style={segStyle({ active: mode === action, off: action === "off", first: index === 0, enabled })}
-            disabled={!enabled}
-            onClick={() => onSend(control, action)}
-            aria-label={`${control.fullLabel} ${text}`}
-          >
-            {text}
-          </button>
-        ))}
-      </div>
+    <div className="seg" data-enabled={enabled}>
+      {segments.map(([action, text], index) => (
+        <button
+          key={action}
+          style={segStyle({ active: mode === action, off: action === "off", first: index === 0, enabled })}
+          disabled={!enabled}
+          onClick={() => onSend(control, action)}
+          aria-label={`${control.fullLabel} ${text}`}
+        >
+          {text}
+        </button>
+      ))}
     </div>
   );
 }

@@ -47,7 +47,8 @@ a `config` to `IERS33380.open()`.
 
 ## Quick start
 
-Prereqs: **Deno ≥ 2** and **Node ≥ 18**.
+Prereqs: **Deno ≥ 2.9** and **Node ≥ 18**. Built and verified on Deno 2.9.4; Node is only
+needed to build the UI, not to run it.
 
 ```bash
 npm install            # frontend deps (one time)

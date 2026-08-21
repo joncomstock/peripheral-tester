@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import type { Action, Door, LogEntry, State, Status } from "./api.ts";
 import * as api from "./api.ts";
@@ -16,7 +16,6 @@ export function App() {
   const [doors, setDoors] = useState<Record<Door, string>>({ upper: "closed", lower: "closed" });
   const [log, setLog] = useState<LogEntry[]>([]);
   const [commanded, setCommanded] = useState<Commanded>({});
-  const wasOpen = useRef(false);
 
   useEffect(() => {
     let live = true;
@@ -48,21 +47,23 @@ export function App() {
         setStatus(event.status);
         setPortName(event.portName);
         setDoors(event.doors);
+        // A closed port commands nothing, and a reconnected board starts dark.
+        if (event.status !== "open") setCommanded({});
       },
       (message) => setLog((previous) => [...previous, { at: "", kind: "error", text: message }].slice(-MAX_LINES)),
     );
   }, [state]);
 
-  // Nothing is commanded on a board that is not open, and a reconnected board starts dark.
-  useEffect(() => {
-    if (status === "open") wasOpen.current = true;
-    else if (wasOpen.current) {
-      wasOpen.current = false;
-      setCommanded({});
-    }
-  }, [status]);
-
   const controls = useMemo(() => (state ? controlsFor(state.vocabulary) : null), [state]);
+  /*
+   * Phrased and reversed once per new log line rather than on every render. `phrase` parses a
+   * command's JSON, so rendering this inline re-parsed every line in the log on each keystroke in
+   * the port field and on each lamp change.
+   */
+  const activity = useMemo(
+    () => log.map((entry) => ({ at: entry.at, tone: toneOf(entry.kind), text: phrase(entry) })).reverse(),
+    [log],
+  );
   const open = status === "open";
   const opening = status === "opening";
 
@@ -244,12 +245,12 @@ export function App() {
 
           <Card title="Activity" action={<button className="clear" onClick={() => setLog([])}>Clear</button>}>
             <div className="activity">
-              {log.length === 0
+              {activity.length === 0
                 ? <div className="activity-empty">Nothing yet.</div>
-                : [...log].reverse().map((entry, index) => (
+                : activity.map((entry, index) => (
                   <div className="activity-line" key={index}>
                     <span className="activity-time">{entry.at}</span>
-                    <span className={`activity-text tone-${toneOf(entry.kind)}`}>{phrase(entry)}</span>
+                    <span className={`activity-text tone-${entry.tone}`}>{entry.text}</span>
                   </div>
                 ))}
             </div>

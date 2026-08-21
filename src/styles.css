@@ -577,6 +577,8 @@ button {
 }
 
 .activity-line {
+  content-visibility: auto;
+  contain-intrinsic-size: 0 22px;
   display: flex;
   gap: 9px;
   padding: 3px 13px;

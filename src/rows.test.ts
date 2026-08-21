@@ -9,13 +9,13 @@ const vocabulary: Vocabulary = {
   mock: false,
   actions: ["on", "off", "blink"],
   indicators: [
-    { section: "payment", channel: 1 },
+    { section: "payment", channel: 6 },
     { section: "cardReader", channel: 2 },
     { section: "passportReader", channel: 3 },
     { section: "boardingPassPrinter", channel: 4 },
-    { section: "gppDispenser", channel: 5 },
+    { section: "gppDispenser", channel: 6 },
   ],
-  sides: [{ side: "left", channel: 8 }, { side: "right", channel: 9 }],
+  sides: [{ side: "left", channel: 7 }, { side: "right", channel: 8 }],
   stripColors: [
     { color: "green", primaries: ["green"], channels: [4] },
     { color: "red", primaries: ["red"], channels: [3] },
@@ -27,15 +27,15 @@ const vocabulary: Vocabulary = {
   ],
   semaphoreColors: [
     { color: "green", channels: [1] },
-    { color: "red", channels: [6] },
-    { color: "yellow", channels: [6, 1] },
+    { color: "red", channels: [5] },
+    { color: "yellow", channels: [5, 1] },
   ],
   doorChannels: [{ channel: 1, door: "upper" }, { channel: 3, door: "lower" }],
   collisions: [{
-    channel: 1,
+    channel: 6,
     claimants: [
       { id: "indicator:payment", label: "payment" },
-      { id: "semaphore:green", label: "semaphore green" },
+      { id: "indicator:gppDispenser", label: "gppDispenser" },
     ],
   }],
 };
@@ -56,7 +56,7 @@ describe("controlsFor", () => {
   it("names a colour with every channel it lights", () => {
     // Yellow is red and green together on the tower, and cyan is green and blue on the strip; a
     // single channel would misdescribe what either drives.
-    expect(find("semaphore:yellow").channel).toBe("6+1");
+    expect(find("semaphore:yellow").channel).toBe("5+1");
     expect(find("semaphore:green").channel).toBe("1");
     expect(find("strip:cyan").channel).toBe("4+2");
     expect(find("strip:white").channel).toBe("4+3+2");

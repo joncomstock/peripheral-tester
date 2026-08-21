@@ -17,9 +17,13 @@ const vocabulary: Vocabulary = {
   ],
   sides: [{ side: "left", channel: 8 }, { side: "right", channel: 9 }],
   stripColors: [
-    { color: "green", channel: 4 },
-    { color: "red", channel: 3 },
-    { color: "blue", channel: 2 },
+    { color: "green", primaries: ["green"], channels: [4] },
+    { color: "red", primaries: ["red"], channels: [3] },
+    { color: "blue", primaries: ["blue"], channels: [2] },
+    { color: "cyan", primaries: ["green", "blue"], channels: [4, 2] },
+    { color: "magenta", primaries: ["red", "blue"], channels: [3, 2] },
+    { color: "yellow", primaries: ["green", "red"], channels: [4, 3] },
+    { color: "white", primaries: ["green", "red", "blue"], channels: [4, 3, 2] },
   ],
   semaphoreColors: [
     { color: "green", channels: [1] },
@@ -49,10 +53,26 @@ describe("controlsFor", () => {
     expect(find("indicator:payment").actions).toEqual(["on", "off", "blink"]);
   });
 
-  it("names a semaphore colour with every channel it lights", () => {
-    // Yellow is red and green together, so a single channel would misdescribe what it drives.
+  it("names a colour with every channel it lights", () => {
+    // Yellow is red and green together on the tower, and cyan is green and blue on the strip; a
+    // single channel would misdescribe what either drives.
     expect(find("semaphore:yellow").channel).toBe("6+1");
     expect(find("semaphore:green").channel).toBe("1");
+    expect(find("strip:cyan").channel).toBe("4+2");
+    expect(find("strip:white").channel).toBe("4+3+2");
+  });
+
+  it("offers the strip its mixes as well as its primaries", () => {
+    expect(controls.strip.map((control) => control.label)).toEqual([
+      "Green",
+      "Red",
+      "Blue",
+      "Cyan",
+      "Magenta",
+      "Yellow",
+      "White",
+    ]);
+    expect(find("strip:cyan").primaries).toEqual(["green", "blue"]);
   });
 
   it("gives operator-facing names but falls back to the driver's identifier", () => {
@@ -125,21 +145,29 @@ describe("towerMode", () => {
 });
 
 describe("stripPreviewStyle", () => {
+  const mixes = vocabulary.stripColors;
+
   it("reads as unlit when nothing is on", () => {
-    expect(stripPreviewStyle([]).background).toContain("#eceef1");
+    expect(stripPreviewStyle([], mixes).background).toContain("#eceef1");
   });
 
-  it("shows one colour as a wash and several as equal bands", () => {
-    expect(stripPreviewStyle(["#2d7ce0"]).background).toContain("color-mix");
-    const two = String(stripPreviewStyle(["#1f9d47", "#d93a3a"]).background);
-    expect(two).toContain("90deg");
-    expect(two).toContain("#1f9d47 0%, #1f9d47 50%");
-    expect(two).toContain("#d93a3a 50%, #d93a3a 100%");
+  it("shows the colour the strip actually mixes to", () => {
+    // The 919 walk established the channels mix additively, so green and blue lit together is not
+    // two bands — it is cyan, and the preview has to say so.
+    expect(String(stripPreviewStyle(["green"], mixes).background)).toContain("#1f9d47");
+    expect(String(stripPreviewStyle(["green", "blue"], mixes).background)).toContain("#12a6b8");
+    expect(String(stripPreviewStyle(["red", "blue"], mixes).background)).toContain("#c33bb0");
+    expect(String(stripPreviewStyle(["green", "red", "blue"], mixes).background)).toContain("#e9edf2");
   });
 
-  it("maps a strip colour name to the lamp it drives", () => {
+  it("does not care what order the primaries arrive in", () => {
+    expect(stripPreviewStyle(["blue", "green"], mixes).background)
+      .toEqual(stripPreviewStyle(["green", "blue"], mixes).background);
+  });
+
+  it("maps a colour name to the lamp it drives", () => {
     expect(lampColor("Blue")).toBe("#2d7ce0");
-    expect(lampColor("Green")).toBe("#1f9d47");
+    expect(lampColor("Cyan")).toBe("#12a6b8");
   });
 });
 

@@ -102,9 +102,13 @@ export function App() {
 
   if (!state || !controls) return <div className="gate"><p>Loading…</p></div>;
 
-  const litStrip = controls.strip
-    .filter((control) => modeOf(commanded, control.key) === "on")
-    .map((control) => lampColor(control.label));
+  // Everything the commanded-on strip colours light, together. Two colours can share a primary, so
+  // this is a set rather than a list — cyan and blue both on is still just green + blue.
+  const litPrimaries = [...new Set(
+    controls.strip
+      .filter((control) => modeOf(commanded, control.key) === "on")
+      .flatMap((control) => control.primaries ?? []),
+  )];
 
   return (
     <div className="app">
@@ -150,7 +154,7 @@ export function App() {
 
       <main className="main">
         <div className="col col-wide">
-          <Card title="Component indicators" aside="One indicator each">
+          <Card title="Component indicators" aside="One indicator each" grow={5}>
             <div className="indicators">
               {controls.indicators.map((control) => (
                 <LampControl
@@ -165,7 +169,7 @@ export function App() {
             </div>
           </Card>
 
-          <div className="pair">
+          <div className="pair" style={{ flex: "3 1 auto" }}>
             <Card title="Bag tag printer" aside="Two sides">
               {controls.bagTag.map((control) => (
                 <LampControl
@@ -182,8 +186,8 @@ export function App() {
             <Card title="Semaphore tower" aside="Yellow = red + green">
               <div className="sem">
                 <div className="tower">
-                  <span style={lampStyle(LAMP.red, towerMode(commanded, "red"), 19)} />
-                  <span style={lampStyle(LAMP.green, towerMode(commanded, "green"), 19)} />
+                  <span style={lampStyle(LAMP.red, towerMode(commanded, "red"), 30)} />
+                  <span style={lampStyle(LAMP.green, towerMode(commanded, "green"), 30)} />
                   <span className="tower-base" />
                 </div>
                 <div className="sem-rows">
@@ -201,7 +205,7 @@ export function App() {
             </Card>
           </div>
 
-          <Card title="LED strip" aside="On / off per colour">
+          <Card title="LED strip" aside="On / off per colour" grow={2}>
             <div className="strip">
               <div className="strip-rows">
                 {controls.strip.map((control) => (
@@ -215,7 +219,7 @@ export function App() {
                   />
                 ))}
               </div>
-              <div className="strip-preview" style={stripPreviewStyle(litStrip)} />
+              <div className="strip-preview" style={stripPreviewStyle(litPrimaries, state.vocabulary.stripColors)} />
             </div>
           </Card>
         </div>
@@ -224,7 +228,7 @@ export function App() {
           <Card title="Service doors" aside="Reported">
             {(["upper", "lower"] as Door[]).map((door) => (
               <div className="doorrow" key={door}>
-                <span style={lampStyle(LAMP.amber, doors[door] === "open" ? "on" : "off", 10)} />
+                <span style={lampStyle(LAMP.amber, doors[door] === "open" ? "on" : "off", 16)} />
                 <span className="doorlabel">{door === "upper" ? "Upper" : "Lower"} service door</span>
                 <span className={doors[door] === "open" ? "doorstate doorstate-open" : "doorstate"}>
                   {doors[door] === "open" ? "Open" : "Closed"}
@@ -243,7 +247,7 @@ export function App() {
             )}
           </Card>
 
-          <Card title="Activity" action={<button className="clear" onClick={() => setLog([])}>Clear</button>}>
+          <Card title="Activity" grow={1} action={<button className="clear" onClick={() => setLog([])}>Clear</button>}>
             <div className="activity">
               {activity.length === 0
                 ? <div className="activity-empty">Nothing yet.</div>
@@ -283,15 +287,17 @@ export function phrase(entry: LogEntry): string {
 }
 
 function Card(
-  { title, aside, action, children }: {
+  { title, aside, action, grow, children }: {
     title: string;
     aside?: string;
     action?: ReactNode;
+    /** Share of the column's spare vertical height. Omitted means "only as tall as it needs". */
+    grow?: number;
     children: ReactNode;
   },
 ) {
   return (
-    <section className="card">
+    <section className="card" style={grow ? { flex: `${grow} 1 auto` } : undefined}>
       <div className="card-head">
         <span className="tab" />
         <h2>{title}</h2>
@@ -368,10 +374,10 @@ function Segments({ control, mode, enabled, onSend }: Driven) {
 
   return (
     <div className="seg" data-enabled={enabled}>
-      {segments.map(([action, text], index) => (
+      {segments.map(([action, text]) => (
         <button
           key={action}
-          style={segStyle({ active: mode === action, off: action === "off", first: index === 0, enabled })}
+          style={segStyle({ active: mode === action, off: action === "off", enabled })}
           disabled={!enabled}
           onClick={() => onSend(control, action)}
           aria-label={`${control.fullLabel} ${text}`}

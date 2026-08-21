@@ -23,7 +23,9 @@ export type IndicatorSection =
   | "passportReader"
   | "boardingPassPrinter"
   | "gppDispenser";
-export type StripColor = "green" | "red" | "blue";
+export type StripPrimary = "green" | "red" | "blue";
+/** The three wired channels, plus the additive mixes of them the strip can be asked for. */
+export type StripColor = StripPrimary | "cyan" | "magenta" | "yellow" | "white";
 export type SemaphoreColor = "green" | "red" | "yellow";
 export type Side = "left" | "right";
 export type Door = "upper" | "lower";
@@ -68,7 +70,7 @@ export interface Vocabulary {
   actions: Action[];
   indicators: { section: IndicatorSection; channel: number }[];
   sides: { side: Side; channel: number }[];
-  stripColors: { color: StripColor; channel: number }[];
+  stripColors: { color: StripColor; primaries: StripPrimary[]; channels: number[] }[];
   semaphoreColors: { color: SemaphoreColor; channels: number[] }[];
   doorChannels: { channel: number; door: Door }[];
   collisions: Collision[];

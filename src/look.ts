@@ -19,6 +19,9 @@ export const LAMP = {
   red: "#d93a3a",
   blue: "#2d7ce0",
   yellow: "#e5b00d",
+  cyan: "#12a6b8",
+  magenta: "#c33bb0",
+  white: "#e9edf2",
 } as const;
 
 export const ACCENT = "#2f5fd0";
@@ -30,7 +33,7 @@ export function lampColor(label: string): string {
 }
 
 /** A round lamp, dark or lit, optionally blinking. */
-export function lampStyle(color: string, mode: Action, size = 12): CSSProperties {
+export function lampStyle(color: string, mode: Action, size = 18): CSSProperties {
   const base: CSSProperties = {
     width: size,
     height: size,
@@ -54,34 +57,26 @@ export function lampStyle(color: string, mode: Action, size = 12): CSSProperties
   return mode === "blink" ? { ...lit, animation: "lampBlink 0.9s steps(1,end) infinite" } : lit;
 }
 
-/** One segment of an On / Blink / Off control. */
+/**
+ * The changing part of one On / Blink / Off segment.
+ *
+ * Size, padding and type live in `styles.css` with the rest of the static styling — they do not vary
+ * with state, and holding them here made the touch target impossible to tune from one place. What is
+ * left is only what the segment's state actually decides.
+ */
 export function segStyle(
-  { active, off, first, enabled }: { active: boolean; off?: boolean; first?: boolean; enabled: boolean },
+  { active, off, enabled }: { active: boolean; off?: boolean; enabled: boolean },
 ): CSSProperties {
-  const base: CSSProperties = {
-    height: 26,
-    padding: "0 9px",
-    fontSize: 11,
-    fontWeight: 500,
-    letterSpacing: "0.01em",
-    border: 0,
-    borderLeft: first ? undefined : `1px solid ${enabled ? "#e2e6ea" : "#ebedf0"}`,
-    cursor: enabled ? "pointer" : "not-allowed",
-    whiteSpace: "nowrap",
-    transition: "background 90ms ease, color 90ms ease",
-  };
-  if (!enabled) return { ...base, background: "transparent", color: "#c1c6cc" };
-  if (!active) return { ...base, background: "transparent", color: "#565d65" };
+  if (!enabled) return { background: "transparent", color: "#c1c6cc" };
+  if (!active) return { background: "transparent", color: "#565d65" };
   if (off) {
     return {
-      ...base,
       background: "linear-gradient(#5b636b, #4a5158)",
       color: "#fff",
       boxShadow: "inset 0 1px 0 rgba(255,255,255,0.16)",
     };
   }
   return {
-    ...base,
     background: `linear-gradient(color-mix(in oklab, ${ACCENT} 88%, white), ${ACCENT})`,
     color: "#fff",
     boxShadow: "inset 0 1px 0 rgba(255,255,255,0.22)",
@@ -89,35 +84,36 @@ export function segStyle(
 }
 
 /**
- * The strip preview: the colours currently commanded on, side by side.
+ * The strip preview: the colour the strip is actually showing.
  *
- * The real strip is one run of LEDs with three colour channels, so lighting two at once mixes them
- * on the kiosk. Showing them as equal bands rather than a blend keeps the preview a readout of what
- * was sent instead of a guess at what the hardware does with it.
+ * The 919 walk established that the strip's three channels **mix additively** in the strip itself
+ * rather than driving separate lamps — green and blue together read cyan, all three read white. So
+ * the preview resolves whatever is commanded on down to the primaries it lights, and shows the one
+ * colour that combination produces. An earlier version drew equal bands per colour and said in a
+ * comment that a blend would be "a guess at what the hardware does"; the hardware has since answered,
+ * and bands are now the guess.
+ *
+ * `mixes` is the vocabulary's colour → primaries map, passed through from the driver rather than
+ * copied, so this cannot disagree with what a command actually sends.
  */
-export function stripPreviewStyle(litColors: string[]): CSSProperties {
-  if (litColors.length === 0) {
+export function stripPreviewStyle(
+  litPrimaries: string[],
+  mixes: { color: string; primaries: string[] }[],
+): CSSProperties {
+  if (litPrimaries.length === 0) {
     return {
       background: "linear-gradient(#eceef1, #e3e6ea)",
-      boxShadow: "inset 0 1px 2px rgba(16,24,40,0.10)",
+      boxShadow: "inset 0 1px 3px rgba(16,24,40,0.12)",
     };
   }
-  if (litColors.length === 1) {
-    return {
-      background: `linear-gradient(color-mix(in oklab, ${litColors[0]} 78%, white), ${litColors[0]})`,
-      boxShadow: `inset 0 1px 0 rgba(255,255,255,0.35), 0 0 12px color-mix(in oklab, ${litColors[0]} 45%, transparent)`,
-    };
-  }
-  const bands = litColors
-    .map((color, index) => {
-      const from = Math.round((index / litColors.length) * 100);
-      const to = Math.round(((index + 1) / litColors.length) * 100);
-      return `${color} ${from}%, ${color} ${to}%`;
-    })
-    .join(", ");
+  const lit = new Set(litPrimaries);
+  const match = mixes.find(({ primaries }) =>
+    primaries.length === lit.size && primaries.every((primary) => lit.has(primary))
+  );
+  const color = match ? lampColor(match.color) : LAMP.white;
   return {
-    background: `linear-gradient(90deg, ${bands})`,
-    boxShadow: `inset 0 1px 0 rgba(255,255,255,0.35), 0 0 12px color-mix(in oklab, ${litColors[0]} 45%, transparent)`,
+    background: `linear-gradient(color-mix(in oklab, ${color} 78%, white), ${color})`,
+    boxShadow: `inset 0 1px 0 rgba(255,255,255,0.35), 0 0 16px color-mix(in oklab, ${color} 45%, transparent)`,
   };
 }
 

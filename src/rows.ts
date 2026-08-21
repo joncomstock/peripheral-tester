@@ -17,6 +17,7 @@ import type {
   SemaphoreColor,
   Side,
   StripColor,
+  StripPrimary,
   Vocabulary,
 } from "./api.ts";
 
@@ -32,6 +33,9 @@ const DISPLAY: Record<string, string> = {
   red: "Red",
   blue: "Blue",
   yellow: "Yellow",
+  cyan: "Cyan",
+  magenta: "Magenta",
+  white: "White",
 };
 
 export const nameOf = (key: string): string => DISPLAY[key] ?? key;
@@ -69,6 +73,8 @@ export interface Control {
   fullLabel: string;
   /** Actions this control may send. The strip has no blink on the wire, so it does not offer one. */
   actions: Action[];
+  /** Strip only: the primaries this colour lights, so the preview can mix what is on. */
+  primaries?: StripPrimary[];
   base: LedBase;
 }
 
@@ -125,11 +131,13 @@ export function controlsFor(vocabulary: Vocabulary): Controls {
       actions,
       base: { section: "semaphore", color },
     })),
-    strip: vocabulary.stripColors.map(({ color, channel }) => ({
+    strip: vocabulary.stripColors.map(({ color, channels, primaries }) => ({
       key: `strip:${color}`,
       label: nameOf(color),
       fullLabel: fullName("strip", color),
-      channel: String(channel),
+      // A mix names every channel it drives, the way the semaphore's yellow does.
+      channel: channels.join("+"),
+      primaries,
       actions: stripActions,
       base: { section: "strip", color },
     })),

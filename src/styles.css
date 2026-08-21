@@ -7,17 +7,46 @@
  *
  * Light, carded, IBM Plex. Panels sit on a cool grey field with a hairline border and a shallow
  * shadow; the accent is a single blue used for the mark, section tabs and an engaged control.
+ *
+ * Sized for a touch screen mounted in a kiosk, not a laptop. Every control the operator presses is
+ * at least `--touch` tall, which is above the 44px WCAG 2.5.5 asks for, because the finger doing the
+ * pressing belongs to someone crouched at a machine in a terminal. The scale is one set of tokens so
+ * a different unit can be tuned in one place rather than thirty.
  */
+
+:root {
+  /* Grows a little with viewport height, so mock mode on a laptop is not absurd. */
+  --touch: 52px;
+  --row-y: clamp(10px, 1.1vh, 18px);
+  --pad-x: 18px;
+  --gap: 14px;
+  --touch-header: 48px;
+
+  --font-label: 15px;
+  --font-seg: 14.5px;
+  --font-chip: 12px;
+  --font-log: 14px;
+  --font-head: 12px;
+  --font-meta: 13px;
+}
 
 html,
 body {
   margin: 0;
   padding: 0;
+  height: 100%;
   background: #eef0f3;
 }
 
 * {
   box-sizing: border-box;
+  /* No grey flash on tap, and no 300ms wait for a double-tap that never comes. */
+  -webkit-tap-highlight-color: transparent;
+}
+
+button,
+input {
+  touch-action: manipulation;
 }
 
 @keyframes lampBlink {
@@ -33,15 +62,15 @@ body {
 }
 
 ::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
+  width: 14px;
+  height: 14px;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #cfd4da;
-  border: 3px solid transparent;
+  background: #c6ccd3;
+  border: 4px solid transparent;
   background-clip: content-box;
-  border-radius: 6px;
+  border-radius: 8px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
@@ -51,7 +80,9 @@ body {
 
 .app {
   min-height: 100vh;
-  background: linear-gradient(#f5f6f8, #eceef1 620px);
+  display: flex;
+  flex-direction: column;
+  background: linear-gradient(#f5f6f8, #eceef1 60vh);
   font-family: "IBM Plex Sans", system-ui, sans-serif;
   color: #16191d;
   -webkit-font-smoothing: antialiased;
@@ -68,14 +99,12 @@ button {
   flex-wrap: wrap;
   align-items: center;
   gap: 10px 18px;
-  min-height: 54px;
-  padding: 9px clamp(10px, 2vw, 20px);
+  min-height: 72px;
+  padding: 12px clamp(12px, 2vw, 24px);
   background: linear-gradient(#fff, #fbfbfc);
   border-bottom: 1px solid #dbdfe4;
-  box-shadow: 0 1px 2px rgb(16 24 40 / 4%);
-  position: sticky;
-  top: 0;
-  z-index: 5;
+  box-shadow: 0 1px 3px rgb(16 24 40 / 5%);
+  flex-shrink: 0;
 }
 
 .brand {
@@ -86,9 +115,9 @@ button {
 }
 
 .mark {
-  width: 22px;
-  height: 22px;
-  border-radius: 6px;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
   flex-shrink: 0;
   background: radial-gradient(circle at 32% 26%, color-mix(in oklab, #2f5fd0 60%, white), #2f5fd0);
   box-shadow: inset 0 1px 0 rgb(255 255 255 / 35%), 0 1px 2px rgb(16 24 40 / 18%);
@@ -101,14 +130,14 @@ button {
 }
 
 .brand-name {
-  font-size: 13px;
+  font-size: 15px;
   font-weight: 600;
   letter-spacing: -0.01em;
 }
 
 .brand-model {
   font-family: "IBM Plex Mono", monospace;
-  font-size: 10px;
+  font-size: 11px;
   color: #8d949c;
   letter-spacing: 0.04em;
 }
@@ -123,7 +152,7 @@ button {
 .portbox {
   display: flex;
   align-items: center;
-  height: 28px;
+  height: var(--touch-header);
   border: 1px solid #d3d8de;
   border-radius: 5px;
   background: #fff;
@@ -132,22 +161,22 @@ button {
 }
 
 .portbox label {
-  padding: 0 8px;
-  font-size: 10.5px;
+  padding: 0 12px;
+  font-size: var(--font-chip);
   letter-spacing: 0.05em;
   text-transform: uppercase;
   color: #8d949c;
   border-right: 1px solid #e6e9ed;
-  line-height: 26px;
+  line-height: 46px;
   background: #fafbfc;
 }
 
 .portbox input {
-  width: 76px;
-  height: 26px;
-  padding: 0 8px;
+  width: 110px;
+  height: 100%;
+  padding: 0 12px;
   font-family: "IBM Plex Mono", monospace;
-  font-size: 11.5px;
+  font-size: var(--font-label);
   color: #16191d;
   background: transparent;
   border: 0;
@@ -159,18 +188,18 @@ button {
 }
 
 .baud {
-  padding: 0 8px;
+  padding: 0 12px;
   font-family: "IBM Plex Mono", monospace;
-  font-size: 10px;
+  font-size: var(--font-chip);
   color: #7b828a;
   border-left: 1px solid #e6e9ed;
-  line-height: 26px;
+  line-height: 46px;
 }
 
 .connect {
-  height: 28px;
-  padding: 0 13px;
-  font-size: 11.5px;
+  height: var(--touch-header);
+  padding: 0 22px;
+  font-size: var(--font-seg);
   font-weight: 500;
   border-radius: 5px;
   cursor: pointer;
@@ -200,20 +229,20 @@ button {
 .statuspill {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 0 11px;
-  height: 28px;
+  gap: 9px;
+  padding: 0 14px;
+  height: var(--touch-header);
   border: 1px solid #e0e4e8;
   border-radius: 5px;
   background: #fafbfc;
-  font-size: 11.5px;
+  font-size: var(--font-seg);
   color: #4b5259;
   white-space: nowrap;
 }
 
 .statusdot {
-  width: 7px;
-  height: 7px;
+  width: 10px;
+  height: 10px;
   border-radius: 50%;
   flex-shrink: 0;
 }
@@ -223,9 +252,9 @@ button {
 }
 
 .alloff {
-  height: 28px;
-  padding: 0 13px;
-  font-size: 11.5px;
+  height: var(--touch-header);
+  padding: 0 22px;
+  font-size: var(--font-seg);
   font-weight: 500;
   border-radius: 5px;
   white-space: nowrap;
@@ -247,11 +276,14 @@ button {
 /* ---------------------------------------------------------------- layout */
 
 .main {
+  flex: 1;
   display: flex;
   flex-wrap: wrap;
-  align-items: flex-start;
+  align-items: stretch;
   gap: 12px;
-  padding: clamp(10px, 1.4vw, 16px);
+  padding: 12px clamp(12px, 1.6vw, 20px) clamp(12px, 1.6vw, 20px);
+  /* Lets the columns shrink instead of pushing the page taller than the screen. */
+  min-height: 0;
 }
 
 .col {
@@ -262,47 +294,54 @@ button {
 }
 
 .col-wide {
-  flex: 1 1 min(100%, 560px);
+  flex: 1 1 620px;
 }
 
 .col-narrow {
-  flex: 1 1 min(100%, 290px);
-  max-width: 100%;
+  flex: 0 0 380px;
 }
 
 .pair {
   display: flex;
   flex-wrap: wrap;
   gap: 12px;
+  align-items: stretch;
+  min-height: 0;
 }
 
 .pair > .card {
-  flex: 1 1 min(100%, 290px);
+  flex: 1 1 min(100%, 300px);
   min-width: 0;
 }
 
 /* ---------------------------------------------------------------- card */
 
 .card {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
   background: #fff;
   border: 1px solid #dde1e6;
-  border-radius: 6px;
-  box-shadow: 0 1px 2px rgb(16 24 40 / 4%), 0 4px 10px -6px rgb(16 24 40 / 8%);
+  border-radius: 8px;
+  box-shadow: 0 1px 2px rgb(16 24 40 / 4%), 0 6px 14px -8px rgb(16 24 40 / 10%);
   overflow: hidden;
 }
 
 .card-head {
   display: flex;
   align-items: center;
-  gap: 9px;
-  padding: 10px 13px;
+  gap: 11px;
+  /* Tall enough for a touch-sized control in the header, so every card head lines up. */
+  min-height: calc(var(--touch) + 20px);
+  padding: 10px var(--pad-x);
+  flex-shrink: 0;
   background: linear-gradient(#fcfdfd, #f8f9fa);
   border-bottom: 1px solid #e9ebee;
 }
 
 .card-head h2 {
   margin: 0;
-  font-size: 10.5px;
+  font-size: var(--font-head);
   font-weight: 600;
   letter-spacing: 0.07em;
   text-transform: uppercase;
@@ -311,7 +350,7 @@ button {
 
 .tab {
   width: 3px;
-  height: 12px;
+  height: 14px;
   border-radius: 2px;
   flex-shrink: 0;
   background: #2f5fd0;
@@ -320,16 +359,16 @@ button {
 
 .card-aside {
   margin-left: auto;
-  font-size: 11px;
+  font-size: var(--font-meta);
   color: #a0a7ae;
   white-space: nowrap;
 }
 
 .clear {
   margin-left: auto;
-  height: 20px;
-  padding: 0 7px;
-  font-size: 10.5px;
+  height: var(--touch-header);
+  padding: 0 18px;
+  font-size: var(--font-meta);
   color: #8d949c;
   background: transparent;
   border: 1px solid transparent;
@@ -345,15 +384,19 @@ button {
 /* ---------------------------------------------------------------- controls */
 
 .indicators {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 385px), 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 440px), 1fr));
+  align-content: start;
 }
 
 .ctl {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 9px 13px;
+  gap: var(--gap);
+  padding: var(--row-y) var(--pad-x);
   border-top: 1px solid #f2f3f5;
   min-width: 0;
 }
@@ -365,7 +408,7 @@ button {
 .ctl-inline {
   padding: 0;
   border-top: 0;
-  gap: 9px;
+  gap: 12px;
 }
 
 .ctl-inline:hover {
@@ -375,7 +418,7 @@ button {
 .ctl-label {
   flex: 1;
   min-width: 0;
-  font-size: 12.5px;
+  font-size: var(--font-label);
   color: #24282d;
   white-space: nowrap;
   overflow: hidden;
@@ -388,13 +431,13 @@ button {
 
 .chip {
   font-family: "IBM Plex Mono", monospace;
-  font-size: 10px;
+  font-size: var(--font-chip);
   letter-spacing: 0.02em;
   color: #6b727a;
   background: #f4f5f7;
   border: 1px solid #eaecef;
-  border-radius: 3px;
-  padding: 1px 5px;
+  border-radius: 4px;
+  padding: 4px 9px;
   white-space: nowrap;
   flex-shrink: 0;
 }
@@ -402,16 +445,43 @@ button {
 .seg {
   display: flex;
   flex-shrink: 0;
-  border: 1px solid #d3d8de;
-  border-radius: 5px;
+  margin-left: auto;
+  border: 1px solid #d0d5dc;
+  border-radius: 7px;
   overflow: hidden;
-  background: linear-gradient(#fff, #f7f8fa);
-  box-shadow: 0 1px 1px rgb(16 24 40 / 3%);
+  background: linear-gradient(#fff, #f6f7f9);
+  box-shadow: 0 1px 2px rgb(16 24 40 / 4%);
 }
 
 .seg[data-enabled="false"] {
   border-color: #e6e8eb;
   background: #f6f7f8;
+}
+
+.seg button {
+  min-height: var(--touch);
+  min-width: 74px;
+  padding: 0 16px;
+  font-size: var(--font-seg);
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  border: 0;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 90ms ease, color 90ms ease;
+}
+
+/* The divider belongs between segments, not on whichever one happens to be first. */
+.seg button + button {
+  border-left: 1px solid #e2e6ea;
+}
+
+.seg[data-enabled="false"] button + button {
+  border-left-color: #ebedf0;
+}
+
+.seg button:disabled {
+  cursor: not-allowed;
 }
 
 .seg button:hover:not(:disabled) {
@@ -421,9 +491,13 @@ button {
 /* ---------------------------------------------------------------- semaphore */
 
 .sem {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
   display: flex;
-  gap: 13px;
-  padding: 12px 13px;
+  align-items: center;
+  gap: 18px;
+  padding: var(--row-y) var(--pad-x);
   flex-wrap: wrap;
 }
 
@@ -431,8 +505,8 @@ button {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 7px;
-  padding: 10px 11px 8px;
+  gap: 11px;
+  padding: 16px 18px 13px;
   background: linear-gradient(#f8f9fb, #f1f3f6);
   border: 1px solid #e6e9ed;
   border-radius: 5px;
@@ -440,19 +514,19 @@ button {
 }
 
 .tower-base {
-  width: 16px;
-  height: 11px;
+  width: 26px;
+  height: 17px;
   background: linear-gradient(#cfd4da, #b9c0c7);
   border-radius: 1px 1px 2px 2px;
 }
 
 .sem-rows {
-  flex: 1 1 190px;
+  flex: 1 1 230px;
   min-width: 0;
   display: flex;
   flex-direction: column;
   justify-content: center;
-  gap: 3px;
+  gap: var(--row-y);
 }
 
 .sem-rows .ctl {
@@ -467,17 +541,21 @@ button {
 /* ---------------------------------------------------------------- strip */
 
 .strip {
-  padding: 12px 13px;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  align-content: center;
+  padding: var(--row-y) var(--pad-x);
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: 18px;
   flex-wrap: wrap;
 }
 
 .strip-rows {
-  flex: 1 1 340px;
+  flex: 1 1 420px;
   display: flex;
-  gap: 8px 18px;
+  gap: var(--row-y) 26px;
   flex-wrap: wrap;
   min-width: 0;
 }
@@ -485,8 +563,8 @@ button {
 .strip-preview {
   flex: 1 1 100%;
   width: 100%;
-  height: 16px;
-  border-radius: 3px;
+  height: 22px;
+  border-radius: 4px;
   border: 1px solid #d9dde2;
 }
 
@@ -495,8 +573,8 @@ button {
 .doorrow {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 10px 13px;
+  gap: var(--gap);
+  padding: var(--row-y) var(--pad-x);
   border-top: 1px solid #f2f3f5;
   min-width: 0;
 }
@@ -504,7 +582,7 @@ button {
 .doorlabel {
   flex: 1;
   min-width: 0;
-  font-size: 12.5px;
+  font-size: var(--font-label);
   color: #24282d;
   white-space: nowrap;
   overflow: hidden;
@@ -513,10 +591,10 @@ button {
 
 .doorstate {
   font-family: "IBM Plex Mono", monospace;
-  font-size: 10.5px;
+  font-size: var(--font-chip);
   letter-spacing: 0.02em;
-  padding: 2px 7px;
-  border-radius: 3px;
+  padding: 6px 12px;
+  border-radius: 4px;
   flex-shrink: 0;
   color: #7b828a;
   background: #f4f5f7;
@@ -532,8 +610,8 @@ button {
 .doorsim {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 8px 13px;
+  gap: 10px;
+  padding: var(--row-y) var(--pad-x);
   border-top: 1px solid #f2f3f5;
   background: #fafbfc;
   flex-wrap: wrap;
@@ -541,7 +619,7 @@ button {
 
 .doorsim-label {
   flex: 1;
-  font-size: 10px;
+  font-size: var(--font-chip);
   letter-spacing: 0.05em;
   text-transform: uppercase;
   color: #a0a7ae;
@@ -549,9 +627,9 @@ button {
 }
 
 .doorsim button {
-  height: 22px;
-  padding: 0 9px;
-  font-size: 10.5px;
+  min-height: var(--touch);
+  padding: 0 20px;
+  font-size: var(--font-seg);
   color: #5b6269;
   background: linear-gradient(#fff, #f7f8f9);
   border: 1px solid #d7dbe0;
@@ -571,29 +649,30 @@ button {
 /* ---------------------------------------------------------------- activity */
 
 .activity {
-  height: clamp(200px, 42vh, 380px);
+  flex: 1;
+  min-height: 0;
   overflow: auto;
-  padding: 6px 0;
+  padding: 8px 0;
 }
 
 .activity-line {
   content-visibility: auto;
-  contain-intrinsic-size: 0 22px;
+  contain-intrinsic-size: 0 30px;
   display: flex;
-  gap: 9px;
-  padding: 3px 13px;
+  gap: 12px;
+  padding: 5px var(--pad-x);
   align-items: baseline;
 }
 
 .activity-time {
   font-family: "IBM Plex Mono", monospace;
-  font-size: 10.5px;
+  font-size: var(--font-chip);
   color: #b6bcc3;
   flex-shrink: 0;
 }
 
 .activity-text {
-  font-size: 11.5px;
+  font-size: var(--font-log);
   line-height: 1.4;
   overflow-wrap: break-word;
   min-width: 0;
@@ -620,8 +699,8 @@ button {
 }
 
 .activity-empty {
-  padding: 10px 13px;
-  font-size: 11.5px;
+  padding: 14px var(--pad-x);
+  font-size: var(--font-log);
   color: #b6bcc3;
 }
 

@@ -35,6 +35,7 @@ import {
   SEMAPHORE_COLORS,
   SIDES,
   STRIP_COLORS,
+  STRIP_MIX,
 } from "@eai/ier/s33380";
 import type { LedRequest } from "@eai/ier/s33380";
 import { aiCollisions } from "./collisions.ts";
@@ -253,7 +254,15 @@ function vocabulary() {
     actions: ACTIONS,
     indicators: INDICATOR_SECTIONS.map((section) => ({ section, channel: config.indicators[section] })),
     sides: SIDES.map((side) => ({ side, channel: config.bagTag[side] })),
-    stripColors: STRIP_COLORS.map((color) => ({ color, channel: config.strip[color] })),
+    // A strip colour is one or more primaries lit together — the channels mix additively in the
+    // strip itself, so cyan is green and blue rather than wiring of its own. Both the channels it
+    // drives and the primaries it lights are passed on: the page shows the first and mixes by the
+    // second, and neither is a copy of anything it could get wrong.
+    stripColors: STRIP_COLORS.map((color) => ({
+      color,
+      primaries: STRIP_MIX[color],
+      channels: STRIP_MIX[color].map((primary) => config.strip[primary]),
+    })),
     semaphoreColors: SEMAPHORE_COLORS.map((color) => ({ color, channels: config.semaphore[color] })),
     doorChannels: Object.entries(config.doors).map(([channel, door]) => ({ channel: Number(channel), door })),
     collisions: aiCollisions(config),

@@ -5,14 +5,13 @@
  * handle — only the process holding it can drive the board.
  *
  * The types mirror `@eai/ier/s33380`, but the *values* deliberately do not: section names, actions
- * and channel numbers all arrive from `/api/vocabulary`, which the backend builds from the driver's
- * own exported vocabularies and the live channel map. A copy of them here would recreate exactly the
- * drift the driver's design avoids.
+ * and channel numbers all arrive from the backend, which builds them from the driver's own exported
+ * vocabularies and live channel map. A copy of them here would recreate exactly the drift the
+ * driver's design avoids.
  *
  * There is no mock in the browser either, for the same reason. `deno task dev:mock` runs a fake
  * `Transport` through the *real* driver, so the command construction, framing and ack matching being
- * exercised are the shipped ones. A second mock on this side would be a copy that can go stale, and
- * a page that can fake a board is a page that can produce a screenshot nobody should trust.
+ * exercised are the shipped ones. A second mock on this side would be a copy that can go stale.
  */
 
 // ---- Mirrored driver types -----------------------------------------------------------------
@@ -38,7 +37,9 @@ export type LedRequest =
 
 // ---- Wire shapes ---------------------------------------------------------------------------
 
-/** One line of the backend's log. `kind` is open-ended: the driver may add kinds. */
+export type Status = "closed" | "opening" | "open";
+
+/** One line of the backend's activity log. `kind` is open-ended: the driver may add kinds. */
 export interface LogEntry {
   at: string;
   kind: string;
@@ -48,42 +49,44 @@ export interface LogEntry {
 /**
  * One section addressing a channel.
  *
- * `id` is the claimant's identity in the driver's vocabulary and is the same scheme rows are keyed
- * by, so a marker can find the row it names. `label` is for reading; matching on it is what broke
- * this once already.
+ * `id` is the claimant's identity in the driver's vocabulary and is the same scheme controls are
+ * keyed by, so a collision can be tied back to the control it concerns. `label` is for reading.
  */
 export interface Claimant {
   id: string;
   label: string;
 }
 
-/** Indicator channels addressed by more than one section, computed from the live map. */
 export interface Collision {
   channel: number;
   claimants: Claimant[];
 }
 
-/** `/api/vocabulary` — the driver's own vocabularies plus the channel map of the wired board. */
+/** The driver's own vocabularies plus the channel map in force. */
 export interface Vocabulary {
-  portName: string;
-  /** True when a fake transport is in use. The page must say so, unmissably. */
   mock: boolean;
   actions: Action[];
   indicators: { section: IndicatorSection; channel: number }[];
   sides: { side: Side; channel: number }[];
   stripColors: { color: StripColor; channel: number }[];
   semaphoreColors: { color: SemaphoreColor; channels: number[] }[];
+  doorChannels: { channel: number; door: Door }[];
   collisions: Collision[];
-  /** Sections whose channel the driver has never confirmed against hardware. */
-  unverified: string[];
 }
 
-/** `/api/status` — the authoritative door state, so the UI never parses it out of a log line. */
-export interface Status {
-  listening: boolean;
+export interface State {
+  status: Status;
+  portName: string;
+  mock: boolean;
   doors: Record<Door, string>;
   log: LogEntry[];
+  vocabulary: Vocabulary;
 }
+
+/** Pushed over SSE: either a new log line or a change of connection or door state. */
+export type Event =
+  | { type: "log"; entry: LogEntry }
+  | { type: "status"; status: Status; portName: string; doors: Record<Door, string> };
 
 async function getJson<T>(path: string): Promise<T> {
   const response = await fetch(path);
@@ -91,8 +94,7 @@ async function getJson<T>(path: string): Promise<T> {
   return await response.json() as T;
 }
 
-export const getVocabulary = () => getJson<Vocabulary>("/api/vocabulary");
-export const getStatus = () => getJson<Status>("/api/status");
+export const getState = () => getJson<State>("/api/state");
 
 /**
  * Posts a command.
@@ -111,19 +113,16 @@ async function post(path: string, body?: unknown): Promise<void> {
   throw new Error(failure?.error ?? `${response.status} ${response.statusText}`);
 }
 
+export const connect = (portName: string) => post("/api/connect", { portName });
+export const disconnect = () => post("/api/disconnect");
 export const sendLed = (request: LedRequest) => post("/api/led", request);
 export const sendAllOff = () => post("/api/all-off");
+export const simulateDoor = (door: Door) => post("/api/door", { door });
 
-/** Subscribes to the log stream. Returns an unsubscribe. */
-export function subscribe(
-  onEntry: (entry: LogEntry) => void,
-  onDropped: (message: string) => void,
-): () => void {
+/** Subscribes to the event stream. Returns an unsubscribe. */
+export function subscribe(onEvent: (event: Event) => void, onDropped: (message: string) => void): () => void {
   const stream = new EventSource("/api/events");
-  stream.onmessage = (event) => {
-    const entry = JSON.parse(event.data) as LogEntry;
-    if (entry.kind !== "hello") onEntry(entry);
-  };
-  stream.onerror = () => onDropped("event stream dropped — is the backend still running?");
+  stream.onmessage = (message) => onEvent(JSON.parse(message.data) as Event);
+  stream.onerror = () => onDropped("Event stream dropped — is the backend still running?");
   return () => stream.close();
 }

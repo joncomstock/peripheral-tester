@@ -4,26 +4,17 @@
  * Owns the COM port and exposes it over a local JSON + SSE API. The browser never touches the
  * board: only the process holding the COM handle can drive it, and the driver is Deno-native.
  *
- * It exists for the on-device validation the driver still needs, and for the two questions only a
- * wired board can answer:
- *  1. **What token does the board actually reply with?** The expected `SY@` / `AI@` / `AL@` come
- *     from the Python driver's source and were never confirmed on the wire. Every reply that is not
- *     the expected one is logged and reaches the page verbatim.
- *  2. **Are `payment` (channel 1) and `cardReader` (channel 2) wired as the defaults assume?**
- *     Both were `TODO`-marked as unverified, and `payment` shares channel 1 with the semaphore's
- *     green lamp — so pressing `payment` may light the semaphore instead. Watch the board, not the
- *     screen.
+ * This is a control panel, not a probe. It drives every section of the board and reports what the
+ * board says back; it does not ask the operator to grade the result. Where the channel map turns out
+ * to be wrong for a given kiosk, the fix is a `config` passed to `IERS33380.open()`.
  *
  * ```
- * deno task dev                 # COM14
- * deno task dev COM3            # another port
+ * deno task dev                 # serves the UI; connect to a port from the page
  * deno task dev:mock            # no hardware
  * ```
  *
  * `--mock` drives a fake board through the real driver, so the page can be checked off-kiosk — the
- * command construction, framing and ack matching under test are the shipped ones. It answers every
- * command, echoes the parameters back on every third one so the shape warning is visible, and
- * reports each door in turn every few seconds.
+ * command construction, framing and ack matching under test are the shipped ones.
  *
  * @module
  */
@@ -35,13 +26,21 @@ import { BaseHandler } from "@std/log";
 import type { LogRecord } from "@std/log";
 import { attachHandler } from "@eai/logging-ts";
 import type { Transport } from "@eai/models";
-import { ACTIONS, IER_S33380_DEFAULTS, IERS33380, INDICATOR_SECTIONS, SEMAPHORE_COLORS, SIDES, STRIP_COLORS } from "@eai/ier/s33380";
+import {
+  ACTIONS,
+  DEFAULT_PORT,
+  IER_S33380_DEFAULTS,
+  IERS33380,
+  INDICATOR_SECTIONS,
+  SEMAPHORE_COLORS,
+  SIDES,
+  STRIP_COLORS,
+} from "@eai/ier/s33380";
 import type { LedRequest } from "@eai/ier/s33380";
 import { aiCollisions } from "./collisions.ts";
 
 const args = Deno.args.filter((a) => a !== "--mock");
 const mock = Deno.args.includes("--mock");
-const portName = args[0] ?? "COM14";
 const port = Number(Deno.env.get("PORT") ?? 8777);
 
 const here = import.meta.dirname;
@@ -50,32 +49,24 @@ const distDir = join(here, "..", "dist");
 const built = await Deno.stat(join(distDir, "index.html")).then(() => true).catch(() => false);
 
 // ---------------------------------------------------------------------------------------------
-// A fake board, for checking the page without a kiosk.
+// A fake board, for driving the page without a kiosk.
 // ---------------------------------------------------------------------------------------------
 
 /**
- * Input channels the mock reports on, taken from the default map rather than written out, so the
- * mock cannot report a channel the driver ignores.
+ * Answers every command with a plausible token and reports a door when asked to.
+ *
+ * The doors are driven from the page rather than a timer: this is a control panel, and a door that
+ * flapped on its own every few seconds would fill the activity log with events nobody caused.
  */
-const MOCK_DOOR_CHANNELS = Object.keys(IER_S33380_DEFAULTS.doors).map(Number);
-
-/** Answers every command with the expected token and reports a door every few seconds. */
 class MockBoard implements Transport {
   isOpen = true;
   #inbound: Uint8Array[] = [];
   #enc = new TextEncoder();
-  #tick = 0;
   #replies = 0;
 
-  constructor() {
-    setInterval(() => {
-      // Opens then closes each door in turn. Reporting only one of them would leave half the
-      // channel → door map unexercised off-hardware, and that map is configuration.
-      const channel = MOCK_DOOR_CHANNELS[Math.floor(this.#tick / 2) % MOCK_DOOR_CHANNELS.length];
-      const state = this.#tick % 2 === 0 ? "A" : "I";
-      this.#tick += 1;
-      this.#inbound.push(this.#enc.encode(`\x02/L;${channel}=${state}\x03`));
-    }, 4000);
+  /** Push an input report for a door channel, as the real board would when a switch moves. */
+  reportDoor(channel: number, open: boolean): void {
+    this.#inbound.push(this.#enc.encode(`\x02/L;${channel}=${open ? "A" : "I"}\x03`));
   }
 
   write(data: Uint8Array): Promise<void> {
@@ -86,9 +77,8 @@ class MockBoard implements Transport {
     const end = framed.charCodeAt(framed.length - 1) === 0x03 ? framed.length - 1 : framed.length;
     const body = framed.slice(start, end);
     // Every third reply echoes the parameters (`AI;3=O@`) instead of answering bare (`AI@`). Both
-    // shapes are real — the driver accepts either and warns, naming the token it saw — and that
-    // warning is the finding the on-device run is looking for. A mock that only ever answers bare
-    // would leave the page's most important line unexercised until someone is at a kiosk.
+    // shapes are real, the driver accepts either and warns naming the token it saw, and the warning
+    // reaches the activity log — so that path is exercised before anyone is standing at a kiosk.
     this.#replies += 1;
     const token = this.#replies % 3 === 0 ? body : body.slice(0, 2);
     this.#inbound.push(this.#enc.encode(`\x02${token}@\x03`));
@@ -112,34 +102,51 @@ class MockBoard implements Transport {
 }
 
 // ---------------------------------------------------------------------------------------------
-// Board
+// Session
 // ---------------------------------------------------------------------------------------------
 
-// `open()` names its logger after the port, so the mock is given the same shape. One name then
-// covers both paths, and the warning handler below attaches to whichever is in use.
-const LOG_NAME = `IERS33380:${mock ? "mock" : portName}`;
+type Status = "closed" | "opening" | "open";
 
-const board = mock ? await IERS33380.openWithTransport(new MockBoard(), undefined, LOG_NAME) : await IERS33380.open({ portName });
+let board: IERS33380 | null = null;
+let mockBoard: MockBoard | null = null;
+let status: Status = "closed";
+let portName = mock ? "mock" : (args[0] ?? DEFAULT_PORT);
+
+const doors: Record<"upper" | "lower", string> = { upper: "closed", lower: "closed" };
 
 /** Everything the page has shown, newest last. Bounded so a long session cannot grow without end. */
 const log: { at: string; kind: string; text: string }[] = [];
 const listeners = new Set<(line: string) => void>();
 
+function send(payload: unknown): void {
+  const line = `data: ${JSON.stringify(payload)}\n\n`;
+  for (const listener of listeners) listener(line);
+}
+
 function record(kind: string, text: string): void {
-  const entry = { at: new Date().toISOString().slice(11, 23), kind, text };
+  const entry = { at: new Date().toISOString().slice(11, 19), kind, text };
   log.push(entry);
   if (log.length > 500) log.shift();
-  const line = `data: ${JSON.stringify(entry)}\n\n`;
-  for (const send of listeners) send(line);
+  send({ type: "log", entry });
 }
+
+function announce(): void {
+  send({ type: "status", status, portName, doors });
+}
+
+/**
+ * Logger names already carrying our handler.
+ *
+ * `attachHandler` pushes onto the logger's handler list, so reconnecting to the same port would
+ * attach a second copy and every driver warning would arrive twice.
+ */
+const attached = new Set<string>();
 
 /**
  * The driver's own warnings, onto the page.
  *
- * The mismatched-acknowledgement warning — the one line the on-device run exists to read, naming the
- * token the board really sent — goes to the driver's logger, which means this process's stdout. An
- * operator looking at the board and the page has no reason to be watching a terminal, so without
- * this the finding lands where nobody is looking.
+ * A mismatched acknowledgement is reported through the driver's logger, which means this process's
+ * stdout — where an operator looking at the board and the page has no reason to be watching.
  */
 class WarningsToPage extends BaseHandler {
   /** Warnings only: the driver's `error` calls already reach the page through its `error` event. */
@@ -152,70 +159,153 @@ class WarningsToPage extends BaseHandler {
     throw new Error("unreachable");
   }
 }
-attachHandler(LOG_NAME, new WarningsToPage("WARN"));
 
-const doors = { upper: "unknown", lower: "unknown" };
+function listen(name: string): void {
+  if (attached.has(name)) return;
+  attachHandler(name, new WarningsToPage("WARN"));
+  attached.add(name);
+}
 
-board.on("door", (event: { door: "upper" | "lower"; state: string }) => {
-  doors[event.door] = event.state;
-  record("door", `${event.door} door ${event.state}`);
-});
-board.on("data", (text: string) => record("data", text));
-board.on("error", (err: Error) => record("error", err.message));
-board.on("disconnect", () => record("disconnect", "the board stopped reporting; restart to reopen"));
+function wire(opened: IERS33380): void {
+  opened.on("door", (event: { door: "upper" | "lower"; state: string }) => {
+    doors[event.door] = event.state;
+    record("door", `${event.door[0].toUpperCase()}${event.door.slice(1)} door ${event.state}`);
+    announce();
+  });
+  opened.on("data", (text: string) => record("data", text));
+  opened.on("error", (err: Error) => record("error", err.message));
+  opened.on("disconnect", () => {
+    record("error", "The board stopped reporting. Reconnect to continue.");
+    board = null;
+    mockBoard = null;
+    status = "closed";
+    announce();
+  });
+}
 
-record("open", `${mock ? "mock board" : portName} open`);
+async function connect(requested: string): Promise<void> {
+  if (status !== "closed") return;
+  portName = mock ? "mock" : requested.trim().toUpperCase() || DEFAULT_PORT;
+  status = "opening";
+  announce();
+  record("info", `Opening ${portName} at 9600 8N1`);
+
+  const name = `IERS33380:${portName}`;
+  try {
+    if (mock) {
+      mockBoard = new MockBoard();
+      board = await IERS33380.openWithTransport(mockBoard, undefined, name);
+    }
+    else {
+      board = await IERS33380.open({ portName });
+    }
+  }
+  catch (err) {
+    status = "closed";
+    board = null;
+    mockBoard = null;
+    announce();
+    record("error", err instanceof Error ? err.message : String(err));
+    throw err;
+  }
+
+  listen(name);
+  wire(board);
+  status = "open";
+  announce();
+  record("ok", "Board acknowledged handshake");
+}
+
+async function disconnect(): Promise<void> {
+  const open = board;
+  if (!open) return;
+  board = null;
+  mockBoard = null;
+  status = "closed";
+  // Leave the board dark: a kiosk left with lamps lit is the mistake this button exists to avoid.
+  try {
+    await open.allOff();
+  }
+  catch { /* a board that is already unreachable cannot be darkened */ }
+  await open.close();
+  announce();
+  record("info", `${portName} released`);
+}
 
 // ---------------------------------------------------------------------------------------------
 // HTTP
 // ---------------------------------------------------------------------------------------------
 
-const json = (body: unknown, status = 200) =>
-  new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+const json = (body: unknown, statusCode = 200) =>
+  new Response(JSON.stringify(body), { status: statusCode, headers: { "content-type": "application/json" } });
 
-/** The button grid is generated from this, so the UI cannot drift from the driver's vocabularies. */
+/**
+ * The board's vocabulary and channel map.
+ *
+ * Built from the driver's own exported arrays, so the page cannot offer a section the driver does
+ * not have. Before a connection there is no live config, so the shipped defaults stand in — the
+ * channel numbers are what the page labels each control with, and they are configuration either way.
+ */
 function vocabulary() {
+  const config = board?.config ?? IER_S33380_DEFAULTS;
   return {
-    portName: mock ? "mock" : portName,
     mock,
     actions: ACTIONS,
-    indicators: INDICATOR_SECTIONS.map((section) => ({ section, channel: board.config.indicators[section] })),
-    sides: SIDES.map((side) => ({ side, channel: board.config.bagTag[side] })),
-    stripColors: STRIP_COLORS.map((color) => ({ color, channel: board.config.strip[color] })),
-    semaphoreColors: SEMAPHORE_COLORS.map((color) => ({ color, channels: board.config.semaphore[color] })),
-    // Computed from the live channel map, so a collision a custom `config` introduces is reported
-    // the same way the shipped `payment`/semaphore-green one is.
-    collisions: aiCollisions(board.config),
-    // Declared, because the driver exports no "was this confirmed" flag — it is prose in its
-    // `defaults.ts`. Shorten this list as a wired board confirms each channel.
-    unverified: ["payment", "cardReader"],
+    indicators: INDICATOR_SECTIONS.map((section) => ({ section, channel: config.indicators[section] })),
+    sides: SIDES.map((side) => ({ side, channel: config.bagTag[side] })),
+    stripColors: STRIP_COLORS.map((color) => ({ color, channel: config.strip[color] })),
+    semaphoreColors: SEMAPHORE_COLORS.map((color) => ({ color, channels: config.semaphore[color] })),
+    doorChannels: Object.entries(config.doors).map(([channel, door]) => ({ channel: Number(channel), door })),
+    collisions: aiCollisions(config),
   };
+}
+
+/** Sections sharing an indicator channel, so a command that may drive two lamps says so once. */
+function sharedNote(request: LedRequest): string | null {
+  const id = request.section === "bagTagPrinter"
+    ? `bagTag:${request.side}`
+    : request.section === "semaphore"
+    ? `semaphore:${request.color}`
+    : request.section === "strip"
+    ? null
+    : `indicator:${request.section}`;
+  if (id === null) return null;
+
+  for (const collision of vocabulary().collisions) {
+    const mine = collision.claimants.find((claimant) => claimant.id === id);
+    if (!mine) continue;
+    const others = collision.claimants.filter((claimant) => claimant.id !== id).map((c) => c.label);
+    return `ch ${collision.channel} is also ${others.join(" and ")}`;
+  }
+  return null;
 }
 
 async function handle(request: Request): Promise<Response> {
   const { pathname } = new URL(request.url);
+  const post = request.method === "POST";
 
-  if (pathname === "/api/vocabulary") return json(vocabulary());
-  if (pathname === "/api/status") return json({ listening: board.isListening, doors, log });
+  if (pathname === "/api/state") {
+    return json({ status, portName, mock, doors, log, vocabulary: vocabulary() });
+  }
 
   if (pathname === "/api/events") {
-    let send: (line: string) => void;
+    let push: (line: string) => void;
     const body = new ReadableStream({
       start(controller) {
         const encoder = new TextEncoder();
-        send = (line) => {
+        push = (line) => {
           try {
             controller.enqueue(encoder.encode(line));
           }
           catch {
-            listeners.delete(send);
+            listeners.delete(push);
           }
         };
-        listeners.add(send);
-        send(`data: ${JSON.stringify({ at: "", kind: "hello", text: "stream open" })}\n\n`);
+        listeners.add(push);
+        push(`data: ${JSON.stringify({ type: "status", status, portName, doors })}\n\n`);
       },
       cancel() {
-        listeners.delete(send);
+        listeners.delete(push);
       },
     });
     return new Response(body, {
@@ -223,24 +313,56 @@ async function handle(request: Request): Promise<Response> {
     });
   }
 
-  if (request.method === "POST" && (pathname === "/api/led" || pathname === "/api/all-off")) {
+  if (post && pathname === "/api/connect") {
+    const body = await request.json().catch(() => ({})) as { portName?: string };
+    try {
+      await connect(body.portName ?? portName);
+      return json({ ok: true, status, portName });
+    }
+    catch (err) {
+      return json({ ok: false, error: err instanceof Error ? err.message : String(err) }, 502);
+    }
+  }
+
+  if (post && pathname === "/api/disconnect") {
+    await disconnect();
+    return json({ ok: true, status });
+  }
+
+  if (post && (pathname === "/api/led" || pathname === "/api/all-off")) {
+    const open = board;
+    if (!open) return json({ ok: false, error: "Not connected" }, 409);
     try {
       if (pathname === "/api/all-off") {
-        await board.allOff();
-        record("sent", "allOff");
+        await open.allOff();
+        record("ok", "All off");
       }
       else {
-        const request_ = await request.json() as LedRequest;
-        await board.ledControl(request_);
-        record("sent", JSON.stringify(request_));
+        const led = await request.json() as LedRequest;
+        await open.ledControl(led);
+        record("sent", JSON.stringify(led));
+        const note = sharedNote(led);
+        if (note) record("info", note);
       }
       return json({ ok: true });
     }
     catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      record("failed", message);
+      record("error", message);
       return json({ ok: false, error: message }, 500);
     }
+  }
+
+  // Moving a door switch by hand is the operator's job on a real kiosk; with no kiosk in front of
+  // you the page has to be able to move it instead, or the reporting path is never seen.
+  if (post && pathname === "/api/door") {
+    if (!mock || !mockBoard) return json({ ok: false, error: "Only a mock board has simulated doors" }, 409);
+    const body = await request.json().catch(() => ({})) as { door?: "upper" | "lower" };
+    const door = body.door === "lower" ? "lower" : "upper";
+    const entry = vocabulary().doorChannels.find((candidate) => candidate.door === door);
+    if (!entry) return json({ ok: false, error: `No input channel maps to the ${door} door` }, 409);
+    mockBoard.reportDoor(entry.channel, doors[door] !== "open");
+    return json({ ok: true });
   }
 
   if (pathname.startsWith("/api/")) return new Response("not found", { status: 404 });
@@ -255,20 +377,16 @@ async function handle(request: Request): Promise<Response> {
   return await serveDir(request, { fsRoot: distDir, quiet: true });
 }
 
-console.log(`  IER S33380 tester — ${mock ? "MOCK board" : portName}`);
+console.log(`  IER S33380 light board tester${mock ? " — MOCK board" : ""}`);
 console.log(built ? `  open http://localhost:${port}/` : `  API on :${port} — UI not built, run \`npm run dev\` (:5175)`);
-console.log(`  watch the BOARD as well as the page: payment and cardReader channels are unverified\n`);
+console.log(`  connect to a port from the page\n`);
 
 const server = Deno.serve({ port, onListen: () => {} }, handle);
 
 // Leave the board dark and the port released on Ctrl-C, so the next run can open it.
 Deno.addSignalListener("SIGINT", async () => {
   console.log("\n  shutting down: darkening the board and releasing the port");
-  try {
-    await board.allOff();
-  }
-  catch { /* a board that is already unreachable cannot be darkened */ }
-  await board.close();
+  await disconnect();
   await server.shutdown();
   Deno.exit(0);
 });

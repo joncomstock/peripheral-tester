@@ -1,357 +1,281 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { Action, Door, LogEntry, Vocabulary } from "./api.ts";
-import { getStatus, getVocabulary, sendAllOff, sendLed, subscribe } from "./api.ts";
-import type { Group, Observation, Observations, Row } from "./rows.ts";
-import {
-  CHOOSABLE,
-  evidenceMarkdown,
-  groupsFor,
-  parseObservations,
-  requestFor,
-  tally,
-  UNOBSERVED,
-  VERDICT_LABELS,
-} from "./rows.ts";
+import type { ReactNode } from "react";
+import type { Action, Door, LogEntry, State, Status } from "./api.ts";
+import * as api from "./api.ts";
+import type { Commanded, Control } from "./rows.ts";
+import { controlsFor, fullName, modeOf, requestFor, towerMode } from "./rows.ts";
+import { LAMP, lampColor, lampStyle, segStyle, stripPreviewStyle, toneOf } from "./look.ts";
 
-const MAX_LINES = 500;
-
-/**
- * Storage schema. Bumped when the shape of an {@link Observation} changes.
- *
- * v1 held the older verdict names and put `undefined` into the exported record when this build read
- * it back. `parseObservations` now guards that, but the version is what makes the next change
- * explicit rather than silent. v1 records are not migrated: it was never run outside development.
- */
-const SCHEMA = "v2";
-const storageKey = (portName: string) => `ier-lightboard-tester:${SCHEMA}:${portName}`;
-
-/**
- * Storage that cannot take the page down with it.
- *
- * `getItem` and `setItem` throw in private browsing and when the quota is gone. An unguarded read
- * threw into the boot chain and surfaced as "no backend on this port", blaming the wrong thing
- * entirely; an unguarded write threw out of an effect.
- */
-function readObservations(portName: string): Observations {
-  try {
-    const stored = localStorage.getItem(storageKey(portName));
-    return stored ? parseObservations(stored) : {};
-  }
-  catch {
-    return {};
-  }
-}
-
-function writeObservations(portName: string, observations: Observations): boolean {
-  try {
-    localStorage.setItem(storageKey(portName), JSON.stringify(observations));
-    return true;
-  }
-  catch {
-    return false;
-  }
-}
-
-/** Kinds carrying something the board said that the driver could not account for. */
-const UNEXPECTED = ["warned", "data"];
-
-/** A shape warning names the token in quotes: `'AI;3=O' answered with 'AI;3=O@', expected 'AI@'`. */
-const ANSWERED_WITH = /answered with '([^']+)'/;
-
-/* Static, so it is not rebuilt on every render. States the row grammar once for the whole bay. */
-const GRAMMAR = (
-  <div className="grammar" aria-hidden="true">
-    <span className="grammar__step">Section</span>
-    <span className="grammar__step">You send</span>
-    <span className="grammar__step">It reaches</span>
-    <span className="grammar__step">Your eyes saw</span>
-  </div>
-);
+const MAX_LINES = 200;
 
 export function App() {
-  const [vocabulary, setVocabulary] = useState<Vocabulary | null>(null);
+  const [state, setState] = useState<State | null>(null);
   const [unreachable, setUnreachable] = useState<string | null>(null);
-  const [doors, setDoors] = useState<Record<Door, string>>({ upper: "unknown", lower: "unknown" });
-  const [entries, setEntries] = useState<LogEntry[]>([]);
-  const [observations, setObservations] = useState<Observations>({});
-  const [kindFilter, setKindFilter] = useState("everything");
-  /** Row key → send count, so the pulse can replay on every command rather than only the first. */
-  const [fired, setFired] = useState<Record<string, number>>({});
-  const [called, setCalled] = useState<string | null>(null);
-  const rowRefs = useRef(new Map<string, HTMLDivElement>());
-
-  const append = (entry: LogEntry) => setEntries((previous) => [...previous, entry].slice(-MAX_LINES));
+  const [status, setStatus] = useState<Status>("closed");
+  const [portName, setPortName] = useState("");
+  const [doors, setDoors] = useState<Record<Door, string>>({ upper: "closed", lower: "closed" });
+  const [log, setLog] = useState<LogEntry[]>([]);
+  const [commanded, setCommanded] = useState<Commanded>({});
+  const wasOpen = useRef(false);
 
   useEffect(() => {
     let live = true;
-    (async () => {
-      const [loaded, status] = await Promise.all([getVocabulary(), getStatus()]);
-      if (!live) return;
-      setVocabulary(loaded);
-      setDoors(status.doors);
-      setEntries(status.log.slice(-MAX_LINES));
-      // Read before the persisting effect can run, so a refresh mid-run does not wipe the record.
-      setObservations(readObservations(loaded.portName));
-    })().catch((err: Error) => {
-      if (live) setUnreachable(err.message);
-    });
+    api.getState()
+      .then((loaded) => {
+        if (!live) return;
+        setState(loaded);
+        setStatus(loaded.status);
+        setPortName(loaded.portName);
+        setDoors(loaded.doors);
+        setLog(loaded.log.slice(-MAX_LINES));
+      })
+      .catch((err: Error) => {
+        if (live) setUnreachable(err.message);
+      });
     return () => {
       live = false;
     };
   }, []);
 
   useEffect(() => {
-    if (!vocabulary) return;
-    return subscribe(
-      (entry) => {
-        append(entry);
-        // The backend tracks door state authoritatively; re-reading it beats parsing a log line.
-        if (entry.kind === "door") getStatus().then((status) => setDoors(status.doors)).catch(() => {});
+    if (!state) return;
+    return api.subscribe(
+      (event) => {
+        if (event.type === "log") {
+          setLog((previous) => [...previous, event.entry].slice(-MAX_LINES));
+          return;
+        }
+        setStatus(event.status);
+        setPortName(event.portName);
+        setDoors(event.doors);
       },
-      (message) => append({ at: "", kind: "error", text: message }),
+      (message) => setLog((previous) => [...previous, { at: "", kind: "error", text: message }].slice(-MAX_LINES)),
     );
-  }, [vocabulary]);
+  }, [state]);
 
+  // Nothing is commanded on a board that is not open, and a reconnected board starts dark.
   useEffect(() => {
-    if (!vocabulary) return;
-    // The record is the deliverable of the run, so a storage failure is said out loud rather than
-    // swallowed — the operator can still copy it before the tab closes.
-    if (!writeObservations(vocabulary.portName, observations)) {
-      append({ at: "", kind: "failed", text: "the browser refused to save the record — copy it before closing this tab" });
+    if (status === "open") wasOpen.current = true;
+    else if (wasOpen.current) {
+      wasOpen.current = false;
+      setCommanded({});
     }
-  }, [vocabulary, observations]);
+  }, [status]);
 
-  const groups = useMemo(() => (vocabulary ? groupsFor(vocabulary) : []), [vocabulary]);
-  const rows = useMemo(() => groups.flatMap((group) => group.rows), [groups]);
-  const markdown = useMemo(
-    () =>
-      vocabulary
-        ? evidenceMarkdown(vocabulary, groups, observations, vocabulary.mock, new Date().toISOString())
-        : "",
-    [vocabulary, groups, observations],
-  );
-  const counts = useMemo(() => tally(rows, observations), [rows, observations]);
-  // Keyed on the log alone: typing a note used to rescan every entry with a regex on each keystroke.
-  const unexpected = useMemo(() => distinctUnexpected(entries), [entries]);
-  const recorded = rows.length - (counts.find((entry) => entry.verdict === "untested")?.count ?? 0);
+  const controls = useMemo(() => (state ? controlsFor(state.vocabulary) : null), [state]);
+  const open = status === "open";
+  const opening = status === "opening";
 
-  const failed = (err: Error) => append({ at: "", kind: "failed", text: err.message });
-
-  const send = (row: Row, action: Action) => {
-    setFired((previous) => ({ ...previous, [row.key]: (previous[row.key] ?? 0) + 1 }));
-    sendLed(requestFor(row.base, action)).catch(failed);
-  };
-
-  /*
-   * A CSS animation with no fill mode snaps back to its start when it ends, which left a copper stub
-   * parked at the head of every row that had ever been fired. The pulse is a moment, so it is
-   * unmounted once it has been one.
-   */
-  const spent = (key: string) =>
-    setFired((previous) => {
-      const next = { ...previous };
-      delete next[key];
-      return next;
-    });
-
-  const observe = (key: string, change: Partial<Observation>) =>
-    setObservations((previous) => ({ ...previous, [key]: { ...(previous[key] ?? UNOBSERVED), ...change } }));
-
-  /** Jump to the other section sharing a pin — the clash is only useful if you can see both ends. */
-  const callOut = useCallback((key: string) => {
-    const target = rowRefs.current.get(key);
-    if (!target) return;
-    target.scrollIntoView({ block: "center", behavior: "smooth" });
-    setCalled(key);
+  const complain = useCallback((err: Error) => {
+    setLog((previous) => [...previous, { at: "", kind: "failed", text: err.message }].slice(-MAX_LINES));
   }, []);
+
+  const send = useCallback((control: Control, action: Action) => {
+    setCommanded((previous) => ({ ...previous, [control.key]: action }));
+    api.sendLed(requestFor(control.base, action)).catch(complain);
+  }, [complain]);
+
+  const allOff = useCallback(() => {
+    setCommanded({});
+    api.sendAllOff().catch(complain);
+  }, [complain]);
+
+  const toggleConnection = useCallback(() => {
+    if (open) api.disconnect().catch(complain);
+    // A refused connection is already explained in the activity log by the backend.
+    else if (!opening) api.connect(portName).catch(() => {});
+  }, [open, opening, portName, complain]);
 
   if (unreachable) {
     return (
-      <main className="gate">
-        <h1 className="gate__title">No backend on this port</h1>
-        <p className="gate__detail">{unreachable}</p>
-        <p className="gate__fix">
-          The backend holds the COM handle, and only the process holding it can drive the board. Start it
-          with <code>deno task dev</code> for a wired board, or <code>deno task dev:mock</code> for none.
+      <div className="gate">
+        <h1>Backend not answering</h1>
+        <p className="gate-detail">{unreachable}</p>
+        <p>
+          It holds the COM handle, and the browser cannot reach the board without it. Start it with{" "}
+          <code>deno task dev</code>, or <code>deno task dev:mock</code> for no hardware.
         </p>
-      </main>
+      </div>
     );
   }
 
-  if (!vocabulary) {
-    return (
-      <main className="gate">
-        <p className="gate__fix">Opening the port…</p>
-      </main>
-    );
-  }
+  if (!state || !controls) return <div className="gate"><p>Loading…</p></div>;
 
-  const kinds = ["everything", ...new Set(entries.map((entry) => entry.kind))];
-  const shown = kindFilter === "everything" ? entries : entries.filter((entry) => entry.kind === kindFilter);
+  const litStrip = controls.strip
+    .filter((control) => modeOf(commanded, control.key) === "on")
+    .map((control) => lampColor(control.label));
 
   return (
-    <div className="rig">
-      <header className="masthead">
-        <h1 className="masthead__mark">IER S33380</h1>
-        <span className="masthead__sub">light board</span>
-        <div className="masthead__readout">
-          <div className="dial">
-            <span className="dial__key">Port</span>
-            <span className={`dial__value${vocabulary.mock ? " dial__value--mock" : ""}`}>
-              {vocabulary.mock ? "mock — no board" : vocabulary.portName}
-            </span>
-          </div>
-          <div className="dial">
-            <span className="dial__key">Recorded</span>
-            <span className="dial__value">{recorded} / {rows.length}</span>
-          </div>
+    <div className="app">
+      <header className="bar">
+        <div className="brand">
+          <span className="mark" />
+          <span className="brand-text">
+            <span className="brand-name">Light Board Tester</span>
+            <span className="brand-model">IER 919 · S33380</span>
+          </span>
         </div>
+
+        <div className="bar-group">
+          <div className="portbox">
+            <label htmlFor="port">Port</label>
+            <input
+              id="port"
+              value={state.mock ? "mock" : portName}
+              onChange={(event) => setPortName(event.target.value.toUpperCase())}
+              disabled={open || opening || state.mock}
+              spellCheck={false}
+            />
+            <span className="baud">9600 8N1</span>
+          </div>
+          <button className={`connect${open ? " connect-open" : ""}`} onClick={toggleConnection} disabled={opening}>
+            {open ? "Disconnect" : opening ? "Opening…" : "Connect"}
+          </button>
+        </div>
+
+        <div className="statuspill">
+          <span
+            className={opening ? "statusdot statusdot-opening" : "statusdot"}
+            style={{
+              background: open ? LAMP.green : opening ? LAMP.amber : "#c3c9cf",
+              boxShadow: open ? `0 0 6px color-mix(in oklab, ${LAMP.green} 55%, transparent)` : "none",
+            }}
+          />
+          <span>{open ? "Connected · handshake OK" : opening ? "Opening port" : "Not connected"}</span>
+        </div>
+
+        <button className="alloff" onClick={allOff} disabled={!open}>All Off</button>
       </header>
 
-      <div className="thesis">
-        <p className="thesis__claim">
-          The board answers.<br />
-          <em>It does not confirm.</em>
-        </p>
-        <p className="thesis__body">
-          A command reads <strong>answered</strong> the moment the board replies, which proves the wire and
-          not the lamp. Only your eyes can say which lamp lit — say it at the end of each row. Two channels
-          below were never confirmed against hardware, and one of them shares a pin.
-        </p>
-      </div>
-
-      {vocabulary.mock && (
-        <div className="alarm">
-          <span className="alarm__tag">Mock</span>
-          <p className="alarm__text">
-            A fake transport, driven through the real driver. No COM port and no board — nothing recorded
-            here is evidence about hardware.
-          </p>
-        </div>
-      )}
-
-      <div className="benches">
-        <section>
-          <div className="bench__head">
-            <h2 className="bench__title">Outbound</h2>
-            <span className="bench__note">what you send</span>
-          </div>
-
-          <button className="darken" onClick={() => sendAllOff().catch(failed)}>
-            Darken every lamp
-          </button>
-
-          {GRAMMAR}
-
-          {groups.map((group) => (
-            <Bay
-              key={group.title}
-              group={group}
-              observations={observations}
-              fired={fired}
-              called={called}
-              rows={rows}
-              rowRefs={rowRefs}
-              onSend={send}
-              onObserve={observe}
-              onCallOut={callOut}
-              onSpent={spent}
-            />
-          ))}
-        </section>
-
-        <aside className="inbound">
-          <div className="bench__head" style={{ padding: "16px 16px 0", marginBottom: 0 }}>
-            <h2 className="bench__title">Inbound</h2>
-            <span className="bench__note">what the board sends back</span>
-          </div>
-
-          <div className="inbound__block">
-            <h3 className="inbound__title">Service doors</h3>
-            <div className="doors">
-              {(["upper", "lower"] as Door[]).map((door) => (
-                <span className={`door${doors[door] === "open" ? " door--open" : ""}`} key={door}>
-                  <span className={`door__slot door__slot--${doors[door] === "unknown" ? "unknown" : doors[door]}`} />
-                  {door} <span className="door__state">{doors[door]}</span>
-                </span>
+      <main className="main">
+        <div className="col col-wide">
+          <Card title="Component indicators" aside="One indicator each">
+            <div className="indicators">
+              {controls.indicators.map((control) => (
+                <Row
+                  key={control.key}
+                  control={control}
+                  mode={modeOf(commanded, control.key)}
+                  color={LAMP.amber}
+                  enabled={open}
+                  onSend={send}
+                />
               ))}
             </div>
-          </div>
+          </Card>
 
-          <div className="inbound__block">
-            <h3 className="inbound__title">Replies the driver did not expect</h3>
-            {unexpected.length === 0
-              ? <p className="quiet">Nothing unexpected yet.</p>
-              : (
-                <div className="tokens">
-                  {unexpected.map(({ text, count }) => (
-                    <span className="token" key={text}>
-                      {text} <span className="token__count">×{count}</span>
-                    </span>
+          <div className="pair">
+            <Card title="Bag tag printer" aside="Two sides">
+              {controls.bagTag.map((control) => (
+                <Row
+                  key={control.key}
+                  control={control}
+                  mode={modeOf(commanded, control.key)}
+                  color={LAMP.amber}
+                  enabled={open}
+                  onSend={send}
+                />
+              ))}
+            </Card>
+
+            <Card title="Semaphore tower" aside="Yellow = red + green">
+              <div className="sem">
+                <div className="tower">
+                  <span style={lampStyle(LAMP.red, towerMode(commanded, "red"), 19)} />
+                  <span style={lampStyle(LAMP.green, towerMode(commanded, "green"), 19)} />
+                  <span className="tower-base" />
+                </div>
+                <div className="sem-rows">
+                  {controls.semaphore.map((control) => (
+                    <Row
+                      key={control.key}
+                      control={control}
+                      mode={modeOf(commanded, control.key)}
+                      enabled={open}
+                      onSend={send}
+                      bare
+                    />
                   ))}
                 </div>
-              )}
+              </div>
+            </Card>
           </div>
 
-          <div className="inbound__block">
-            <h3 className="inbound__title">Stream</h3>
-            <label>
-              <span className="dial__key">Show </span>
-              <select className="filter" value={kindFilter} onChange={(event) => setKindFilter(event.target.value)}>
-                {kinds.map((kind) => <option key={kind} value={kind}>{kind}</option>)}
-              </select>
-            </label>
-            {/* Newest first, so the latest reply is on screen without scroll-following logic. */}
-            <div className="stream" role="log">
-              {shown.slice().reverse().map((entry, index) => (
-                <div className={`stream__line stream__line--${entry.kind}`} key={index}>
-                  <span className="stream__head">
-                    <span className="stream__at">{entry.at}</span>
-                    <span className="stream__kind">{entry.kind}</span>
-                  </span>
-                  <span className="stream__text">{phrase(entry)}</span>
-                </div>
-              ))}
+          <Card title="LED strip" aside="On / off per colour">
+            <div className="strip">
+              <div className="strip-rows">
+                {controls.strip.map((control) => (
+                  <Row
+                    key={control.key}
+                    control={control}
+                    mode={modeOf(commanded, control.key)}
+                    color={lampColor(control.label)}
+                    enabled={open}
+                    onSend={send}
+                    inline
+                  />
+                ))}
+              </div>
+              <div className="strip-preview" style={stripPreviewStyle(litStrip)} />
             </div>
-          </div>
-        </aside>
-      </div>
-
-      <section className="record">
-        <div className="bench__head">
-          <h2 className="bench__title">The record</h2>
-          <span className="bench__note">kept per port, across reloads</span>
+          </Card>
         </div>
 
-        <div className="record__tally">
-          {counts.map(({ verdict, count }) => (
-            <span className={`tally tally--${verdict}${count === 0 ? " tally--zero" : ""}`} key={verdict}>
-              <span className="tally__n">{count}</span>
-              <span className="tally__label">{VERDICT_LABELS[verdict]}</span>
-            </span>
-          ))}
-        </div>
+        <div className="col col-narrow">
+          <Card title="Service doors" aside="Reported">
+            {(["upper", "lower"] as Door[]).map((door) => (
+              <div className="doorrow" key={door}>
+                <span style={lampStyle(LAMP.amber, doors[door] === "open" ? "on" : "off", 10)} />
+                <span className="doorlabel">{door === "upper" ? "Upper" : "Lower"} service door</span>
+                <span className={doors[door] === "open" ? "doorstate doorstate-open" : "doorstate"}>
+                  {doors[door] === "open" ? "Open" : "Closed"}
+                </span>
+              </div>
+            ))}
+            {state.mock && (
+              <div className="doorsim">
+                <span className="doorsim-label">Simulate switch</span>
+                {(["upper", "lower"] as Door[]).map((door) => (
+                  <button key={door} onClick={() => api.simulateDoor(door).catch(complain)} disabled={!open}>
+                    {door === "upper" ? "Upper" : "Lower"}
+                  </button>
+                ))}
+              </div>
+            )}
+          </Card>
 
-        <Sheet markdown={markdown} />
-      </section>
+          <Card title="Activity" action={<button className="clear" onClick={() => setLog([])}>Clear</button>}>
+            <div className="activity">
+              {log.length === 0
+                ? <div className="activity-empty">Nothing yet.</div>
+                : [...log].reverse().map((entry, index) => (
+                  <div className="activity-line" key={index}>
+                    <span className="activity-time">{entry.at}</span>
+                    <span className={`activity-text tone-${toneOf(entry.kind)}`}>{phrase(entry)}</span>
+                  </div>
+                ))}
+            </div>
+          </Card>
+        </div>
+      </main>
     </div>
   );
 }
 
 /**
- * A command, in the words the row uses.
+ * A command, in the words the page uses.
  *
- * The backend records a send as the request's JSON, which wraps badly and reads like a wire dump.
- * Only outbound commands are rephrased — a reply is quoted exactly as it arrived, because a reply
- * nobody expected is the finding this whole page is here to catch.
+ * The backend records a send as the request's JSON, which reads like a wire dump. Only commands are
+ * rephrased; anything the board said is shown exactly as it arrived.
  */
-function phrase(entry: LogEntry): string {
+export function phrase(entry: LogEntry): string {
   if (entry.kind !== "sent") return entry.text;
   try {
     const request = JSON.parse(entry.text) as Record<string, string>;
     const { section, action, ...rest } = request;
-    const qualifier = Object.values(rest).join(" ");
-    return [section, qualifier, "·", action].filter(Boolean).join(" ");
+    const what = fullName(section, Object.values(rest)[0]);
+    const verb = action === "off" ? "off" : action === "blink" ? "blinking" : "on";
+    return `${what} — ${verb}`;
   }
   catch {
     // `allOff` and anything else that is not a request. It is already a phrase.
@@ -359,185 +283,63 @@ function phrase(entry: LogEntry): string {
   }
 }
 
-/** Distinct texts the board sent that the driver could not account for, commonest first. */
-function distinctUnexpected(entries: LogEntry[]): { text: string; count: number }[] {
-  const counted = new Map<string, number>();
-  for (const entry of entries) {
-    if (!UNEXPECTED.includes(entry.kind)) continue;
-    // The token is what the operator needs; the sentence around it is the same every time.
-    const quoted = entry.text.match(ANSWERED_WITH);
-    const text = quoted ? quoted[1] : entry.text;
-    counted.set(text, (counted.get(text) ?? 0) + 1);
-  }
-  return [...counted]
-    .map(([text, count]) => ({ text, count }))
-    .sort((a, b) => b.count - a.count);
-}
-
-function Bay(
-  { group, observations, fired, called, rows, rowRefs, onSend, onObserve, onCallOut, onSpent }: {
-    group: Group;
-    observations: Observations;
-    fired: Record<string, number>;
-    called: string | null;
-    rows: Row[];
-    rowRefs: React.MutableRefObject<Map<string, HTMLDivElement>>;
-    onSend: (row: Row, action: Action) => void;
-    onObserve: (key: string, change: Partial<Observation>) => void;
-    onCallOut: (key: string) => void;
-    onSpent: (key: string) => void;
+function Card(
+  { title, aside, action, children }: {
+    title: string;
+    aside?: string;
+    action?: ReactNode;
+    children: ReactNode;
   },
 ) {
   return (
-    <div className="group">
-      <h3 className="group__title">{group.title}</h3>
-      {group.rows.map((row) => (
-        <Wire
-          key={row.key}
-          row={row}
-          observation={observations[row.key] ?? UNOBSERVED}
-          firing={fired[row.key] ?? 0}
-          called={called === row.key}
-          rows={rows}
-          register={(element) => {
-            if (element) rowRefs.current.set(row.key, element);
-            else rowRefs.current.delete(row.key);
-          }}
-          onSend={(action) => onSend(row, action)}
-          onObserve={(change) => onObserve(row.key, change)}
-          onCallOut={onCallOut}
-          onSpent={() => onSpent(row.key)}
-        />
-      ))}
-    </div>
+    <section className="card">
+      <div className="card-head">
+        <span className="tab" />
+        <h2>{title}</h2>
+        {aside && <span className="card-aside">{aside}</span>}
+        {action}
+      </div>
+      {children}
+    </section>
   );
 }
 
-/**
- * One wire: name → what you send → the pin it reaches → what your eyes saw.
- *
- * The signal path stops at the pin, and so does the pulse. Nothing past the pin is established by
- * software, which is why the last cell belongs to the operator.
- */
-function Wire(
-  { row, observation, firing, called, rows, register, onSend, onObserve, onCallOut, onSpent }: {
-    row: Row;
-    observation: Observation;
-    firing: number;
-    called: boolean;
-    rows: Row[];
-    register: (element: HTMLDivElement | null) => void;
-    onSend: (action: Action) => void;
-    onObserve: (change: Partial<Observation>) => void;
-    onCallOut: (key: string) => void;
-    onSpent: () => void;
+function Row(
+  { control, mode, color, enabled, onSend, bare, inline }: {
+    control: Control;
+    mode: Action;
+    color?: string;
+    enabled: boolean;
+    onSend: (control: Control, action: Action) => void;
+    /** The semaphore rows sit beside the tower, which already shows their lamps. */
+    bare?: boolean;
+    /** The strip rows flow inline rather than stacking. */
+    inline?: boolean;
   },
 ) {
-  const classes = [
-    "wire",
-    row.unverified || row.sharedWith.length > 0 ? "wire--flagged" : "",
-    called ? "wire--called" : "",
-  ].filter(Boolean).join(" ");
+  // Derived from the control's own actions, so a strip row cannot grow a Blink button.
+  const segments = control.actions.includes("blink")
+    ? [["on", "On"], ["blink", "Blink"], ["off", "Off"]] as const
+    : [["on", "On"], ["off", "Off"]] as const;
 
   return (
-    <div className={classes} ref={register}>
-      {firing > 0 && <span className="wire__pulse" key={firing} onAnimationEnd={onSpent} />}
-
-      <div className="wire__cell wire__id">
-        <span className="wire__name">{row.label}</span>
-        {row.unverified && <span className="wire__caveat">unverified</span>}
-      </div>
-
-      <div className="wire__cell wire__send">
-        {row.actions.map((action) => (
+    <div className={inline ? "ctl ctl-inline" : "ctl"}>
+      {!bare && color && <span style={lampStyle(color, mode)} />}
+      <span className="ctl-label">{control.label}</span>
+      <span className="chip">ch {control.channel}</span>
+      <div className="seg" data-enabled={enabled}>
+        {segments.map(([action, text], index) => (
           <button
-            className="send"
             key={action}
-            onClick={() => onSend(action)}
-            aria-label={`send ${action} to ${row.label}`}
+            style={segStyle({ active: mode === action, off: action === "off", first: index === 0, enabled })}
+            disabled={!enabled}
+            onClick={() => onSend(control, action)}
+            aria-label={`${control.fullLabel} ${text}`}
           >
-            {action}
+            {text}
           </button>
         ))}
       </div>
-
-      <div className="wire__cell">
-        <span className="pin">{row.channels}</span>
-        {row.sharedWith.map((claimant) => (
-          <button className="pin__shared" key={claimant.id} onClick={() => onCallOut(claimant.id)}>
-            + {claimant.label}
-          </button>
-        ))}
-      </div>
-
-      <div className="wire__cell saw" role="group" aria-label={`what ${row.label} did`}>
-        {CHOOSABLE.map((verdict) => (
-          <button
-            className={`saw__opt saw__opt--${verdict === "unlit" ? "dark" : verdict}`}
-            key={verdict}
-            aria-pressed={observation.verdict === verdict}
-            title="click again to clear"
-            onClick={() =>
-              onObserve({ verdict: observation.verdict === verdict ? "untested" : verdict })}
-          >
-            {VERDICT_LABELS[verdict]}
-          </button>
-        ))}
-      </div>
-
-      {observation.verdict !== "untested" && (
-        <div className="instead">
-          {observation.verdict === "astray" && (
-            <>
-              <span className="instead__label instead__label--astray">Which lit?</span>
-              <select
-                className="instead__pick"
-                value={observation.insteadOf ?? ""}
-                onChange={(event) => onObserve({ insteadOf: event.target.value })}
-                aria-label={`which lamp lit instead of ${row.label}`}
-              >
-                <option value="">choose a lamp</option>
-                {rows.filter((other) => other.key !== row.key).map((other) => (
-                  <option key={other.key} value={other.key}>{other.group} / {other.label}</option>
-                ))}
-              </select>
-            </>
-          )}
-          <span className="instead__label">Note</span>
-          <input
-            className="instead__note"
-            placeholder="only if there is more to say"
-            value={observation.note}
-            onChange={(event) => onObserve({ note: event.target.value })}
-            aria-label={`note for ${row.label}`}
-          />
-        </div>
-      )}
     </div>
-  );
-}
-
-function Sheet({ markdown }: { markdown: string }) {
-  const [said, setSaid] = useState("");
-
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(markdown);
-      setSaid("Record copied");
-    }
-    catch {
-      // Clipboard access is refused outside a secure context. Say so rather than appearing to work.
-      setSaid("The browser refused the clipboard — select the text and copy it");
-    }
-  };
-
-  return (
-    <>
-      <textarea className="record__sheet" readOnly value={markdown} aria-label="run record as markdown" />
-      <div className="record__actions">
-        <button className="copy" onClick={copy}>Copy record</button>
-        <span className="said" role="status">{said}</span>
-      </div>
-    </>
   );
 }

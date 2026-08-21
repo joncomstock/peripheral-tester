@@ -1,12 +1,23 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Action, Door, LogEntry, Vocabulary } from "./api.ts";
 import { getStatus, getVocabulary, sendAllOff, sendLed, subscribe } from "./api.ts";
-import type { LedBase, Observation, Observations, Row, Verdict } from "./rows.ts";
-import { evidenceMarkdown, groupsFor, requestFor, VERDICT_LABELS, VERDICTS } from "./rows.ts";
+import type { Group, Observation, Observations, Row } from "./rows.ts";
+import {
+  CHOOSABLE,
+  evidenceMarkdown,
+  groupsFor,
+  parseObservations,
+  requestFor,
+  tally,
+  UNOBSERVED,
+  VERDICT_LABELS,
+} from "./rows.ts";
 
 const MAX_LINES = 500;
-const UNTESTED: Observation = { verdict: "untested", note: "" };
 const storageKey = (portName: string) => `ier-lightboard-tester:observations:${portName}`;
+
+/** Kinds carrying something the board said that the driver could not account for. */
+const UNEXPECTED = ["warned", "data"];
 
 export function App() {
   const [vocabulary, setVocabulary] = useState<Vocabulary | null>(null);
@@ -14,7 +25,11 @@ export function App() {
   const [doors, setDoors] = useState<Record<Door, string>>({ upper: "unknown", lower: "unknown" });
   const [entries, setEntries] = useState<LogEntry[]>([]);
   const [observations, setObservations] = useState<Observations>({});
-  const [kindFilter, setKindFilter] = useState("all");
+  const [kindFilter, setKindFilter] = useState("everything");
+  /** Row key → send count, so the pulse can replay on every command rather than only the first. */
+  const [fired, setFired] = useState<Record<string, number>>({});
+  const [called, setCalled] = useState<string | null>(null);
+  const rowRefs = useRef(new Map<string, HTMLDivElement>());
 
   const append = (entry: LogEntry) => setEntries((previous) => [...previous, entry].slice(-MAX_LINES));
 
@@ -28,7 +43,7 @@ export function App() {
       setEntries(status.log.slice(-MAX_LINES));
       // Read before the persisting effect can run, so a refresh mid-run does not wipe the record.
       const stored = localStorage.getItem(storageKey(loaded.portName));
-      if (stored) setObservations(JSON.parse(stored) as Observations);
+      if (stored) setObservations(parseObservations(stored));
     })().catch((err: Error) => {
       if (live) setUnreachable(err.message);
     });
@@ -55,206 +70,427 @@ export function App() {
   }, [vocabulary, observations]);
 
   const groups = useMemo(() => (vocabulary ? groupsFor(vocabulary) : []), [vocabulary]);
+  const rows = useMemo(() => groups.flatMap((group) => group.rows), [groups]);
   const markdown = useMemo(
-    () => (vocabulary ? evidenceMarkdown(vocabulary, groups, observations, vocabulary.mock, new Date().toISOString()) : ""),
+    () =>
+      vocabulary
+        ? evidenceMarkdown(vocabulary, groups, observations, vocabulary.mock, new Date().toISOString())
+        : "",
     [vocabulary, groups, observations],
   );
+  const counts = useMemo(() => tally(rows, observations), [rows, observations]);
+  const recorded = rows.length - (counts.find((entry) => entry.verdict === "untested")?.count ?? 0);
 
   const failed = (err: Error) => append({ at: "", kind: "failed", text: err.message });
-  const send = (base: LedBase, action: Action) => sendLed(requestFor(base, action)).catch(failed);
-  const observe = (key: string, change: Partial<{ verdict: Verdict; note: string }>) =>
-    setObservations((previous) => {
-      const current = previous[key] ?? UNTESTED;
-      return { ...previous, [key]: { ...current, ...change } };
+
+  const send = (row: Row, action: Action) => {
+    setFired((previous) => ({ ...previous, [row.key]: (previous[row.key] ?? 0) + 1 }));
+    sendLed(requestFor(row.base, action)).catch(failed);
+  };
+
+  /*
+   * A CSS animation with no fill mode snaps back to its start when it ends, which left a copper stub
+   * parked at the head of every row that had ever been fired. The pulse is a moment, so it is
+   * unmounted once it has been one.
+   */
+  const spent = (key: string) =>
+    setFired((previous) => {
+      const next = { ...previous };
+      delete next[key];
+      return next;
     });
+
+  const observe = (key: string, change: Partial<Observation>) =>
+    setObservations((previous) => ({ ...previous, [key]: { ...(previous[key] ?? UNOBSERVED), ...change } }));
+
+  /** Jump to the other section sharing a pin — the clash is only useful if you can see both ends. */
+  const callOut = useCallback((label: string) => {
+    const target = rows.find((row) => `${row.group} / ${row.label}`.toLowerCase().endsWith(label.toLowerCase()) || row.label === label);
+    if (!target) return;
+    rowRefs.current.get(target.key)?.scrollIntoView({ block: "center", behavior: "smooth" });
+    setCalled(target.key);
+  }, [rows]);
 
   if (unreachable) {
     return (
-      <main className="page">
-        <h1>IER S33380 light board tester</h1>
-        <p className="alert">
-          The backend is not answering: <code>{unreachable}</code>
-        </p>
-        <p className="hint">
-          It owns the COM port — the browser cannot reach the board without it. Start it with{" "}
-          <code>deno task dev</code> for a wired board, or <code>deno task dev:mock</code> for none.
+      <main className="gate">
+        <h1 className="gate__title">No backend on this port</h1>
+        <p className="gate__detail">{unreachable}</p>
+        <p className="gate__fix">
+          The backend holds the COM handle, and only the process holding it can drive the board. Start it
+          with <code>deno task dev</code> for a wired board, or <code>deno task dev:mock</code> for none.
         </p>
       </main>
     );
   }
 
-  if (!vocabulary) return <main className="page"><p className="hint">connecting…</p></main>;
+  if (!vocabulary) {
+    return (
+      <main className="gate">
+        <p className="gate__fix">Opening the port…</p>
+      </main>
+    );
+  }
 
-  const kinds = ["all", ...new Set(entries.map((entry) => entry.kind))];
-  const shown = kindFilter === "all" ? entries : entries.filter((entry) => entry.kind === kindFilter);
+  const kinds = ["everything", ...new Set(entries.map((entry) => entry.kind))];
+  const shown = kindFilter === "everything" ? entries : entries.filter((entry) => entry.kind === kindFilter);
+  const unexpected = distinctUnexpected(entries);
 
   return (
-    <main className="page">
-      <header>
-        <h1>IER S33380 light board tester</h1>
-        <span className="port">{vocabulary.portName}</span>
-        {vocabulary.mock && <span className="badge-mock">MOCK — NO BOARD</span>}
+    <div className="rig">
+      <header className="masthead">
+        <h1 className="masthead__mark">IER S33380</h1>
+        <span className="masthead__sub">light board</span>
+        <div className="masthead__readout">
+          <div className="dial">
+            <span className="dial__key">Port</span>
+            <span className={`dial__value${vocabulary.mock ? " dial__value--mock" : ""}`}>
+              {vocabulary.mock ? "mock — no board" : vocabulary.portName}
+            </span>
+          </div>
+          <div className="dial">
+            <span className="dial__key">Recorded</span>
+            <span className="dial__value">{recorded} / {rows.length}</span>
+          </div>
+        </div>
       </header>
 
-      <p className="note">
-        <strong>Watch the board, not the screen.</strong> A command that reports <em>sent</em> only means the
-        board answered — not that the lamp you expected lit. Two channel defaults were never confirmed on
-        hardware. Anything the board replies with that is not the expected token appears in the log verbatim:
-        that is the value of this run.
-      </p>
+      <div className="thesis">
+        <p className="thesis__claim">
+          The board answers.<br />
+          <em>It does not confirm.</em>
+        </p>
+        <p className="thesis__body">
+          A command reads <strong>answered</strong> the moment the board replies, which proves the wire and
+          not the lamp. Only your eyes can say which lamp lit — say it at the end of each row. Two channels
+          below were never confirmed against hardware, and one of them shares a pin.
+        </p>
+      </div>
 
       {vocabulary.mock && (
-        <p className="alert">
-          A fake transport is driving the real driver. Nothing here is evidence about a board.
-        </p>
+        <div className="alarm">
+          <span className="alarm__tag">Mock</span>
+          <p className="alarm__text">
+            A fake transport, driven through the real driver. No COM port and no board — nothing recorded
+            here is evidence about hardware.
+          </p>
+        </div>
       )}
 
-      {vocabulary.collisions.length > 0 && (
+      <div className="benches">
         <section>
-          <h2>Channel collisions</h2>
-          <div className="hint">
-            Computed from the live channel map. Both sections drive the same indicator channel, so one will
-            light the other's lamp.
+          <div className="bench__head">
+            <h2 className="bench__title">Outbound</h2>
+            <span className="bench__note">what you send</span>
           </div>
-          {vocabulary.collisions.map((collision) => (
-            <div className="row" key={collision.channel}>
-              <span className="label">AI;{collision.channel}</span>
-              <span className="flag">{collision.labels.join("  ·  ")}</span>
-            </div>
-          ))}
-        </section>
-      )}
 
-      <div className="layout">
-        <div>
-          <section>
-            <h2>Doors</h2>
-            <div className="doors">
-              {(["upper", "lower"] as Door[]).map((door) => (
-                <div className="door" key={door}>
-                  <span className={`dot ${doors[door] === "open" || doors[door] === "closed" ? doors[door] : ""}`} />
-                  {door} {doors[door]}
-                </div>
-              ))}
-            </div>
-            <div className="hint">Open and close each service door and confirm both transitions arrive.</div>
-          </section>
+          <button className="darken" onClick={() => sendAllOff().catch(failed)}>
+            Darken every lamp
+          </button>
 
-          <section>
-            <h2>All off</h2>
-            <button className="wide off" onClick={() => sendAllOff().catch(failed)}>Darken every lamp</button>
-            <div className="hint">One command per indicator, bag-tag side and strip colour, repeats removed.</div>
-          </section>
+          <div className="grammar" aria-hidden="true">
+            <span className="grammar__step">Section</span>
+            <span className="grammar__step">You send</span>
+            <span className="grammar__step">It reaches</span>
+            <span className="grammar__step">Your eyes saw</span>
+          </div>
 
           {groups.map((group) => (
-            <section key={group.title}>
-              <h2>{group.title}</h2>
-              {group.rows.map((row) => (
-                <RowControls
-                  key={row.key}
-                  row={row}
-                  observation={observations[row.key] ?? UNTESTED}
-                  onSend={(action) => send(row.base, action)}
-                  onObserve={(change) => observe(row.key, change)}
-                />
-              ))}
-            </section>
+            <Bay
+              key={group.title}
+              group={group}
+              observations={observations}
+              fired={fired}
+              called={called}
+              rows={rows}
+              rowRefs={rowRefs}
+              onSend={send}
+              onObserve={observe}
+              onCallOut={callOut}
+              onSpent={spent}
+            />
           ))}
-        </div>
+        </section>
 
-        <div>
-          <section>
-            <h2>Log</h2>
-            <label className="filter">
-              show{" "}
-              <select value={kindFilter} onChange={(event) => setKindFilter(event.target.value)}>
+        <aside className="inbound">
+          <div className="bench__head" style={{ padding: "16px 16px 0", marginBottom: 0 }}>
+            <h2 className="bench__title">Inbound</h2>
+            <span className="bench__note">what the board sends back</span>
+          </div>
+
+          <div className="inbound__block">
+            <h3 className="inbound__title">Service doors</h3>
+            <div className="doors">
+              {(["upper", "lower"] as Door[]).map((door) => (
+                <span className={`door${doors[door] === "open" ? " door--open" : ""}`} key={door}>
+                  <span className={`door__slot door__slot--${doors[door] === "unknown" ? "unknown" : doors[door]}`} />
+                  {door} <span className="door__state">{doors[door]}</span>
+                </span>
+              ))}
+            </div>
+          </div>
+
+          <div className="inbound__block">
+            <h3 className="inbound__title">Replies the driver did not expect</h3>
+            {unexpected.length === 0
+              ? <p className="quiet">Nothing unexpected yet.</p>
+              : (
+                <div className="tokens">
+                  {unexpected.map(({ text, count }) => (
+                    <span className="token" key={text}>
+                      {text} <span className="token__count">×{count}</span>
+                    </span>
+                  ))}
+                </div>
+              )}
+          </div>
+
+          <div className="inbound__block">
+            <h3 className="inbound__title">Stream</h3>
+            <label>
+              <span className="dial__key">Show </span>
+              <select className="filter" value={kindFilter} onChange={(event) => setKindFilter(event.target.value)}>
                 {kinds.map((kind) => <option key={kind} value={kind}>{kind}</option>)}
               </select>
             </label>
             {/* Newest first, so the latest reply is on screen without scroll-following logic. */}
-            <div className="log" role="log">
+            <div className="stream" role="log">
               {shown.slice().reverse().map((entry, index) => (
-                <div className={`line k-${entry.kind}`} key={index}>
-                  <span className="at">{entry.at}</span> <span className="kind">{entry.kind}</span> {entry.text}
+                <div className={`stream__line stream__line--${entry.kind}`} key={index}>
+                  <span className="stream__head">
+                    <span className="stream__at">{entry.at}</span>
+                    <span className="stream__kind">{entry.kind}</span>
+                  </span>
+                  <span className="stream__text">{phrase(entry)}</span>
                 </div>
               ))}
             </div>
-          </section>
-
-          <section>
-            <h2>What the board did</h2>
-            <div className="hint">
-              Kept per port and across reloads. Paste this into the PR — it is the deliverable of an on-device
-              run, and the rows left as <em>not tested</em> are part of it.
-            </div>
-            <Evidence markdown={markdown} />
-          </section>
-        </div>
+          </div>
+        </aside>
       </div>
-    </main>
+
+      <section className="record">
+        <div className="bench__head">
+          <h2 className="bench__title">The record</h2>
+          <span className="bench__note">kept per port, across reloads</span>
+        </div>
+
+        <div className="record__tally">
+          {counts.map(({ verdict, count }) => (
+            <span className={`tally tally--${verdict}${count === 0 ? " tally--zero" : ""}`} key={verdict}>
+              <span className="tally__n">{count}</span>
+              <span className="tally__label">{VERDICT_LABELS[verdict]}</span>
+            </span>
+          ))}
+        </div>
+
+        <Sheet markdown={markdown} />
+      </section>
+    </div>
   );
 }
 
-function RowControls(
-  { row, observation, onSend, onObserve }: {
-    row: Row;
-    observation: Observation;
-    onSend: (action: Action) => void;
-    onObserve: (change: Partial<{ verdict: Verdict; note: string }>) => void;
+/**
+ * A command, in the words the row uses.
+ *
+ * The backend records a send as the request's JSON, which wraps badly and reads like a wire dump.
+ * Only outbound commands are rephrased — a reply is quoted exactly as it arrived, because a reply
+ * nobody expected is the finding this whole page is here to catch.
+ */
+function phrase(entry: LogEntry): string {
+  if (entry.kind !== "sent") return entry.text;
+  try {
+    const request = JSON.parse(entry.text) as Record<string, string>;
+    const { section, action, ...rest } = request;
+    const qualifier = Object.values(rest).join(" ");
+    return [section, qualifier, "·", action].filter(Boolean).join(" ");
+  }
+  catch {
+    // `allOff` and anything else that is not a request. It is already a phrase.
+    return entry.text;
+  }
+}
+
+/** Distinct texts the board sent that the driver could not account for, commonest first. */
+function distinctUnexpected(entries: LogEntry[]): { text: string; count: number }[] {
+  const counted = new Map<string, number>();
+  for (const entry of entries) {
+    if (!UNEXPECTED.includes(entry.kind)) continue;
+    // A shape warning names the token in quotes: `'AI;3=O' answered with 'AI;3=O@', expected 'AI@'`.
+    // The token is what the operator needs; the sentence around it is the same every time.
+    const quoted = entry.text.match(/answered with '([^']+)'/);
+    const text = quoted ? quoted[1] : entry.text;
+    counted.set(text, (counted.get(text) ?? 0) + 1);
+  }
+  return [...counted]
+    .map(([text, count]) => ({ text, count }))
+    .sort((a, b) => b.count - a.count);
+}
+
+function Bay(
+  { group, observations, fired, called, rows, rowRefs, onSend, onObserve, onCallOut, onSpent }: {
+    group: Group;
+    observations: Observations;
+    fired: Record<string, number>;
+    called: string | null;
+    rows: Row[];
+    rowRefs: React.MutableRefObject<Map<string, HTMLDivElement>>;
+    onSend: (row: Row, action: Action) => void;
+    onObserve: (key: string, change: Partial<Observation>) => void;
+    onCallOut: (label: string) => void;
+    onSpent: (key: string) => void;
   },
 ) {
   return (
-    <div className="row">
-      <span className="label">
-        {row.label} <span className="ch">{row.channels}</span>
-      </span>
-      <span className="actions">
+    <div className="group">
+      <h3 className="group__title">{group.title}</h3>
+      {group.rows.map((row) => (
+        <Wire
+          key={row.key}
+          row={row}
+          observation={observations[row.key] ?? UNOBSERVED}
+          firing={fired[row.key] ?? 0}
+          called={called === row.key}
+          others={rows.filter((candidate) => candidate.key !== row.key)}
+          register={(element) => {
+            if (element) rowRefs.current.set(row.key, element);
+            else rowRefs.current.delete(row.key);
+          }}
+          onSend={(action) => onSend(row, action)}
+          onObserve={(change) => onObserve(row.key, change)}
+          onCallOut={onCallOut}
+          onSpent={() => onSpent(row.key)}
+        />
+      ))}
+    </div>
+  );
+}
+
+/**
+ * One wire: name → what you send → the pin it reaches → what your eyes saw.
+ *
+ * The signal path stops at the pin, and so does the pulse. Nothing past the pin is established by
+ * software, which is why the last cell belongs to the operator.
+ */
+function Wire(
+  { row, observation, firing, called, others, register, onSend, onObserve, onCallOut, onSpent }: {
+    row: Row;
+    observation: Observation;
+    firing: number;
+    called: boolean;
+    others: Row[];
+    register: (element: HTMLDivElement | null) => void;
+    onSend: (action: Action) => void;
+    onObserve: (change: Partial<Observation>) => void;
+    onCallOut: (label: string) => void;
+    onSpent: () => void;
+  },
+) {
+  const classes = [
+    "wire",
+    row.unverified || row.sharedWith.length > 0 ? "wire--flagged" : "",
+    called ? "wire--called" : "",
+  ].filter(Boolean).join(" ");
+
+  return (
+    <div className={classes} ref={register}>
+      {firing > 0 && <span className="wire__pulse" key={firing} onAnimationEnd={onSpent} />}
+
+      <div className="wire__cell wire__id">
+        <span className="wire__name">{row.label}</span>
+        {row.unverified && <span className="wire__caveat">unverified</span>}
+      </div>
+
+      <div className="wire__cell wire__send">
         {row.actions.map((action) => (
-          <button key={action} className={action === "off" ? "off" : ""} onClick={() => onSend(action)}>
+          <button
+            className="send"
+            key={action}
+            onClick={() => onSend(action)}
+            aria-label={`send ${action} to ${row.label}`}
+          >
             {action}
           </button>
         ))}
-      </span>
-      {row.unverified && <span className="flag">UNVERIFIED</span>}
-      <select
-        aria-label={`what ${row.label} did`}
-        className={`verdict v-${observation.verdict}`}
-        value={observation.verdict}
-        onChange={(event) => onObserve({ verdict: event.target.value as Verdict })}
-      >
-        {VERDICTS.map((verdict) => <option key={verdict} value={verdict}>{VERDICT_LABELS[verdict]}</option>)}
-      </select>
+      </div>
+
+      <div className="wire__cell">
+        <span className="pin">{row.channels}</span>
+        {row.sharedWith.map((label) => (
+          <button className="pin__shared" key={label} onClick={() => onCallOut(label)}>
+            + {label}
+          </button>
+        ))}
+      </div>
+
+      <div className="wire__cell saw" role="group" aria-label={`what ${row.label} did`}>
+        {CHOOSABLE.map((verdict) => (
+          <button
+            className={`saw__opt saw__opt--${verdict === "unlit" ? "dark" : verdict}`}
+            key={verdict}
+            aria-pressed={observation.verdict === verdict}
+            title="click again to clear"
+            onClick={() =>
+              onObserve({ verdict: observation.verdict === verdict ? "untested" : verdict })}
+          >
+            {VERDICT_LABELS[verdict]}
+          </button>
+        ))}
+      </div>
+
       {observation.verdict !== "untested" && (
-        <input
-          aria-label={`note for ${row.label}`}
-          className="note-input"
-          placeholder={observation.verdict === "wrong-lamp" ? "which lamp lit?" : "notes"}
-          value={observation.note}
-          onChange={(event) => onObserve({ note: event.target.value })}
-        />
+        <div className="instead">
+          {observation.verdict === "astray" && (
+            <>
+              <span className="instead__label instead__label--astray">Which lit?</span>
+              <select
+                className="instead__pick"
+                value={observation.insteadOf ?? ""}
+                onChange={(event) => onObserve({ insteadOf: event.target.value })}
+                aria-label={`which lamp lit instead of ${row.label}`}
+              >
+                <option value="">choose a lamp</option>
+                {others.map((other) => (
+                  <option key={other.key} value={other.key}>{other.group} / {other.label}</option>
+                ))}
+              </select>
+            </>
+          )}
+          <span className="instead__label">Note</span>
+          <input
+            className="instead__note"
+            placeholder="only if there is more to say"
+            value={observation.note}
+            onChange={(event) => onObserve({ note: event.target.value })}
+            aria-label={`note for ${row.label}`}
+          />
+        </div>
       )}
     </div>
   );
 }
 
-function Evidence({ markdown }: { markdown: string }) {
-  const [copied, setCopied] = useState("");
+function Sheet({ markdown }: { markdown: string }) {
+  const [said, setSaid] = useState("");
 
   const copy = async () => {
     try {
       await navigator.clipboard.writeText(markdown);
-      setCopied("copied");
+      setSaid("Record copied");
     }
     catch {
       // Clipboard access is refused outside a secure context. Say so rather than appearing to work.
-      setCopied("clipboard refused — select the text and copy it");
+      setSaid("The browser refused the clipboard — select the text and copy it");
     }
   };
 
   return (
     <>
-      <textarea className="evidence" readOnly value={markdown} aria-label="run record as markdown" />
-      <button onClick={copy}>Copy markdown</button> <span className="hint">{copied}</span>
+      <textarea className="record__sheet" readOnly value={markdown} aria-label="run record as markdown" />
+      <div className="record__actions">
+        <button className="copy" onClick={copy}>Copy record</button>
+        <span className="said" role="status">{said}</span>
+      </div>
     </>
   );
 }

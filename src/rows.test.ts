@@ -1,16 +1,20 @@
 import { describe, expect, it } from "vitest";
 import type { Vocabulary } from "./api.ts";
-import { evidenceMarkdown, groupsFor, requestFor } from "./rows.ts";
+import { evidenceMarkdown, groupsFor, requestFor, tally } from "./rows.ts";
 
-/** Shaped like a real `/api/vocabulary` payload, trimmed to one row per group. */
+/** Shaped like a real `/api/vocabulary` payload, trimmed to a few rows per group. */
 const vocabulary: Vocabulary = {
   portName: "COM14",
   mock: false,
   actions: ["on", "off", "blink"],
-  indicators: [{ section: "payment", channel: 1 }, { section: "passportReader", channel: 3 }],
+  indicators: [
+    { section: "payment", channel: 1 },
+    { section: "passportReader", channel: 3 },
+    { section: "boardingPassPrinter", channel: 4 },
+  ],
   sides: [{ side: "left", channel: 8 }],
-  stripColors: [{ color: "blue", channel: 2 }],
-  semaphoreColors: [{ color: "yellow", channels: [6, 1] }],
+  stripColors: [{ color: "green", channel: 4 }, { color: "blue", channel: 2 }],
+  semaphoreColors: [{ color: "green", channels: [1] }, { color: "yellow", channels: [6, 1] }],
   collisions: [{ channel: 1, labels: ["payment", "semaphore green"] }],
   unverified: ["payment", "cardReader"],
 };
@@ -42,6 +46,25 @@ describe("groupsFor", () => {
     expect(row("indicator:passportReader").unverified).toBe(false);
   });
 
+  it("names each side of a shared pin on both rows", () => {
+    // The clash is stated at the pin rather than in a banner, so both ends have to carry it.
+    expect(row("indicator:payment").sharedWith).toEqual(["semaphore green"]);
+    expect(row("semaphore:green").sharedWith).toEqual(["payment"]);
+  });
+
+  it("leaves a section off a shared pin unmarked", () => {
+    expect(row("indicator:passportReader").sharedWith).toEqual([]);
+    expect(row("semaphore:yellow").sharedWith).toEqual([]);
+  });
+
+  it("never marks a strip row as shared, whatever number it carries", () => {
+    // strip green = 4 shares a number with boardingPassPrinter = 4, but AL and AI are separate
+    // address spaces. A shared marker here would send the operator hunting a clash that cannot exist.
+    expect(row("strip:green").channels).toBe("AL;4");
+    expect(row("indicator:boardingPassPrinter").channels).toBe("AI;4");
+    expect(row("strip:green").sharedWith).toEqual([]);
+  });
+
   it("derives its rows from the payload rather than a copy of the vocabulary", () => {
     const extended = {
       ...vocabulary,
@@ -50,6 +73,7 @@ describe("groupsFor", () => {
     expect(groupsFor(extended)[0].rows.map((r) => r.label)).toEqual([
       "payment",
       "passportReader",
+      "boardingPassPrinter",
       "gppDispenser",
     ]);
   });
@@ -73,39 +97,65 @@ describe("requestFor", () => {
   });
 });
 
+describe("tally", () => {
+  it("counts every row, treating an unrecorded row as not checked", () => {
+    const counts = tally(rows(), { "indicator:payment": { verdict: "astray", note: "" } });
+    expect(counts).toEqual([
+      { verdict: "untested", count: 7 },
+      { verdict: "correct", count: 0 },
+      { verdict: "astray", count: 1 },
+      { verdict: "unlit", count: 0 },
+    ]);
+  });
+});
+
 describe("evidenceMarkdown", () => {
   const groups = groupsFor(vocabulary);
+  const at = "2026-08-21T00:00:00.000Z";
 
   it("lists untested rows instead of dropping them", () => {
-    const markdown = evidenceMarkdown(vocabulary, groups, {}, false, "2026-08-21T00:00:00.000Z");
-    expect(markdown).toContain("Rows observed: 0 of 5");
-    expect(markdown.match(/not tested/g)).toHaveLength(5);
+    const markdown = evidenceMarkdown(vocabulary, groups, {}, false, at);
+    expect(markdown).toContain("- 8 not checked");
+    expect(markdown.match(/Not checked/g)).toHaveLength(8);
   });
 
-  it("records the verdict and note against the section and its channels", () => {
+  it("resolves the lamp that lit instead into its own section and label", () => {
+    // The pick is stored as a row key; the record has to read as prose a reviewer can follow.
     const markdown = evidenceMarkdown(
       vocabulary,
       groups,
-      { "indicator:payment": { verdict: "wrong-lamp", note: "semaphore green lit" } },
+      { "indicator:payment": { verdict: "astray", insteadOf: "semaphore:green", note: "very dim" } },
       false,
-      "2026-08-21T00:00:00.000Z",
+      at,
     );
-    expect(markdown).toContain("| Indicators / payment (driver: unverified) | `AI;1` | lit something else | semaphore green lit |");
-    expect(markdown).toContain("Rows observed: 1 of 5");
+    expect(markdown).toContain(
+      "| Indicators / payment (driver: unverified) | `AI;1` | Wrong lamp | lit Semaphore / green instead; very dim |",
+    );
+    expect(markdown).toContain("- 7 not checked · 1 wrong lamp");
+  });
+
+  it("omits the instead-lit clause when the verdict is not a wrong lamp", () => {
+    const markdown = evidenceMarkdown(
+      vocabulary,
+      groups,
+      { "indicator:payment": { verdict: "correct", insteadOf: "semaphore:green", note: "" } },
+      false,
+      at,
+    );
+    expect(markdown).not.toContain("lit Semaphore / green instead");
   });
 
   it("stamps a mock run as not being evidence", () => {
-    expect(evidenceMarkdown(vocabulary, groups, {}, true, "2026-08-21T00:00:00.000Z"))
-      .toContain("MOCK RUN — NOT EVIDENCE");
+    expect(evidenceMarkdown(vocabulary, groups, {}, true, at)).toContain("MOCK RUN — NOT EVIDENCE");
   });
 
   it("escapes a pipe in a note so one comment cannot break the table", () => {
     const markdown = evidenceMarkdown(
       vocabulary,
       groups,
-      { "strip:blue": { verdict: "nothing-lit", note: "tried on | off | on" } },
+      { "strip:blue": { verdict: "unlit", note: "tried on | off | on" } },
       false,
-      "2026-08-21T00:00:00.000Z",
+      at,
     );
     expect(markdown).toContain("tried on \\| off \\| on");
   });

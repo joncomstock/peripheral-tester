@@ -1,192 +1,926 @@
 /*
- * Carried over from the tester page this replaces: dark panel, monospace channel numbers, amber for
- * anything the driver has not confirmed. The palette was tuned for reading a log next to a kiosk,
- * so it is reused rather than reinvented.
+ * IER S33380 light board tester.
+ *
+ * The rule this whole sheet is built on: **the interface never depicts a lit lamp.** This tool sits
+ * next to a physical board, and the one thing it must not do is look more authoritative than the
+ * board. So the signal path on every row stops at the terminal pin — exactly where the software's
+ * knowledge stops — and saturated colour is spent only where a human has confirmed something with
+ * their eyes. Everything the machine merely claims stays grey.
+ *
+ * Dark, and deliberately so: judging whether a dim amber LED is lit is much harder next to a bright
+ * screen. Dark-only for the same reason — there is no light theme to fall back to.
+ *
+ * Type is paired on the width axis rather than the usual serif/sans one. Saira Condensed is the
+ * engraved panel legend and carries every label and control; IBM Plex Mono carries anything the
+ * board said or the wire addresses; IBM Plex Sans carries the prose, because the warnings are the
+ * safety-critical text on the page and mono reads slower at paragraph length.
  */
 
 :root {
   color-scheme: dark;
-  --bg: #14161a;
-  --panel: #1d2027;
-  --line: #2c313b;
-  --text: #e6e8ec;
-  --dim: #8b93a1;
-  --ok: #4ec9a5;
-  --bad: #e2686a;
-  --warn: #e0b341;
-  --mono: ui-monospace, "Cascadia Mono", Consolas, monospace;
+
+  /* Instrument enclosure: cold, neutral, unlit. */
+  --void: #101215;
+  --panel: #191c21;
+  --rail: #23272e;
+  --pad: #1f232a;
+  /* 5.16:1 on the panel. The legend runs at 10px with wide tracking, where 4.5 is not comfortable. */
+  --legend: #868e99;
+  --ink: #dfe3e8;
+
+  /* The one accent. Connection semantics only: wires, pins, shared channels, doubt about wiring. */
+  --copper: #b4763f;
+  --copper-dim: #6b4526;
+
+  /* Earned by human confirmation. These four are the only saturated colours on the page. */
+  --correct: #6fbf8b;
+  --astray: #d9a13b;
+  /* Lifted from #c2565a, which measured 3.88:1 on the panel and failed AA on a state that means
+     something. 5.38:1. */
+  --dark: #d97276;
+
+  --display: "Saira Condensed", "Arial Narrow", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, Consolas, monospace;
+  --prose: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+
+  --step: 4px;
+
+  /*
+   * The bay's fixed columns. Named because the pulse's travel is measured against them: it has to
+   * stop at the pin, and a hard-coded distance would drift the moment a column changed width.
+   */
+  --col-send: 152px;
+  --col-pin: 152px;
+  --col-saw: 236px;
+  --col-gap: 12px;
+  --pulse: 64px;
+  --row: 48px;
 }
 
-* { box-sizing: border-box; }
+* {
+  box-sizing: border-box;
+}
 
 body {
   margin: 0;
-  background: var(--bg);
-  color: var(--text);
-  font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  background: var(--void);
+  color: var(--ink);
+  font-family: var(--prose);
+  font-size: 14px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
 }
 
-.page { padding: 20px; }
+/* A legend is engraved, not written: condensed caps, wide tracking, never quite full white. */
+.legend-type {
+  font-family: var(--display);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  font-size: 11px;
+  color: var(--legend);
+}
 
-header {
+:focus-visible {
+  outline: 2px solid var(--copper);
+  outline-offset: 2px;
+}
+
+/* ---------------------------------------------------------------- rig */
+
+.rig {
+  max-width: 1440px;
+  margin: 0 auto;
+  padding: calc(var(--step) * 6) calc(var(--step) * 6) calc(var(--step) * 16);
+}
+
+/* ---------------------------------------------------------------- masthead */
+
+.masthead {
   display: flex;
-  align-items: baseline;
-  gap: 16px;
+  align-items: center;
+  gap: calc(var(--step) * 4);
+  padding-bottom: calc(var(--step) * 3);
+  border-bottom: 1px solid var(--rail);
   flex-wrap: wrap;
 }
 
-h1 { font-size: 17px; margin: 0; font-weight: 600; }
+.masthead__mark {
+  font-family: var(--display);
+  font-weight: 700;
+  font-size: 21px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  margin: 0;
+}
 
-.port { color: var(--dim); font-family: var(--mono); }
-
-.badge-mock {
-  background: #4a2a2c;
-  border: 1px solid var(--bad);
-  color: #ffd9da;
-  border-radius: 4px;
-  padding: 2px 8px;
-  font-size: 11px;
-  letter-spacing: 0.08em;
+.masthead__sub {
+  font-family: var(--display);
   font-weight: 600;
+  font-size: 11px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--legend);
+  /* Sits on the display face's baseline rather than the paragraph's. */
+  padding-bottom: 2px;
 }
 
-.note {
-  margin: 12px 0 16px;
-  padding: 10px 12px;
-  border-left: 3px solid var(--warn);
-  background: #221f16;
-  color: #d8cfae;
-  max-width: 78ch;
+.masthead__readout {
+  display: flex;
+  gap: calc(var(--step) * 5);
+  margin: 0 0 0 auto;
 }
 
-.alert {
-  margin: 0 0 16px;
-  padding: 10px 12px;
-  border-left: 3px solid var(--bad);
-  background: #241a1b;
-  color: #f0cdce;
-  max-width: 78ch;
+.dial {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
 }
 
-.layout {
+.dial__key {
+  font-family: var(--display);
+  font-weight: 600;
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--legend);
+}
+
+.dial__value {
+  font-family: var(--mono);
+  font-weight: 500;
+  font-size: 13px;
+  line-height: 1.2;
+}
+
+.dial__value--mock {
+  color: var(--dark);
+}
+
+/* ---------------------------------------------------------------- thesis */
+
+.thesis {
+  margin: calc(var(--step) * 6) 0 calc(var(--step) * 8);
+  max-width: 74ch;
+}
+
+.thesis__claim {
+  font-family: var(--display);
+  font-weight: 700;
+  font-size: clamp(24px, 4vw, 34px);
+  line-height: 1.1;
+  letter-spacing: 0.01em;
+  text-transform: uppercase;
+  margin: 0 0 calc(var(--step) * 2);
+}
+
+/* The second sentence is the correction, so it is the one that carries the accent. */
+.thesis__claim em {
+  font-style: normal;
+  color: var(--copper);
+}
+
+.thesis__body {
+  margin: 0;
+  color: #b4bbc4;
+  max-width: 66ch;
+}
+
+.thesis__body strong {
+  color: var(--ink);
+  font-weight: 500;
+}
+
+.alarm {
+  display: flex;
+  align-items: baseline;
+  gap: calc(var(--step) * 3);
+  margin: 0 0 calc(var(--step) * 8);
+  padding: calc(var(--step) * 3) calc(var(--step) * 4);
+  border: 1px solid var(--dark);
+  background: #1d1416;
+  max-width: 74ch;
+}
+
+.alarm__tag {
+  font-family: var(--display);
+  font-weight: 700;
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--dark);
+  white-space: nowrap;
+}
+
+.alarm__text {
+  margin: 0;
+  font-size: 13px;
+  color: #e2c9cb;
+}
+
+/* ---------------------------------------------------------------- benches */
+
+/*
+ * The page's primary division is the protocol's own asymmetry: commands going out, reports coming
+ * back. Doors live on the inbound side because the information flows the other way, not because
+ * they were left over.
+ */
+.benches {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 440px);
-  gap: 20px;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 320px);
+  gap: calc(var(--step) * 8);
   align-items: start;
 }
 
-@media (max-width: 1000px) {
-  .layout { grid-template-columns: minmax(0, 1fr); }
+@media (max-width: 1080px) {
+  .benches {
+    grid-template-columns: minmax(0, 1fr);
+    gap: calc(var(--step) * 8);
+  }
 }
 
-section {
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 14px 16px;
-  margin-bottom: 16px;
+.bench__head {
+  display: flex;
+  align-items: baseline;
+  gap: calc(var(--step) * 3);
+  margin-bottom: calc(var(--step) * 4);
 }
 
-h2 {
+.bench__title {
+  font-family: var(--display);
+  font-weight: 700;
   font-size: 12px;
-  letter-spacing: 0.09em;
+  letter-spacing: 0.2em;
   text-transform: uppercase;
-  color: var(--dim);
-  margin: 0 0 12px;
-  font-weight: 600;
+  margin: 0;
 }
 
-.row {
+.bench__note {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--legend);
+}
+
+/* ---------------------------------------------------------------- darken */
+
+.darken {
+  display: block;
+  width: 100%;
+  margin-bottom: calc(var(--step) * 6);
+  padding: calc(var(--step) * 3);
+  background: var(--panel);
+  border: 1px solid var(--rail);
+  border-left: 2px solid var(--copper-dim);
+  color: var(--ink);
+  font-family: var(--display);
+  font-weight: 600;
+  font-size: 13px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.darken:hover {
+  border-left-color: var(--copper);
+  background: var(--pad);
+}
+
+/* ---------------------------------------------------------------- the bay */
+
+.grammar {
+  margin-top: calc(var(--step) * 2);
+  display: grid;
+  grid-template-columns: minmax(186px, 1fr) var(--col-send) var(--col-pin) var(--col-saw);
+  column-gap: var(--col-gap);
+  margin-bottom: calc(var(--step) * 2);
+  font-family: var(--display);
+  font-weight: 600;
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--legend);
+}
+
+.grammar__step {
+  padding: 0 calc(var(--step) * 2);
+}
+
+.grammar__step:first-child {
+  padding-left: 0;
+}
+
+@media (max-width: 720px) {
+  .grammar {
+    display: none;
+  }
+}
+
+.group {
+  margin-bottom: calc(var(--step) * 7);
+}
+
+.group__title {
+  font-family: var(--display);
+  font-weight: 600;
+  font-size: 11px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--legend);
+  margin: 0 0 calc(var(--step) * 1);
+  padding-bottom: calc(var(--step) * 1);
+  border-bottom: 1px solid var(--rail);
+}
+
+/*
+ * One row is one wire. It reads left to right as the causal chain — name, what you send, the pin it
+ * reaches, what your eyes saw — and the hairline running through it is the wire itself. Cells carry
+ * the panel background so they break the line, the way a component breaks a trace on a schematic.
+ */
+.wire {
+  position: relative;
+  /* The pulse travels a distance measured in this row's own width. */
+  container-type: inline-size;
+  display: grid;
+  grid-template-columns: minmax(186px, 1fr) var(--col-send) var(--col-pin) var(--col-saw);
+  column-gap: var(--col-gap);
+  align-items: center;
+  min-height: var(--row);
+  background:
+    linear-gradient(
+      to bottom,
+      transparent calc(50% - 1px),
+      #2f353e calc(50% - 1px),
+      #2f353e calc(50% + 1px),
+      transparent calc(50% + 1px)
+    );
+  background-size: 100% var(--row);
+  background-repeat: no-repeat;
+}
+
+@media (max-width: 720px) {
+  .instead {
+    justify-content: flex-start;
+  }
+
+  .instead__note {
+    flex: 1 1 100%;
+  }
+
+  .wire {
+    grid-template-columns: minmax(0, 1fr) auto;
+    row-gap: calc(var(--step) * 2);
+    padding: calc(var(--step) * 3) 0;
+    background: none;
+    border-bottom: 1px solid var(--rail);
+  }
+}
+
+.wire__cell {
+  background: var(--void);
+  padding: calc(var(--step) * 1) calc(var(--step) * 2);
+}
+
+.wire__cell:first-child {
+  padding-left: 0;
+}
+
+.wire__cell:last-child {
+  padding-right: 0;
+}
+
+.wire__id {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.wire__name {
+  font-family: var(--mono);
+  font-weight: 500;
+  font-size: 13.5px;
+  line-height: 1.3;
+  /* Breaks only if it truly cannot fit; the column floor is sized so it does not come to that. */
+  overflow-wrap: break-word;
+}
+
+/* Doubt about a wire, in the wire's own colour. */
+.wire__caveat {
+  font-family: var(--display);
+  font-weight: 600;
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--copper);
+}
+
+.wire__send {
+  display: flex;
+  gap: calc(var(--step) * 1);
+}
+
+.send {
+  min-width: 42px;
+  padding: calc(var(--step) * 2) calc(var(--step) * 2);
+  background: var(--panel);
+  border: 1px solid var(--rail);
+  color: var(--legend);
+  font-family: var(--display);
+  font-weight: 600;
+  font-size: 12px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.send:hover {
+  color: var(--ink);
+  border-color: var(--copper-dim);
+}
+
+.send:active {
+  background: var(--pad);
+}
+
+/* The pin: a screw terminal. Mono, because this is what the wire actually addresses. */
+.pin {
+  display: inline-block;
+  padding: calc(var(--step) * 1) calc(var(--step) * 2);
+  background: var(--pad);
+  border: 1px solid var(--rail);
+  font-family: var(--mono);
+  font-weight: 600;
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  color: #c8ced6;
+  white-space: nowrap;
+}
+
+/*
+ * Two sections on one pin is the defect this tool exists to settle, so it is stated at the pin
+ * rather than in a banner somewhere else on the page. The button jumps to the other claimant.
+ */
+.pin__shared {
+  display: block;
+  margin-top: 2px;
+  padding: 0;
+  background: none;
+  border: 0;
+  border-bottom: 1px dashed var(--copper-dim);
+  color: var(--copper);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.pin__shared:hover {
+  border-bottom-color: var(--copper);
+}
+
+.wire--flagged .pin {
+  border-color: var(--copper-dim);
+}
+
+/* A row jumped to from its co-claimant. */
+.wire--called .pin {
+  border-color: var(--copper);
+}
+
+/* ---------------------------------------------------------------- what the eye saw */
+
+/*
+ * The heaviest control on the row, at the end of it, because it is the only judgement on this page
+ * the software cannot make.
+ */
+.saw {
+  display: flex;
+  gap: calc(var(--step) * 1);
+  justify-content: flex-end;
+}
+
+.saw__opt {
+  padding: calc(var(--step) * 2) calc(var(--step) * 2);
+  background: transparent;
+  border: 1px solid var(--rail);
+  color: var(--legend);
+  font-family: var(--display);
+  font-weight: 600;
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.saw__opt:hover {
+  color: var(--ink);
+}
+
+/* Confirmed by a person. The only place on the page these colours appear. */
+.saw__opt[aria-pressed="true"] {
+  background: var(--panel);
+  color: var(--ink);
+}
+
+.saw__opt--correct[aria-pressed="true"] {
+  border-color: var(--correct);
+  color: var(--correct);
+}
+
+.saw__opt--astray[aria-pressed="true"] {
+  border-color: var(--astray);
+  color: var(--astray);
+}
+
+.saw__opt--dark[aria-pressed="true"] {
+  border-color: var(--dark);
+  color: var(--dark);
+}
+
+/* The follow-up to "wrong lamp": which one. A pick, not a sentence — it is the run's best finding. */
+.instead {
+  grid-column: 1 / -1;
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 7px 0;
-  border-top: 1px solid var(--line);
+  justify-content: flex-end;
+  /* Without this the row overflows its own left edge on a phone and eats the "which lit?" label. */
   flex-wrap: wrap;
+  gap: calc(var(--step) * 2);
+  padding: calc(var(--step) * 1) 0 calc(var(--step) * 3);
+  background: var(--void);
 }
 
-.row:first-of-type { border-top: 0; }
+.instead__label {
+  font-family: var(--display);
+  font-weight: 600;
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--legend);
+  white-space: nowrap;
+}
 
-.label {
-  min-width: 200px;
+.instead__label--astray {
+  color: var(--astray);
+}
+
+.instead__pick,
+.instead__note {
+  padding: calc(var(--step) * 1) calc(var(--step) * 2);
+  background: var(--panel);
+  border: 1px solid var(--rail);
+  color: var(--ink);
   font-family: var(--mono);
-  font-size: 13px;
+  font-size: 12px;
 }
 
-.label .ch { color: var(--dim); }
-
-.actions { display: flex; gap: 6px; }
-
-.flag { color: var(--warn); font-size: 11px; letter-spacing: 0.04em; }
-
-button, select, input, textarea {
-  background: #262b34;
-  color: var(--text);
-  border: 1px solid #384050;
-  border-radius: 6px;
-  padding: 5px 11px;
-  font: inherit;
-  font-size: 13px;
+.instead__note {
+  flex: 0 1 320px;
+  min-width: 0;
 }
 
-button { cursor: pointer; }
-button:hover { background: #2f3540; }
-button:active { transform: translateY(1px); }
-button.wide { padding: 8px 16px; }
-button.off, .row .off { border-color: #4a3438; }
+/* ---------------------------------------------------------------- the pulse */
 
-.verdict { margin-left: auto; }
-.verdict.v-untested { color: var(--dim); }
-.verdict.v-as-labelled { color: var(--ok); }
-.verdict.v-wrong-lamp { color: var(--warn); }
-.verdict.v-nothing-lit { color: var(--bad); }
+/*
+ * The only motion on the page. A command travels the wire and stops at the pin, which is precisely
+ * where what we know stops: the signal reached the terminal, and nothing beyond that is established.
+ * No lamp lights on screen, here or anywhere.
+ */
+.wire__pulse {
+  position: absolute;
+  top: calc(var(--row) / 2 - 1px);
+  left: 0;
+  height: 2px;
+  width: var(--pulse);
+  background: linear-gradient(to right, transparent, var(--copper));
+  pointer-events: none;
+  animation: travel 320ms linear 1;
+}
 
-.note-input { flex: 1 1 180px; min-width: 140px; }
+@keyframes travel {
+  from {
+    transform: translateX(0);
+    opacity: 1;
+  }
 
-.doors { display: flex; gap: 22px; }
+  /* Ends at the right edge of the pin, not the edge of the row: the command reached the terminal,
+     and the column past it belongs to the operator, not to anything the software established. */
+  to {
+    transform: translateX(calc(100cqw - var(--col-saw) - var(--col-gap) - var(--pulse)));
+    opacity: 0.2;
+  }
+}
+
+@media (prefers-reduced-motion: reduce), (max-width: 720px) {
+  .wire__pulse {
+    display: none;
+  }
+}
+
+/* ---------------------------------------------------------------- inbound */
+
+.inbound {
+  border: 1px solid var(--rail);
+  background: var(--panel);
+  position: sticky;
+  top: calc(var(--step) * 4);
+}
+
+@media (max-width: 1080px) {
+  .inbound {
+    position: static;
+  }
+}
+
+.inbound__block {
+  padding: calc(var(--step) * 4);
+  border-bottom: 1px solid var(--rail);
+}
+
+.inbound__block:last-child {
+  border-bottom: 0;
+}
+
+.inbound__title {
+  font-family: var(--display);
+  font-weight: 600;
+  font-size: 10px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--legend);
+  margin: 0 0 calc(var(--step) * 3);
+}
+
+.doors {
+  display: flex;
+  gap: calc(var(--step) * 6);
+}
 
 .door {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: calc(var(--step) * 2);
   font-family: var(--mono);
+  font-size: 12.5px;
 }
 
-.dot { width: 11px; height: 11px; border-radius: 50%; background: #4b515d; }
-.dot.open { background: var(--bad); box-shadow: 0 0 8px var(--bad); }
-.dot.closed { background: var(--ok); }
+/*
+ * A door is not a lamp, so it may show its state. Amber means a door is standing open — attention,
+ * not approval — and it is the only colour on the page the machine gets to set.
+ */
+.door__slot {
+  width: 10px;
+  height: 16px;
+  border: 1px solid var(--legend);
+}
 
-.filter { color: var(--dim); font-size: 12px; }
+.door__slot--closed {
+  background: var(--legend);
+}
 
-.log {
-  height: 420px;
-  margin-top: 10px;
+.door__slot--open {
+  border-color: var(--astray);
+  background: none;
+}
+
+/* Not yet reported. Distinct from open, which is also an empty box. */
+.door__slot--unknown {
+  border-style: dashed;
+  border-color: var(--rail);
+}
+
+.door__state {
+  color: var(--legend);
+}
+
+.door--open .door__state {
+  color: var(--astray);
+}
+
+/* Distinct replies the driver did not expect — the answer to "what does the board really say". */
+.tokens {
+  display: flex;
+  flex-wrap: wrap;
+  gap: calc(var(--step) * 2);
+}
+
+.token {
+  display: flex;
+  align-items: baseline;
+  gap: calc(var(--step) * 2);
+  padding: calc(var(--step) * 1) calc(var(--step) * 2);
+  border: 1px solid var(--copper-dim);
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--copper);
+}
+
+.token__count {
+  font-size: 10px;
+  color: var(--legend);
+}
+
+.quiet {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--legend);
+  margin: 0;
+}
+
+.stream {
+  max-height: 300px;
   overflow-y: auto;
   font-family: var(--mono);
-  font-size: 12px;
+  font-size: 11.5px;
 }
 
-.line {
-  padding: 2px 0;
-  border-top: 1px solid #23262e;
-  white-space: pre-wrap;
-  word-break: break-all;
+.stream__line {
+  padding: calc(var(--step) * 1) 0;
+  border-top: 1px solid #1e222a;
+  color: #a8b0ba;
+  overflow-wrap: break-word;
 }
 
-.at { color: #5d6675; }
-.kind { display: inline-block; min-width: 82px; }
-.k-sent .kind { color: #7aa2f7; }
-.k-door .kind { color: var(--warn); }
-.k-data .kind, .k-open .kind { color: var(--ok); }
-.k-failed .kind, .k-error .kind, .k-disconnect .kind { color: var(--bad); }
+.stream__line:first-child {
+  border-top: 0;
+}
 
-.evidence {
-  width: 100%;
-  height: 220px;
-  margin-bottom: 8px;
+.stream__head {
+  display: flex;
+  gap: calc(var(--step) * 2);
+  font-size: 10.5px;
+}
+
+.stream__at {
+  color: #565e69;
+}
+
+.stream__text {
+  display: block;
+}
+
+.stream__kind {
+  color: var(--legend);
+}
+
+.stream__line--warned {
+  color: var(--copper);
+}
+
+.stream__line--warned .stream__kind {
+  color: var(--copper);
+}
+
+.stream__line--error .stream__kind,
+.stream__line--failed .stream__kind,
+.stream__line--disconnect .stream__kind {
+  color: var(--dark);
+}
+
+.filter {
+  margin-bottom: calc(var(--step) * 2);
+  padding: 2px calc(var(--step) * 1);
+  background: var(--void);
+  border: 1px solid var(--rail);
+  color: var(--legend);
   font-family: var(--mono);
-  font-size: 12px;
+  font-size: 11px;
+}
+
+/* ---------------------------------------------------------------- record */
+
+.record {
+  margin-top: calc(var(--step) * 12);
+  padding-top: calc(var(--step) * 6);
+  border-top: 1px solid var(--rail);
+}
+
+.record__tally {
+  display: flex;
+  flex-wrap: wrap;
+  gap: calc(var(--step) * 5);
+  margin: calc(var(--step) * 4) 0;
+}
+
+.tally {
+  display: flex;
+  align-items: baseline;
+  gap: calc(var(--step) * 2);
+}
+
+.tally__n {
+  font-family: var(--display);
+  font-weight: 700;
+  font-size: 26px;
+  line-height: 1;
+}
+
+.tally__label {
+  font-family: var(--display);
+  font-weight: 600;
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--legend);
+}
+
+.tally--correct .tally__n {
+  color: var(--correct);
+}
+
+.tally--astray .tally__n {
+  color: var(--astray);
+}
+
+.tally--dark .tally__n {
+  color: var(--dark);
+}
+
+.tally--untested .tally__n {
+  color: var(--legend);
+}
+
+.tally--zero .tally__n {
+  color: var(--rail);
+}
+
+.record__sheet {
+  width: 100%;
+  max-width: 96ch;
+  height: 240px;
+  padding: calc(var(--step) * 3);
+  background: var(--panel);
+  border: 1px solid var(--rail);
+  color: #b4bbc4;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  line-height: 1.5;
   resize: vertical;
 }
 
-.hint { color: var(--dim); font-size: 12px; margin-top: 10px; }
+.record__actions {
+  display: flex;
+  align-items: center;
+  gap: calc(var(--step) * 3);
+  margin-top: calc(var(--step) * 3);
+}
+
+.copy {
+  padding: calc(var(--step) * 2) calc(var(--step) * 5);
+  background: var(--panel);
+  border: 1px solid var(--copper-dim);
+  color: var(--copper);
+  font-family: var(--display);
+  font-weight: 600;
+  font-size: 12px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.copy:hover {
+  border-color: var(--copper);
+  background: var(--pad);
+}
+
+.said {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--legend);
+}
+
+/* ---------------------------------------------------------------- states */
+
+.gate {
+  max-width: 60ch;
+  margin: calc(var(--step) * 20) auto;
+  padding: 0 calc(var(--step) * 6);
+}
+
+.gate__title {
+  font-family: var(--display);
+  font-weight: 700;
+  font-size: 22px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  margin: 0 0 calc(var(--step) * 4);
+}
+
+.gate__detail {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--dark);
+  margin: 0 0 calc(var(--step) * 4);
+  word-break: break-word;
+}
+
+.gate__fix {
+  color: #b4bbc4;
+  margin: 0;
+}
+
+.gate__fix code {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  color: var(--copper);
+}

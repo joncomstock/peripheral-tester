@@ -22,7 +22,8 @@
  *
  * `--mock` drives a fake board through the real driver, so the page can be checked off-kiosk — the
  * command construction, framing and ack matching under test are the shipped ones. It answers every
- * command and reports a door every few seconds.
+ * command, echoes the parameters back on every third one so the shape warning is visible, and
+ * reports each door in turn every few seconds.
  *
  * @module
  */
@@ -30,6 +31,9 @@
 import { delay } from "@std/async";
 import { join } from "@std/path";
 import { serveDir } from "@std/http/file-server";
+import { BaseHandler } from "@std/log";
+import type { LogRecord } from "@std/log";
+import { attachHandler } from "@eai/logging-ts";
 import type { Transport } from "@eai/models";
 import { ACTIONS, IER_S33380_DEFAULTS, IERS33380, INDICATOR_SECTIONS, SEMAPHORE_COLORS, SIDES, STRIP_COLORS } from "@eai/ier/s33380";
 import type { LedRequest } from "@eai/ier/s33380";
@@ -61,6 +65,7 @@ class MockBoard implements Transport {
   #inbound: Uint8Array[] = [];
   #enc = new TextEncoder();
   #tick = 0;
+  #replies = 0;
 
   constructor() {
     setInterval(() => {
@@ -80,7 +85,13 @@ class MockBoard implements Transport {
     const start = framed.charCodeAt(0) === 0x02 ? 1 : 0;
     const end = framed.charCodeAt(framed.length - 1) === 0x03 ? framed.length - 1 : framed.length;
     const body = framed.slice(start, end);
-    this.#inbound.push(this.#enc.encode(`\x02${body.slice(0, 2)}@\x03`));
+    // Every third reply echoes the parameters (`AI;3=O@`) instead of answering bare (`AI@`). Both
+    // shapes are real — the driver accepts either and warns, naming the token it saw — and that
+    // warning is the finding the on-device run is looking for. A mock that only ever answers bare
+    // would leave the page's most important line unexercised until someone is at a kiosk.
+    this.#replies += 1;
+    const token = this.#replies % 3 === 0 ? body : body.slice(0, 2);
+    this.#inbound.push(this.#enc.encode(`\x02${token}@\x03`));
     return Promise.resolve();
   }
 
@@ -104,7 +115,11 @@ class MockBoard implements Transport {
 // Board
 // ---------------------------------------------------------------------------------------------
 
-const board = mock ? await IERS33380.openWithTransport(new MockBoard(), undefined, "tester") : await IERS33380.open({ portName });
+// `open()` names its logger after the port, so the mock is given the same shape. One name then
+// covers both paths, and the warning handler below attaches to whichever is in use.
+const LOG_NAME = `IERS33380:${mock ? "mock" : portName}`;
+
+const board = mock ? await IERS33380.openWithTransport(new MockBoard(), undefined, LOG_NAME) : await IERS33380.open({ portName });
 
 /** Everything the page has shown, newest last. Bounded so a long session cannot grow without end. */
 const log: { at: string; kind: string; text: string }[] = [];
@@ -117,6 +132,27 @@ function record(kind: string, text: string): void {
   const line = `data: ${JSON.stringify(entry)}\n\n`;
   for (const send of listeners) send(line);
 }
+
+/**
+ * The driver's own warnings, onto the page.
+ *
+ * The mismatched-acknowledgement warning — the one line the on-device run exists to read, naming the
+ * token the board really sent — goes to the driver's logger, which means this process's stdout. An
+ * operator looking at the board and the page has no reason to be watching a terminal, so without
+ * this the finding lands where nobody is looking.
+ */
+class WarningsToPage extends BaseHandler {
+  /** Warnings only: the driver's `error` calls already reach the page through its `error` event. */
+  override handle(entry: LogRecord): void {
+    if (entry.levelName === "WARN") record("warned", entry.msg);
+  }
+
+  /** Abstract on the base class, and unreachable here: `handle` never enters the formatting path. */
+  override log(): void {
+    throw new Error("unreachable");
+  }
+}
+attachHandler(LOG_NAME, new WarningsToPage("WARN"));
 
 const doors = { upper: "unknown", lower: "unknown" };
 

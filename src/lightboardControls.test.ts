@@ -1,12 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { LogEntry, Vocabulary } from "./api.ts";
-import { controlsFor, fullName, modeOf, nameOf, requestFor, towerMode } from "./rows.ts";
+import { controlsFor, fullName, modeOf, nameOf, requestFor, towerMode } from "./lightboardControls.ts";
 import { lampColor, stripPreviewStyle, toneOf } from "./look.ts";
-import { phrase } from "./App.tsx";
+import { phrase } from "./LightBoardPage.tsx";
 
 /** Shaped like a real `/api/state` vocabulary, with the shipped channel map. */
 const vocabulary: Vocabulary = {
-  mock: false,
   actions: ["on", "off", "blink"],
   indicators: [
     { section: "payment", channel: 6 },
@@ -172,7 +171,8 @@ describe("stripPreviewStyle", () => {
 });
 
 describe("phrase", () => {
-  const sent = (request: unknown): LogEntry => ({ at: "", kind: "sent", text: JSON.stringify(request) });
+  const sent = (request: unknown): LogEntry =>
+    ({ at: "", device: "lightboard", kind: "sent", text: JSON.stringify(request) });
 
   it("says what was commanded in the words the page uses", () => {
     expect(phrase(sent({ section: "gppDispenser", action: "on" }))).toBe("GPP dispenser — on");
@@ -185,9 +185,9 @@ describe("phrase", () => {
 
   it("leaves anything the board said exactly as it arrived", () => {
     // The point of the activity log is that an unexpected reply is quoted, not paraphrased.
-    const warned = { at: "", kind: "warned", text: "'AI;3=O' answered with 'AI;3=O@', expected 'AI@'" };
+    const warned = { at: "", device: "lightboard" as const, kind: "warned", text: "'AI;3=O' answered with 'AI;3=O@', expected 'AI@'" };
     expect(phrase(warned)).toBe(warned.text);
-    expect(phrase({ at: "", kind: "ok", text: "All off" })).toBe("All off");
+    expect(phrase({ at: "", device: "lightboard", kind: "ok", text: "All off" })).toBe("All off");
   });
 });
 

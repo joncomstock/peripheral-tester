@@ -1,20 +1,28 @@
 /**
  * Typed client for the tester backend's JSON + SSE API.
  *
- * Nothing here talks to hardware. The board is driven by `server/main.ts`, which holds the COM
- * handle — only the process holding it can drive the board.
+ * Nothing here talks to hardware. Every peripheral is held by `server/`, which owns the COM handle
+ * and the USB HID handle; only the process holding them can drive the devices.
  *
- * The types mirror `@eai/ier/s33380`, but the *values* deliberately do not: section names, actions
- * and channel numbers all arrive from the backend, which builds them from the driver's own exported
- * vocabularies and live channel map. A copy of them here would recreate exactly the drift the
- * driver's design avoids.
- *
- * There is no mock in the browser either, for the same reason. `deno task dev:mock` runs a fake
- * `Transport` through the *real* driver, so the command construction, framing and ack matching being
- * exercised are the shipped ones. A second mock on this side would be a copy that can go stale.
+ * The types mirror each driver, but the *values* deliberately do not: section names, actions,
+ * channel numbers and track masks all arrive from the backend, which builds them from the drivers'
+ * own exported vocabularies. A copy of them here would recreate exactly the drift those drivers'
+ * designs avoid.
  */
 
-// ---- Mirrored driver types -----------------------------------------------------------------
+// ---- shared ---------------------------------------------------------------------------------
+
+export type Device = "system" | "lightboard" | "cardreader";
+export type Status = "closed" | "opening" | "open";
+
+export interface LogEntry {
+  at: string;
+  device: Device;
+  kind: string;
+  text: string;
+}
+
+// ---- light board ----------------------------------------------------------------------------
 
 export type Action = "on" | "off" | "blink";
 export type IndicatorSection =
@@ -30,30 +38,13 @@ export type SemaphoreColor = "green" | "red" | "yellow";
 export type Side = "left" | "right";
 export type Door = "upper" | "lower";
 
-/** Mirrors the driver's `LedRequest` discriminated union, including the strip's missing `blink`. */
+/** Mirrors the driver's `LedRequest` union, including the strip's missing `blink`. */
 export type LedRequest =
   | { readonly section: IndicatorSection; readonly action: Action }
   | { readonly section: "bagTagPrinter"; readonly action: Action; readonly side: Side }
   | { readonly section: "semaphore"; readonly action: Action; readonly color: SemaphoreColor }
   | { readonly section: "strip"; readonly action: "on" | "off"; readonly color: StripColor };
 
-// ---- Wire shapes ---------------------------------------------------------------------------
-
-export type Status = "closed" | "opening" | "open";
-
-/** One line of the backend's activity log. `kind` is open-ended: the driver may add kinds. */
-export interface LogEntry {
-  at: string;
-  kind: string;
-  text: string;
-}
-
-/**
- * One section addressing a channel.
- *
- * `id` is the claimant's identity in the driver's vocabulary and is the same scheme controls are
- * keyed by, so a collision can be tied back to the control it concerns. `label` is for reading.
- */
 export interface Claimant {
   id: string;
   label: string;
@@ -64,9 +55,7 @@ export interface Collision {
   claimants: Claimant[];
 }
 
-/** The driver's own vocabularies plus the channel map in force. */
 export interface Vocabulary {
-  mock: boolean;
   actions: Action[];
   indicators: { section: IndicatorSection; channel: number }[];
   sides: { side: Side; channel: number }[];
@@ -76,19 +65,97 @@ export interface Vocabulary {
   collisions: Collision[];
 }
 
-export interface State {
+export interface LightBoardState {
   status: Status;
   portName: string;
   mock: boolean;
   doors: Record<Door, string>;
-  log: LogEntry[];
   vocabulary: Vocabulary;
 }
 
-/** Pushed over SSE: either a new log line or a change of connection or door state. */
+// ---- card reader ----------------------------------------------------------------------------
+
+export type ReadDirection = "none" | "insertion" | "back";
+export type LedColor = "green" | "red" | "orange";
+export type ReadPhase = "idle" | "waiting" | "reading";
+/** What the mock reader will do next. Offered only when mocking. */
+export type NextOutcome = "card" | "timeout" | "unreadable";
+
+export interface TransactionSetting {
+  direction: ReadDirection;
+  /** Bitmask: 1 track 1, 2 track 2, 4 track 3. */
+  tracks: number;
+  insertionLock: boolean;
+  pullOutLock: boolean;
+}
+
+export interface CardReaderState {
+  status: Status;
+  phase: ReadPhase;
+  mock: boolean;
+  led: LedColor | "off";
+  seconds: number;
+  transaction: TransactionSetting;
+  /** What these settings put on the wire, so the page can show what it is sending. */
+  literals: { prepare: string; monitor: string; read: string };
+}
+
+export interface Track1 {
+  pan: string;
+  surname: string;
+  firstName?: string;
+  nameRest?: string;
+  expiry?: string;
+  serviceCode?: string;
+  discretionary?: string;
+}
+
+export interface Track2 {
+  pan: string;
+  expiry?: string;
+  serviceCode?: string;
+  discretionary?: string;
+}
+
+/**
+ * A read card.
+ *
+ * **Carries an unmasked PAN and the raw stripe.** It exists only in the reply to the read that
+ * produced it — the backend never records it, and the page masks it unless asked. Do not put any of
+ * this into the activity log, a URL, or storage.
+ */
+export interface CardData {
+  track1?: Track1;
+  track2?: Track2;
+  pan?: string;
+  expiry?: string;
+  surname?: string;
+  firstName?: string;
+  raw: string;
+}
+
+export interface ReadResult {
+  ok: boolean;
+  kind?: "card" | "timeout" | "cancelled" | "readFailed";
+  card?: CardData;
+  status?: string;
+  error?: string;
+}
+
+// ---- snapshot + events ----------------------------------------------------------------------
+
+export interface Snapshot {
+  mock: boolean;
+  log: LogEntry[];
+  lightboard: LightBoardState;
+  cardreader: CardReaderState;
+}
+
 export type Event =
+  | { type: "hello" }
   | { type: "log"; entry: LogEntry }
-  | { type: "status"; status: Status; portName: string; doors: Record<Door, string> };
+  | { type: "state"; device: "lightboard"; state: Omit<LightBoardState, "vocabulary"> }
+  | { type: "state"; device: "cardreader"; state: CardReaderState };
 
 async function getJson<T>(path: string): Promise<T> {
   const response = await fetch(path);
@@ -96,32 +163,41 @@ async function getJson<T>(path: string): Promise<T> {
   return await response.json() as T;
 }
 
-export const getState = () => getJson<State>("/api/state");
+export const getSnapshot = () => getJson<Snapshot>("/api/state");
 
-/**
- * Posts a command.
- *
- * The backend records both the send and any board-side failure in its own log, which streams back,
- * so the caller only has to surface what that log will never show: a request that did not arrive.
- */
-async function post(path: string, body?: unknown): Promise<void> {
+/** Posts a command and returns the body, so callers that need a result can read one. */
+async function post<T = { ok: boolean }>(path: string, body?: unknown): Promise<T> {
   const response = await fetch(path, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
-  if (response.ok) return;
-  const failure = await response.json().catch(() => null) as { error?: string } | null;
-  throw new Error(failure?.error ?? `${response.status} ${response.statusText}`);
+  const payload = await response.json().catch(() => null) as (T & { error?: string }) | null;
+  if (!response.ok) throw new Error(payload?.error ?? `${response.status} ${response.statusText}`);
+  return payload as T;
 }
 
-export const connect = (portName: string) => post("/api/connect", { portName });
-export const disconnect = () => post("/api/disconnect");
-export const sendLed = (request: LedRequest) => post("/api/led", request);
-export const sendAllOff = () => post("/api/all-off");
-export const simulateDoor = (door: Door) => post("/api/door", { door });
+export const lightboard = {
+  connect: (portName: string) => post("/api/lightboard/connect", { portName }),
+  disconnect: () => post("/api/lightboard/disconnect"),
+  led: (request: LedRequest) => post("/api/lightboard/led", request),
+  allOff: () => post("/api/lightboard/all-off"),
+  simulateDoor: (door: Door) => post("/api/lightboard/door", { door }),
+};
 
-/** Subscribes to the event stream. Returns an unsubscribe. */
+export const cardreader = {
+  connect: () => post("/api/cardreader/connect"),
+  disconnect: () => post("/api/cardreader/disconnect"),
+  reset: () => post("/api/cardreader/reset"),
+  clear: () => post("/api/cardreader/clear"),
+  settings: (next: Partial<TransactionSetting> & { seconds?: number }) => post("/api/cardreader/settings", next),
+  led: (color: LedColor | "off") => post("/api/cardreader/led", { color }),
+  read: () => post<ReadResult>("/api/cardreader/read"),
+  cancel: () => post("/api/cardreader/cancel"),
+  arm: (outcome: NextOutcome) => post("/api/cardreader/arm", { outcome }),
+};
+
+/** Subscribes to the event stream, which carries every device at once. Returns an unsubscribe. */
 export function subscribe(onEvent: (event: Event) => void, onDropped: (message: string) => void): () => void {
   const stream = new EventSource("/api/events");
   stream.onmessage = (message) => onEvent(JSON.parse(message.data) as Event);

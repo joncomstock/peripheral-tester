@@ -1,8 +1,8 @@
 {
-  "name": "ier-lightboard-tester",
+  "name": "peripheral-tester",
   "private": true,
   "version": "0.1.0",
-  "description": "Browser UI for exercising an IER S33380 kiosk light board and recording what the hardware actually did.",
+  "description": "Browser UI for driving the peripherals of an IER 919 kiosk: the S33380 light board and the Hitachi-Omron V4KU card reader.",
   "type": "module",
   "scripts": {
     "dev": "vite",

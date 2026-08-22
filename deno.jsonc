@@ -2,13 +2,15 @@
   // Standalone IER S33380 light board tester backend (Deno).
   // hardware-libs is NOT modified by this app.
   "imports": {
-    // Light board driver — the PUBLISHED package, so a fresh clone builds without a sibling repo
-    // beside it. @eai/ier is not published yet (publish order: @eai/serial, then @eai/ier), so
-    // until it is, swap this line for a relative path and add the driver's own bare specifiers
-    // alongside it. README.md lists exactly which, and says why missing one reads as a cascade of
-    // implicit-anys. DO NOT COMMIT THAT: facepod-tester had the arrangement committed and a clone
-    // without hardware-libs failed with TS2307.
+    // The device drivers — the PUBLISHED packages, so a fresh clone builds without sibling repos
+    // beside it. Neither is published yet, and they live on different unmerged hardware-libs
+    // branches, so working against them locally means swapping these for relative paths and adding
+    // the deps those drivers resolve through this map. README.md lists exactly which, and says why
+    // missing one reads as a cascade of implicit-anys. DO NOT COMMIT THAT: facepod-tester had the
+    // arrangement committed and a clone without hardware-libs failed with TS2307.
     "@eai/ier/s33380": "jsr:@eai/ier@^1.0.0/s33380",
+    "@eai/omron/v4ku": "jsr:@eai/omron@^1.0.0/v4ku",
+    "@eai/hid": "jsr:@eai/hid@^1.0.0",
     // The driver's Transport contract — the mock board implements it. Pin matches
     // hardware-libs/deno.jsonc so we resolve the same version.
     "@eai/models": "jsr:@eai/models@^1.3.0",

@@ -742,3 +742,323 @@ button {
   outline: 2px solid #2f5fd0;
   outline-offset: 1px;
 }
+
+/* ---------------------------------------------------------------- dashboard */
+
+.back {
+  width: var(--touch);
+  height: var(--touch);
+  flex-shrink: 0;
+  font-size: 20px;
+  line-height: 1;
+  color: #4b5259;
+  background: linear-gradient(#fff, #f7f8fa);
+  border: 1px solid #d3d8de;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.back:hover {
+  filter: brightness(0.97);
+}
+
+.tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr));
+  gap: 14px;
+}
+
+.tile {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 18px;
+  text-align: left;
+  min-height: 150px;
+  border-radius: 10px;
+  background: linear-gradient(#fff, #fcfcfd);
+  border: 1px solid #dde1e6;
+  cursor: pointer;
+  box-shadow: 0 1px 2px rgb(16 24 40 / 4%), 0 8px 18px -10px rgb(16 24 40 / 14%);
+}
+
+.tile:hover {
+  border-color: #c7ccd3;
+}
+
+.tile-planned {
+  background: #f7f8f9;
+  border: 1px dashed #d7dbe0;
+  box-shadow: none;
+  cursor: not-allowed;
+}
+
+.tile-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.tile-name {
+  font-size: 17px;
+  font-weight: 600;
+  color: #16191d;
+}
+
+.tile-badge {
+  margin-left: auto;
+  font-size: var(--font-chip);
+  padding: 5px 10px;
+  border-radius: 5px;
+  color: #4d545c;
+  background: #f4f5f7;
+  border: 1px solid #e8eaee;
+  white-space: nowrap;
+}
+
+.tile-badge--live {
+  color: #1a6633;
+  background: #eaf6ee;
+  border-color: #cfe8d8;
+}
+
+.tile-badge--planned {
+  color: #7d5207;
+  background: #fdf3e0;
+  border-color: #f2e1bf;
+}
+
+.tile-model {
+  font-size: var(--font-label);
+  color: #4d545c;
+}
+
+.tile-bus {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: var(--font-chip);
+  color: #8d949c;
+}
+
+.tile-action {
+  margin-top: auto;
+  padding-top: 12px;
+  font-size: var(--font-seg);
+  font-weight: 500;
+  color: #2f5fd0;
+}
+
+.tile-planned .tile-action {
+  color: #a3aab2;
+}
+
+/* ---------------------------------------------------------------- card reader */
+
+.readpane {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: var(--row-y) var(--pad-x);
+}
+
+.readpane-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.readpane-actions button {
+  min-height: var(--touch);
+  padding: 0 18px;
+  font-size: var(--font-seg);
+  font-weight: 500;
+  color: #24282d;
+  background: linear-gradient(#fff, #f4f5f7);
+  border: 1px solid #c7ccd3;
+  border-radius: 7px;
+  cursor: pointer;
+}
+
+.readpane-actions button:hover:not(:disabled) {
+  filter: brightness(0.97);
+}
+
+.readpane-actions button:disabled {
+  color: #c1c6cc;
+  background: #f6f7f8;
+  border-color: #e6e8eb;
+  cursor: not-allowed;
+}
+
+.readpane-actions .primary:not(:disabled) {
+  color: #fff;
+  background: linear-gradient(color-mix(in oklab, #2f5fd0 88%, white), #2f5fd0);
+  border-color: color-mix(in oklab, #2f5fd0 82%, black);
+}
+
+.verdict {
+  padding: 26px var(--pad-x);
+  text-align: center;
+  font-size: var(--font-label);
+  color: #6b727a;
+  background: #fafbfc;
+  border: 1px dashed #dde1e6;
+  border-radius: 8px;
+}
+
+.verdict-bad {
+  color: #8a3d3d;
+  background: #fdf5f5;
+  border-color: #f0d5d5;
+}
+
+.cardpanel {
+  border: 1px solid #dde1e6;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.cardpanel-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px var(--pad-x);
+  background: #f7f9f8;
+  border-bottom: 1px solid #e9ebee;
+}
+
+.cardpanel-title {
+  font-size: var(--font-label);
+  font-weight: 600;
+}
+
+.fields {
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+}
+
+.field {
+  padding: 12px var(--pad-x);
+  border-top: 1px solid #f2f3f5;
+}
+
+.field dt {
+  font-size: var(--font-chip);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #8d949c;
+}
+
+.field dd {
+  margin: 3px 0 0;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: var(--font-label);
+  color: #16191d;
+  word-break: break-all;
+}
+
+.rawstripe {
+  padding: 12px var(--pad-x);
+  border-top: 1px solid #f2f3f5;
+}
+
+.rawstripe code {
+  display: block;
+  margin-top: 5px;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: var(--font-chip);
+  color: #6b727a;
+  word-break: break-all;
+}
+
+.masknote {
+  margin: 0;
+  padding: 12px var(--pad-x);
+  border-top: 1px solid #f2f3f5;
+  font-size: var(--font-chip);
+  color: #8d949c;
+  background: #fafbfc;
+}
+
+.settings {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.setting {
+  display: flex;
+  align-items: center;
+  gap: var(--gap);
+  padding: var(--row-y) var(--pad-x);
+  border-top: 1px solid #f2f3f5;
+  flex-wrap: wrap;
+}
+
+.setting:first-child {
+  border-top: 0;
+}
+
+.setting-label {
+  flex: 1;
+  min-width: 120px;
+  font-size: var(--font-label);
+  color: #24282d;
+}
+
+.chooser {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--touch);
+  padding: 0 16px;
+  font-size: var(--font-seg);
+  font-weight: 500;
+  color: #4d545c;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.chooser:hover:not(:disabled) {
+  filter: brightness(0.96);
+}
+
+.chooser:disabled {
+  color: #b9bfc6;
+  cursor: not-allowed;
+}
+
+.chooser-on {
+  color: #fff;
+  background: linear-gradient(color-mix(in oklab, #2f5fd0 88%, white), #2f5fd0);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 22%);
+}
+
+.stepper-value {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--touch);
+  padding: 0 14px;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: var(--font-seg);
+  color: #24282d;
+  border-left: 1px solid #e2e6ea;
+}
+
+.activity-device {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  color: #8d949c;
+  background: #f4f5f7;
+  border: 1px solid #e8eaee;
+  border-radius: 3px;
+  padding: 1px 5px;
+  flex-shrink: 0;
+  align-self: flex-start;
+}

@@ -19,6 +19,7 @@ export const LAMP = {
   red: "#d93a3a",
   blue: "#2d7ce0",
   yellow: "#e5b00d",
+  orange: "#e77b18",
   cyan: "#12a6b8",
   magenta: "#c33bb0",
   white: "#e9edf2",

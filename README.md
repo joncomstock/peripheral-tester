@@ -1,49 +1,48 @@
-# IER S33380 light board tester
+# Peripheral Tester
 
-A standalone **local hardware test utility** for the IER **S33380 kiosk light board**, built on the
-`@eai/ier/s33380` driver. Indicator LEDs, the LED strip, the semaphore tower, and the two
-service-door switches.
+A standalone **local hardware test utility** for the peripherals of an IER **919** kiosk. A Deno
+backend owns every device handle; a React/Vite frontend drives them from a dashboard.
 
-It is intentionally minimal — no auth, no database, no cloud. A Deno backend owns the COM port; a
-React/Vite frontend drives it.
+| Device          | Driver            | Bus               |
+| --------------- | ----------------- | ----------------- |
+| Light board     | `@eai/ier/s33380` | RS-232, Win32 FFI |
+| Card reader     | `@eai/omron/v4ku` | USB HID           |
+| Passport reader | not yet wired up  | —                 |
 
-> The browser **never** talks to the board. The transport is a Win32 COM port over Deno FFI, and only
-> the process holding the COM handle can drive it — so every device call goes through the backend.
+It is intentionally minimal — no auth, no database, no cloud.
+
+> The browser **never** talks to hardware. A COM handle and a USB HID handle are held by the backend,
+> and only the process holding them can drive the devices.
 
 ```text
-Browser (React/Vite)  ──/api──►  Deno backend  ──serial / Win32 FFI──►  S33380
-                                      │
-                                      └─ @eai/ier/s33380  (published package, unmodified)
+Browser (React/Vite)  ──/api──►  Deno backend  ──serial / USB HID──►  kiosk peripherals
+                                       ├─ @eai/ier/s33380
+                                       └─ @eai/omron/v4ku
 ```
 
 ## What it does
 
-Drives every section of the board and shows what the board says back:
+Pick a device from the dashboard, connect, and drive it. Both screens are control panels rather than
+probes: they drive the peripheral and report what came back. Where a channel map or a transaction
+setting turns out to be wrong for a kiosk, the fix is configuration passed to the driver.
 
-- **Component indicators** — payment terminal, card reader, passport reader, boarding pass printer,
-  GPP dispenser. On / Blink / Off each.
-- **Bag tag printer** — one indicator per side.
-- **Semaphore tower** — green, red, and yellow, which is the red and green lamps lit together.
-- **LED strip** — on or off per colour. The strip has no blink on the wire, so it is not offered.
-- **Service doors** — reported by the board as the switches move.
-- **Activity** — every command sent, every door report, and anything the board replied that the
-  driver did not expect, quoted exactly as it arrived.
+**Light board** — component indicators, bag-tag sides, the semaphore tower, and the LED strip with
+its additive mixes. Service doors report as their switches move. The lamps on screen show what was
+**commanded**: the board acknowledges commands and never reports lamp state.
 
-Pick a port, connect, and drive it. **All Off** darkens every indicator, both bag-tag sides and every
-strip colour; so does disconnecting, and so does Ctrl-C on the backend, because a kiosk left with
-lamps lit is the mistake worth designing against.
+**Card reader** — read a card, with the transaction settings the device takes: read direction, track
+mask, whether to hold the card, and how long to wait. The literal command each setting produces is
+shown beside it, so what goes on the wire is visible.
 
-The lamps on screen show what was **commanded**. The board acknowledges commands and never reports
-lamp state, so that is the honest thing for a control panel to show.
+### Cardholder data
 
-### The channel map is configuration
+`@eai/omron` returns an **unmasked PAN** and the raw stripe, because truncation policy belongs to
+whoever knows which scheme applies. This tester's policy:
 
-Every channel number is a property of how a given kiosk is wired, not of the protocol. The page
-labels each control with the channel it drives, taken from the map in force. Two of the shipped
-defaults — `payment` = 1 and `cardReader` = 2 — were never exercised on hardware, and `payment` = 1
-is the same channel as the semaphore's green lamp, so commanding one may drive the other. Where a
-channel is shared, the activity log says so as the command goes out. Correct a wrong map by passing
-a `config` to `IERS33380.open()`.
+- The PAN and the stripe are **never logged or stored**, server-side or client-side. The activity log
+  records that a card was read and which tracks decoded, nothing more.
+- The screen masks to the last four by default. Revealing is deliberate, and resets on the next read.
+- A read's card data exists only in the reply to the read that produced it.
 
 ## Quick start
 
@@ -70,39 +69,39 @@ not opened until you press **Connect**, so starting the backend never touches th
 For frontend work, `npm run dev` runs Vite on `:5175` and proxies `/api` to the backend, so hot
 reload works while the board stays on the Deno side (`TESTER_PORT` overrides the target).
 
-### Before `@eai/ier` is published
+### Before the drivers are published
 
-`@eai/ier` is not on the registry yet — publish order is `@eai/serial`, then `@eai/ier`. Until then
-nothing runs from a clean clone. To work against unlanded driver work, swap the pin in `deno.jsonc`
-for a relative path into a sibling checkout:
+Neither driver is on the registry yet, and they currently live on **different unmerged branches** of
+`hardware-libs` — `@eai/ier` and `@eai/serial` on `feat/ier-lightboard`, `@eai/omron` and `@eai/hid`
+on `feat/omron-v4ku`. Until both land on master, a clean clone cannot build, and pointing at a single
+checkout is not enough: one of the two branches has to be a second worktree.
 
-```jsonc
-"@eai/ier/s33380": "../hardware-libs/ier/s33380/mod.ts",   // changed
-"@eai/serial":     "../hardware-libs/serial/mod.ts",       // added
-"@eai/shared":     "../hardware-libs/shared/mod.ts",       // added
-"@eai/async":      "jsr:@eai/async@^1.0.0",                // added
-"@eai/hotplug":    "jsr:@eai/hotplug@^1.0.0",              // added
-"@std/bytes":      "jsr:@std/bytes@^1.0.6",                // added
+```bash
+cd hardware-libs
+git worktree add --detach ../wt-ier-driver origin/feat/ier-lightboard
 ```
 
-Five extra entries, not one: a relative path brings the driver's source but not the workspace import
-map it resolves against, so its own bare specifiers resolve against _this_ map instead. Miss one and
-the failure is a single TS2307 followed by a cascade of TS7006 implicit-anys pointing at code that is
-fine — the driver's exports silently became `any`. Read the _first_ error, not the loudest ones.
+Then swap the pins in `deno.jsonc` for relative paths — the light board pair at the worktree, the
+card reader pair at whichever checkout holds `feat/omron-v4ku` — plus the shared deps those drivers
+resolve through this map rather than their own workspace: `@eai/shared`, `@eai/usb`, `@eai/async`,
+`@eai/hotplug`, `@std/bytes` and `@std/encoding`.
 
-Also check the path: this repo is a sibling of `elevationai/`, so hardware-libs sits at
-`../elevationai/hardware-libs/…` in that layout. And delete any `deno.lock` written while swapped —
-it records the local paths. **Do not commit any of it.** A clone without `hardware-libs` beside it
-fails the same way, on config nobody thinks to suspect.
+Miss one and the failure is a single TS2307 followed by a cascade of TS7006 implicit-anys pointing at
+code that is fine — the driver's exports silently became `any`. Read the _first_ error, not the
+loudest ones. Delete any `deno.lock` written while swapped, and **do not commit any of it**.
 
 ## Mock mode
 
-`deno task dev:mock` runs a fake `Transport` through the **real driver**, so the command
+`deno task dev:mock` runs fake transports through the **real drivers**, so the command
 construction, framing and ack matching being exercised are the shipped ones. It answers every
 command and echoes the parameters back on every third reply (`AI;3=O@` rather than `AI;3@`) — a shape
 the driver accepts and warns about, so that path is exercised before anyone is standing at a kiosk.
 
-Its service doors are moved from the page rather than on a timer: a door that flapped on its own
+The card reader's mock speaks the V4KU's own report protocol — `C00`, `C6s`, `C:6`, `C92`, `C6a` and
+their `P`/`N` replies — so the driver's framing, echo matching and track parsing are the ones under
+test. What the next read produces (a card, a timeout, an unreadable stripe) is chosen from the page.
+
+The light board's service doors are moved from the page rather than on a timer: a door that flapped on its own
 would fill the activity log with events nobody caused. Those buttons appear only in mock mode.
 
 There is deliberately no mock in the browser. A second mock would be a copy that goes stale, and a
@@ -116,19 +115,25 @@ backend attaches a log handler so those land in **Activity** instead, quoted ver
 
 ## Layout
 
-| Path                   | What                                                              |
-| ---------------------- | ----------------------------------------------------------------- |
-| `server/main.ts`       | Owns the COM port. JSON + SSE API, and serves `dist/` on a kiosk. |
-| `server/collisions.ts` | Which indicator channels two sections share, from the live map.   |
-| `src/api.ts`           | Typed client for that API. No vocabulary of its own.              |
-| `src/rows.ts`          | Payload → controls, and the naming rule the whole page uses.      |
-| `src/look.ts`          | Lamps, segmented buttons and the strip preview, computed.         |
-| `src/App.tsx`          | The page.                                                         |
-| `src/styles.css`       | Everything static. Anything that varies lives in `look.ts`.       |
+| Path                        | What                                                            |
+| --------------------------- | --------------------------------------------------------------- |
+| `server/main.ts`            | HTTP routing, and serves `dist/` on a kiosk.                    |
+| `server/activity.ts`        | The shared log and event stream. Carries no cardholder data.    |
+| `server/lightboard.ts`      | The light board session. Owns the COM port.                     |
+| `server/cardreader.ts`      | The card reader session. Owns the USB HID handle.               |
+| `server/collisions.ts`      | Which indicator channels two sections share, from the live map. |
+| `src/App.tsx`               | The shell: which device is on screen, and the shared state.     |
+| `src/Home.tsx`              | The dashboard.                                                  |
+| `src/LightBoardPage.tsx`    | The light board's screen and header controls.                   |
+| `src/CardReaderPage.tsx`    | The card reader's screen and header controls.                   |
+| `src/Activity.tsx`          | The log panel, filtered to the device on screen.                |
+| `src/lightboardControls.ts` | Vocabulary → controls, and the naming rule the page uses.       |
+| `src/look.ts`               | Lamps, segmented buttons and the strip preview, computed.       |
+| `src/styles.css`            | Everything static. Anything that varies lives in `look.ts`.     |
 
-The controls are generated from `/api/state`, which the backend builds from the driver's own exported
-vocabularies (`ACTIONS`, `INDICATOR_SECTIONS`, `STRIP_COLORS`, `SEMAPHORE_COLORS`, `SIDES`) and the
-live channel map. Nothing here keeps its own list of sections, actions or channel numbers, so this
+The light board's controls are generated from `/api/state`, which the backend builds from the
+driver's own exported vocabularies (`ACTIONS`, `INDICATOR_SECTIONS`, `STRIP_COLORS`, `STRIP_MIX`,
+`SEMAPHORE_COLORS`, `SIDES`) and the live channel map. Nothing here keeps its own list of sections, actions or channel numbers, so this
 repo cannot disagree with the driver about what the board has. Operator-facing names are the one
 exception, and a section with no name falls back to the driver's identifier so it still appears.
 

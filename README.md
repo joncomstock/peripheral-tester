@@ -47,8 +47,12 @@ a `config` to `IERS33380.open()`.
 
 ## Quick start
 
-Prereqs: **Deno ≥ 2.9** and **Node ≥ 18**. Built and verified on Deno 2.9.4; Node is only
-needed to build the UI, not to run it.
+Prereqs: **Deno ≥ 2.9** and **Node ≥ 18**, on the kiosk as well as a dev machine — the UI is built
+where it runs. Built and verified on Deno 2.9.4.
+
+`dist/` is gitignored, so **`git pull` never updates the built UI**. Build after every pull: the page
+and the backend talk to each other, and an old bundle against a new backend shows wrong values rather
+than failing loudly.
 
 ```bash
 npm install            # frontend deps (one time)

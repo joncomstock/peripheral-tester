@@ -12,7 +12,7 @@
 
 // ---- shared ---------------------------------------------------------------------------------
 
-export type Device = "system" | "lightboard" | "cardreader";
+export type Device = "system" | "lightboard" | "cardreader" | "passportreader";
 export type Status = "closed" | "opening" | "open";
 
 export interface LogEntry {
@@ -142,6 +142,103 @@ export interface ReadResult {
   error?: string;
 }
 
+// ---- passport reader ------------------------------------------------------------------------
+
+export type LightSource = "ir" | "visible" | "uv" | "uv3led";
+export type ScanResolution = "undefined" | "low" | "default" | "high";
+export type ScanPhase = "idle" | "scanning";
+export type StatusLedColor = "black" | "red" | "green" | "yellow" | "blue" | "purple" | "turquoise" | "white";
+export type ImageFormat = "jpeg" | "png" | "bmp";
+/** What the mock scanner will produce next. Offered only when mocking. */
+export type NextScan = "passport" | "smudged" | "noDocument" | "barcodeOnly";
+
+export interface PassportReaderState {
+  status: Status;
+  phase: ScanPhase;
+  mock: boolean;
+  led: StatusLedColor | "off";
+  /** `null` when the device has not been asked, or cannot answer — not the same as "no document". */
+  documentPresent: boolean | null;
+  settings: { lights: LightSource[]; resolution: ScanResolution };
+  api?: { version: number; number: number; dllVersion: string; compileDate: string };
+  device?: {
+    deviceType: string;
+    vendorId: number;
+    productId: number;
+    firmware: string;
+    /** Which optional features this unit actually has, as the device reports them. */
+    capabilities: Record<string, boolean>;
+  };
+}
+
+/** A date as it appears in an MRZ, alongside its interpretation. */
+export interface MrzDate {
+  raw: string;
+  iso?: string;
+}
+
+/** One check digit, and whether the data it covers agrees with it. */
+export interface MrzCheck {
+  digit: string;
+  valid: boolean;
+}
+
+/**
+ * Fields decoded from a recognised MRZ.
+ *
+ * **This is personal data** — a name, a nationality, a date of birth and a document number. It
+ * exists only in the reply to the read that produced it. The backend never records it, and the page
+ * masks it unless asked. Do not put any of it into the activity log, a URL, or storage.
+ */
+export interface MrzFields {
+  format: "TD1" | "TD2" | "TD3" | "MRVA" | "MRVB";
+  documentCode: string;
+  issuingState: string;
+  surname: string;
+  givenNames: string;
+  documentNumber: string;
+  nationality: string;
+  dateOfBirth: MrzDate;
+  sex: "M" | "F" | "X";
+  dateOfExpiry: MrzDate;
+  optionalData: string;
+  optionalData2: string;
+  checks: {
+    documentNumber: MrzCheck;
+    dateOfBirth: MrzCheck;
+    dateOfExpiry: MrzCheck;
+    optionalData?: MrzCheck;
+    composite?: MrzCheck;
+  };
+  allChecksValid: boolean;
+}
+
+/** One MRZ read. Carries the same personal data as {@link MrzFields}; the same rules apply. */
+export interface MrzRead {
+  recognized: boolean;
+  lines: string[];
+  raw: string;
+  /** True when the OCR could not classify a glyph. The read is still returned. */
+  hasUnclassifiedCharacters: boolean;
+  source: "pc" | "device";
+  fields?: MrzFields;
+}
+
+export interface BarcodeRead {
+  found: boolean;
+  symbology: string;
+  symbologyCode: string;
+  text: string;
+  byteLength: number;
+}
+
+export interface ScanResult {
+  ok: boolean;
+  mrz?: MrzRead;
+  barcode?: BarcodeRead;
+  error?: string;
+}
+
 // ---- snapshot + events ----------------------------------------------------------------------
 
 export interface Snapshot {
@@ -149,6 +246,7 @@ export interface Snapshot {
   log: LogEntry[];
   lightboard: LightBoardState;
   cardreader: CardReaderState;
+  passportreader: PassportReaderState;
 }
 
 export type Event =
@@ -160,7 +258,8 @@ export type Event =
   | ({ type: "hello" } & Snapshot)
   | { type: "log"; entry: LogEntry }
   | { type: "state"; device: "lightboard"; state: Omit<LightBoardState, "vocabulary"> }
-  | { type: "state"; device: "cardreader"; state: CardReaderState };
+  | { type: "state"; device: "cardreader"; state: CardReaderState }
+  | { type: "state"; device: "passportreader"; state: PassportReaderState };
 
 async function getJson<T>(path: string): Promise<T> {
   const response = await fetch(path);
@@ -200,6 +299,25 @@ export const cardreader = {
   read: () => post<ReadResult>("/api/cardreader/read"),
   cancel: () => post("/api/cardreader/cancel"),
   arm: (outcome: NextOutcome) => post("/api/cardreader/arm", { outcome }),
+};
+
+export const passportreader = {
+  connect: () => post("/api/passportreader/connect"),
+  disconnect: () => post("/api/passportreader/disconnect"),
+  settings: (next: { lights?: LightSource[]; resolution?: ScanResolution }) => post("/api/passportreader/settings", next),
+  led: (color: StatusLedColor | "off") => post("/api/passportreader/led", { color }),
+  buzz: () => post("/api/passportreader/buzz"),
+  read: () => post<ScanResult>("/api/passportreader/read"),
+  arm: (outcome: NextScan) => post("/api/passportreader/arm", { outcome }),
+  /**
+   * URL for the scanned page under one light source.
+   *
+   * A URL rather than a fetch, so an `<img>` can render it directly. The cache-buster is what makes
+   * a second read replace the picture: without it the browser would show the previous document,
+   * because the address is otherwise identical.
+   */
+  imageUrl: (light: LightSource, format: ImageFormat, nonce: number) =>
+    `/api/passportreader/image?light=${light}&format=${format}&n=${nonce}`,
 };
 
 /** Subscribes to the event stream, which carries every device at once. Returns an unsubscribe. */

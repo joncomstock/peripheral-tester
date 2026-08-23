@@ -3,7 +3,7 @@
  *
  * Owns every device the page can drive and exposes them over one local JSON + SSE API. The browser
  * never touches hardware: the light board is a COM port held by this process, the card reader a USB
- * HID handle, and both drivers are Deno-native.
+ * HID handle, the passport reader a loaded `PageScanAPI.dll`, and every driver is Deno-native.
  *
  * These are control panels, not probes. They drive the peripherals and report what came back; where
  * a channel map or a setting turns out to be wrong for a kiosk, the fix is configuration passed to
@@ -25,9 +25,11 @@ import { join } from "@std/path";
 import { serveDir } from "@std/http/file-server";
 import type { LedRequest } from "@eai/ier/s33380";
 import type { LedColor, TransactionSetting } from "@eai/omron/v4ku";
+import type { ImageFormat, LedColorName, LightSourceName, ResolutionName } from "@eai/desko/penta";
 import * as activity from "./activity.ts";
 import * as lightboard from "./lightboard.ts";
 import * as cardreader from "./cardreader.ts";
+import * as passportreader from "./passportreader.ts";
 
 const args = Deno.args.filter((a) => a !== "--mock");
 const mock = Deno.args.includes("--mock");
@@ -40,6 +42,7 @@ const built = await Deno.stat(join(distDir, "index.html")).then(() => true).catc
 
 lightboard.configure({ mock, portName: args[0] });
 cardreader.configure({ mock });
+passportreader.configure({ mock, dllPath: Deno.env.get("DESKO_PAGESCAN_DLL_PATH") });
 
 const json = (body: unknown, statusCode = 200) =>
   new Response(JSON.stringify(body), { status: statusCode, headers: { "content-type": "application/json" } });
@@ -50,6 +53,7 @@ const snapshot = () => ({
   log: activity.history(),
   lightboard: { ...lightboard.state(), vocabulary: lightboard.vocabulary() },
   cardreader: cardreader.state(),
+  passportreader: passportreader.state(),
 });
 
 /** Runs a device action and turns a refusal into an answer rather than a stack trace. */
@@ -118,6 +122,48 @@ async function handle(request: Request): Promise<Response> {
     return await attempt(() => cardreader.arm(outcome ?? "card"));
   }
 
+  // ---- passport reader ----
+
+  if (post && pathname === "/api/passportreader/connect") return await attempt(() => passportreader.connect());
+  if (post && pathname === "/api/passportreader/disconnect") return await attempt(() => passportreader.disconnect());
+  if (post && pathname === "/api/passportreader/settings") {
+    const next = await body<{ lights: LightSourceName[]; resolution: ResolutionName }>();
+    return await attempt(() => passportreader.settings(next));
+  }
+  if (post && pathname === "/api/passportreader/led") {
+    const { color } = await body<{ color: LedColorName | "off" }>();
+    return await attempt(() => passportreader.setLed(color ?? "off"));
+  }
+  if (post && pathname === "/api/passportreader/buzz") return await attempt(() => passportreader.buzz());
+  // The one response carrying document data. It is answered to the caller and never recorded.
+  if (post && pathname === "/api/passportreader/read") return await attempt(() => passportreader.read());
+  if (post && pathname === "/api/passportreader/arm") {
+    const { outcome } = await body<{ outcome: passportreader.NextOutcome }>();
+    return await attempt(() => passportreader.arm(outcome ?? "passport"));
+  }
+  /**
+   * The scanned page, as image bytes.
+   *
+   * A GET so the page can point an `<img>` at it. `no-store` because the response is a picture of
+   * somebody's passport: it is served once to the tab that asked and must not sit in a disk cache
+   * afterwards.
+   */
+  if (pathname === "/api/passportreader/image") {
+    const query = new URL(request.url).searchParams;
+    const light = (query.get("light") ?? "visible") as LightSourceName;
+    const format = (query.get("format") ?? "jpeg") as ImageFormat;
+    try {
+      const scan = await passportreader.image(light, format);
+      // Copied into an array backed by a plain ArrayBuffer, which is what a `Response` body accepts.
+      return new Response(new Uint8Array(scan.bytes), {
+        headers: { "content-type": scan.mimeType, "cache-control": "no-store" },
+      });
+    }
+    catch (err) {
+      return json({ ok: false, error: err instanceof Error ? err.message : String(err) }, 500);
+    }
+  }
+
   if (pathname.startsWith("/api/")) return new Response("not found", { status: 404 });
 
   // The UI. On a kiosk this process serves it too, so there is one thing to start.
@@ -141,6 +187,7 @@ Deno.addSignalListener("SIGINT", async () => {
   console.log("\n  shutting down: releasing devices");
   await lightboard.disconnect();
   await cardreader.disconnect();
+  await passportreader.disconnect();
   await server.shutdown();
   Deno.exit(0);
 });

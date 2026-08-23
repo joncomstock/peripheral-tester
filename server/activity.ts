@@ -5,15 +5,17 @@
  * working through a kiosk moves between peripherals, and the order things happened in is the thing
  * worth preserving. The page filters by device when it is showing one.
  *
- * **Nothing here may carry cardholder data.** The card reader's driver returns an unmasked PAN and
- * says nothing above it should log the PAN or the raw stripe; this module is the "above it", so the
- * rule lands here. Card content goes to the page in a response and is never recorded.
+ * **Nothing here may carry cardholder or document data.** The card reader's driver returns an
+ * unmasked PAN and says nothing above it should log the PAN or the raw stripe; the passport
+ * reader's returns an MRZ, which is a name, a nationality, a date of birth and a document number.
+ * This module is the "above it" for both, so the rule lands here. That content goes to the page in
+ * a response and is never recorded.
  *
  * @module
  */
 
 /** Which peripheral a line came from. `system` is the tester talking about itself. */
-export type Device = "system" | "lightboard" | "cardreader";
+export type Device = "system" | "lightboard" | "cardreader" | "passportreader";
 
 export interface Entry {
   at: string;

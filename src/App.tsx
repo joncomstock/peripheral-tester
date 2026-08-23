@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { CardReaderState, LogEntry, Snapshot } from "./api.ts";
+import type { CardReaderState, LogEntry, PassportReaderState, Snapshot } from "./api.ts";
 import * as api from "./api.ts";
 import { Activity } from "./Activity.tsx";
 import { Home } from "./Home.tsx";
 import type { View } from "./Home.tsx";
 import { CardReaderControls, CardReaderPage } from "./CardReaderPage.tsx";
+import { PassportReaderControls, PassportReaderPage } from "./PassportReaderPage.tsx";
 import { LightBoardControls, LightBoardPage, phrase as lightboardPhrase } from "./LightBoardPage.tsx";
 
 const MAX_LINES = 200;
@@ -13,6 +14,7 @@ const TITLES: Record<View, { title: string; sub: string }> = {
   home: { title: "Peripheral Tester", sub: "IER 919 · kiosk peripherals" },
   lightboard: { title: "Light Board", sub: "IER S33380" },
   cardreader: { title: "Card Reader", sub: "Hitachi-Omron V4KU" },
+  passportreader: { title: "Passport Reader", sub: "DESKO PENTA Scanner" },
 };
 
 /**
@@ -59,6 +61,9 @@ export function App() {
           if (!previous) return previous;
           if (event.device === "lightboard") {
             return { ...previous, lightboard: { ...previous.lightboard, ...event.state } };
+          }
+          if (event.device === "passportreader") {
+            return { ...previous, passportreader: event.state as PassportReaderState };
           }
           return { ...previous, cardreader: event.state as CardReaderState };
         });
@@ -139,12 +144,14 @@ export function App() {
 
         {view === "lightboard" && <LightBoardControls state={snapshot.lightboard} onFail={fail} />}
         {view === "cardreader" && <CardReaderControls state={snapshot.cardreader} onFail={fail} />}
+        {view === "passportreader" && <PassportReaderControls state={snapshot.passportreader} onFail={fail} />}
       </header>
 
       <main className="main">
         {view === "home" && <Home snapshot={snapshot} onOpen={setView} aside={activity} />}
         {view === "lightboard" && <LightBoardPage state={snapshot.lightboard} onFail={fail} aside={activity} />}
         {view === "cardreader" && <CardReaderPage state={snapshot.cardreader} onFail={fail} aside={activity} />}
+        {view === "passportreader" && <PassportReaderPage state={snapshot.passportreader} onFail={fail} aside={activity} />}
       </main>
     </div>
   );

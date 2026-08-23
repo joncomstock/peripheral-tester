@@ -4,6 +4,19 @@ import { toneOf } from "./look.ts";
 import { Card } from "./ui.tsx";
 
 /**
+ * Short tag shown beside a line on the dashboard, where every device's lines are mixed together.
+ *
+ * A map rather than a condition: with two devices "anything that is not the board is the reader"
+ * held, and with a card reader and a passport reader in the same log it stopped holding — both
+ * tagged "reader", so a line no longer said which peripheral produced it.
+ */
+const DEVICE_TAG: Partial<Record<Device, string>> = {
+  lightboard: "board",
+  cardreader: "card",
+  passportreader: "passport",
+};
+
+/**
  * The activity log, shared by every device.
  *
  * One log tagged by device rather than one per device: an operator working through a kiosk moves
@@ -48,7 +61,7 @@ export function Activity(
               <span className="activity-time">{entry.at}</span>
               {!only && entry.device !== "system" && (
                 <span className={`activity-device activity-device--${entry.device}`}>
-                  {entry.device === "lightboard" ? "board" : "reader"}
+                  {DEVICE_TAG[entry.device] ?? entry.device}
                 </span>
               )}
               <span className={`activity-text tone-${entry.tone}`}>{entry.text}</span>

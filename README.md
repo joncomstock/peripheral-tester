@@ -3,33 +3,35 @@
 A standalone **local hardware test utility** for the peripherals of an IER **919** kiosk. A Deno
 backend owns every device handle; a React/Vite frontend drives them from a dashboard.
 
-| Device          | Driver            | Bus               |
-| --------------- | ----------------- | ----------------- |
-| Light board     | `@eai/ier/s33380` | RS-232, Win32 FFI |
-| Card reader     | `@eai/omron/v4ku` | USB HID           |
-| Passport reader | not yet wired up  | —                 |
+| Device          | Driver             | Bus                        |
+| --------------- | ------------------ | -------------------------- |
+| Light board     | `@eai/ier/s33380`  | RS-232, Win32 FFI          |
+| Card reader     | `@eai/omron/v4ku`  | USB HID                    |
+| Passport reader | `@eai/desko/penta` | USB, `PageScanAPI.dll` FFI |
 
 It is intentionally minimal — no auth, no database, no cloud.
 
 > [!IMPORTANT]
-> **This revision does not build from a clean clone.** None of the four packages it needs —
-> `@eai/ier`, `@eai/serial`, `@eai/omron`, `@eai/hid` — is published, and they sit on two unmerged
-> `hardware-libs` branches. Building, testing or running the backend today needs the local import
-> substitutions in [Before the drivers are published](#before-the-drivers-are-published). The
-> frontend (`npm test`, `npm run build`) is unaffected and builds as cloned.
+> **This revision does not build from a clean clone.** None of the five packages it needs —
+> `@eai/ier`, `@eai/serial`, `@eai/omron`, `@eai/hid`, `@eai/desko` — is published, and they sit on
+> three unmerged `hardware-libs` branches. Building, testing or running the backend today needs the
+> local import substitutions in [Before the drivers are published](#before-the-drivers-are-published).
+> The frontend (`npm test`, `npm run build`) is unaffected and builds as cloned.
 >
-> What removes the caveat, in order: land `feat/hid-facepod` (PR #55), land `feat/omron-v4ku` and
-> `feat/ier-lightboard` — neither has a PR yet — then publish `@eai/hid` and `@eai/serial` before
-> `@eai/omron` and `@eai/ier`, which depend on them. The pins here already name the versions that
-> release should produce, so nothing in this repo changes when it happens.
+> What removes the caveat, in order: land `feat/hid-facepod` (PR #55), land `feat/omron-v4ku`,
+> `feat/ier-lightboard` and `feat/desko-penta` — none has a PR yet — then publish `@eai/hid` and
+> `@eai/serial` before `@eai/omron` and `@eai/ier`, which depend on them. `@eai/desko` depends on
+> neither and can go at any point. The pins here already name the versions that release should
+> produce, so nothing in this repo changes when it happens.
 
 > The browser **never** talks to hardware. A COM handle and a USB HID handle are held by the backend,
 > and only the process holding them can drive the devices.
 
 ```text
-Browser (React/Vite)  ──/api──►  Deno backend  ──serial / USB HID──►  kiosk peripherals
+Browser (React/Vite)  ──/api──►  Deno backend  ──serial / USB HID / FFI──►  kiosk peripherals
                                        ├─ @eai/ier/s33380
-                                       └─ @eai/omron/v4ku
+                                       ├─ @eai/omron/v4ku
+                                       └─ @eai/desko/penta
 ```
 
 ## What it does
@@ -46,20 +48,34 @@ its additive mixes. Service doors report as their switches move. The lamps on sc
 mask, whether to hold the card, and how long to wait. The literal command each setting produces is
 shown beside it, so what goes on the wire is visible.
 
-### Cardholder data
+**Passport reader** — scan a document and read what is on it: the machine-readable zone parsed into
+fields with every ICAO check digit verified, any 1D or 2D barcode, and the scanned page under each
+light source the unit has. The light and resolution settings are the ones the next scan will use.
+Controls a unit cannot honour are not offered — a scanner without the UV lamp says so, and the
+ultraviolet option is then absent rather than dead.
+
+### Cardholder and document data
 
 `@eai/omron` returns an **unmasked PAN** and the raw stripe, because truncation policy belongs to
-whoever knows which scheme applies. This tester's policy:
+whoever knows which scheme applies. `@eai/desko` returns an **MRZ** — a name, a nationality, a date
+of birth and a document number — and the scanned page, portrait included. Both get the same policy:
 
-- The PAN and the stripe are **never logged or stored**, server-side or client-side. The activity log
-  records that a card was read and which tracks decoded, nothing more.
-- The screen masks to the last four by default. Revealing is deliberate, and resets on the next read.
-- A read's card data exists only in the reply to the read that produced it.
+- None of it is **ever logged or stored**, server-side or client-side. The activity log records that
+  a card or document was read and how it decoded, nothing more. The scan is served to the tab that
+  asked for it and never written to disk.
+- The screen masks by default — the card's PAN to its last four, the document's number and date of
+  birth likewise, and both blanked inside the raw stripe or MRZ lines that carry them inline.
+  Revealing is deliberate, and resets on the next read.
+- A read's data exists only in the reply to the read that produced it.
 
 ## Quick start
 
 Prereqs: **Deno ≥ 2.9** and **Node ≥ 18**, on the kiosk as well as a dev machine — the UI is built
 where it runs. Built and verified on Deno 2.9.4.
+
+The passport reader additionally needs DESKO's PENTA driver package installed, so `PageScanAPI.dll`
+resolves through `PATH`; set `DESKO_PAGESCAN_DLL_PATH` to point somewhere else. It is Windows x64
+only, and the other two devices work without it.
 
 `dist/` is gitignored, so **`git pull` never updates the built UI**. Build after every pull: the page
 and the backend talk to each other, and an old bundle against a new backend shows wrong values rather
@@ -83,20 +99,26 @@ reload works while the board stays on the Deno side (`TESTER_PORT` overrides the
 
 ### Before the drivers are published
 
-Neither driver is on the registry yet, and they currently live on **different unmerged branches** of
-`hardware-libs` — `@eai/ier` and `@eai/serial` on `feat/ier-lightboard`, `@eai/omron` and `@eai/hid`
-on `feat/omron-v4ku`. Until both land on master, a clean clone cannot build, and pointing at a single
-checkout is not enough: one of the two branches has to be a second worktree.
+No driver is on the registry yet, and they live on **three unmerged branches** of `hardware-libs` —
+`@eai/ier` and `@eai/serial` on `feat/ier-lightboard`, `@eai/omron` and `@eai/hid` on
+`feat/omron-v4ku`, `@eai/desko` on `feat/desko-penta`. Until they land on master a clean clone
+cannot build, and pointing at a single checkout is not enough: two of the three branches have to be
+worktrees.
 
 ```bash
 cd hardware-libs
-git worktree add --detach ../wt-ier-driver origin/feat/ier-lightboard
+git worktree add --detach ../wt-ier-driver   origin/feat/ier-lightboard
+git worktree add --detach ../wt-desko-penta  origin/feat/desko-penta
 ```
 
-Then swap the pins in `deno.jsonc` for relative paths — the light board pair at the worktree, the
-card reader pair at whichever checkout holds `feat/omron-v4ku` — plus the shared deps those drivers
-resolve through this map rather than their own workspace: `@eai/shared`, `@eai/usb`, `@eai/async`,
-`@eai/hotplug`, `@std/bytes` and `@std/encoding`.
+Then swap the pins in `deno.jsonc` for relative paths — the light board pair at its worktree, the
+passport reader at its own, the card reader pair at whichever checkout holds `feat/omron-v4ku` —
+plus the shared deps those drivers resolve through this map rather than their own workspace:
+`@eai/shared`, `@eai/usb`, `@eai/async`, `@eai/hotplug`, `@std/bytes` and `@std/encoding`.
+
+`@eai/desko` is the cheapest of the three to swap: it pulls in only `@eai/async` beyond what is
+already pinned here, because its native layer is behind an injectable symbol table rather than a
+USB stack.
 
 Miss one and the failure is a single TS2307 followed by a cascade of TS7006 implicit-anys pointing at
 code that is fine — the driver's exports silently became `any`. Read the _first_ error, not the
@@ -112,6 +134,14 @@ the driver accepts and warns about, so that path is exercised before anyone is s
 The card reader's mock speaks the V4KU's own report protocol — `C00`, `C6s`, `C:6`, `C92`, `C6a` and
 their `P`/`N` replies — so the driver's framing, echo matching and track parsing are the ones under
 test. What the next read produces (a card, a timeout, an unreadable stripe) is chosen from the page.
+
+The passport reader's mock is **shipped by its driver** rather than written here: `@eai/desko`
+exports the fake `PageScanAPI.dll` symbol table its own tests run against, so this app exercises the
+real struct packing and the real MRZ and barcode decoding rather than a second imitation that would
+drift the moment the driver was corrected. The MRZ it returns is the ICAO 9303 specimen passport,
+with its real check digits; what the next scan produces (a clean passport, a smudged MRZ, no MRZ, a
+boarding pass) is chosen from the page. The scanned page it returns is a flat tint with diagonal
+banding — deliberately nothing like a document, for the same reason there is no mock in the browser.
 
 The light board's service doors are moved from the page rather than on a timer: a door that flapped on its own
 would fill the activity log with events nobody caused. Those buttons appear only in mock mode.
@@ -133,11 +163,13 @@ backend attaches a log handler so those land in **Activity** instead, quoted ver
 | `server/activity.ts`        | The shared log and event stream. Carries no cardholder data.    |
 | `server/lightboard.ts`      | The light board session. Owns the COM port.                     |
 | `server/cardreader.ts`      | The card reader session. Owns the USB HID handle.               |
+| `server/passportreader.ts`  | The passport reader session. Owns the loaded `PageScanAPI.dll`. |
 | `server/collisions.ts`      | Which indicator channels two sections share, from the live map. |
 | `src/App.tsx`               | The shell: which device is on screen, and the shared state.     |
 | `src/Home.tsx`              | The dashboard.                                                  |
 | `src/LightBoardPage.tsx`    | The light board's screen and header controls.                   |
 | `src/CardReaderPage.tsx`    | The card reader's screen and header controls.                   |
+| `src/PassportReaderPage.tsx`| The passport reader's screen and header controls.               |
 | `src/Activity.tsx`          | The log panel, filtered to the device on screen.                |
 | `src/lightboardControls.ts` | Vocabulary → controls, and the naming rule the page uses.       |
 | `src/look.ts`               | Lamps, segmented buttons and the strip preview, computed.       |

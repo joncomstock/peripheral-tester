@@ -1,15 +1,17 @@
 {
-  // Standalone IER S33380 light board tester backend (Deno).
+  // Standalone IER 919 kiosk peripheral tester backend (Deno).
   // hardware-libs is NOT modified by this app.
   "imports": {
     // The device drivers — the PUBLISHED packages, so a fresh clone builds without sibling repos
-    // beside it. Neither is published yet, and they live on different unmerged hardware-libs
-    // branches, so working against them locally means swapping these for relative paths and adding
-    // the deps those drivers resolve through this map. README.md lists exactly which, and says why
-    // missing one reads as a cascade of implicit-anys. DO NOT COMMIT THAT: facepod-tester had the
-    // arrangement committed and a clone without hardware-libs failed with TS2307.
+    // beside it. None of them is published yet, and they live on three different unmerged
+    // hardware-libs branches, so working against them locally means swapping these for relative
+    // paths and adding the deps those drivers resolve through this map. README.md lists exactly
+    // which, and says why missing one reads as a cascade of implicit-anys. DO NOT COMMIT THAT:
+    // facepod-tester had the arrangement committed and a clone without hardware-libs failed with
+    // TS2307.
     "@eai/ier/s33380": "jsr:@eai/ier@^1.0.0/s33380",
     "@eai/omron/v4ku": "jsr:@eai/omron@^1.0.0/v4ku",
+    "@eai/desko/penta": "jsr:@eai/desko@^1.0.0/penta",
     "@eai/hid": "jsr:@eai/hid@^1.0.0",
     // The driver's Transport contract — the mock board implements it. Pin matches
     // hardware-libs/deno.jsonc so we resolve the same version.
@@ -26,10 +28,12 @@
     "@std/assert": "jsr:@std/assert@^1.0.14"
   },
   "tasks": {
-    // Real board. --allow-ffi opens the COM port through @eai/serial's kernel32 FFI, --allow-net
-    // binds the loopback server, --allow-read serves the built UI from ./dist.
+    // Real hardware. --allow-ffi both opens the COM port through @eai/serial's kernel32 FFI and
+    // loads PageScanAPI.dll for the passport reader, --allow-net binds the loopback server,
+    // --allow-read serves the built UI from ./dist, --allow-env reads PORT and
+    // DESKO_PAGESCAN_DLL_PATH.
     "dev": "deno run --allow-ffi --allow-net --allow-env --allow-read server/main.ts",
-    // No hardware and no FFI permission: a fake Transport driven through the real driver.
+    // No hardware and no FFI permission: fake transports driven through the real drivers.
     "dev:mock": "deno run --allow-net --allow-env --allow-read server/main.ts --mock",
     "test": "deno test server/",
     "check": "deno check server/main.ts"

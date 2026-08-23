@@ -152,7 +152,12 @@ export interface Snapshot {
 }
 
 export type Event =
-  | { type: "hello" }
+  /**
+   * Sent on every connection, including the silent reconnects `EventSource` makes on its own.
+   * Carries a whole snapshot, so a client that has been away can replace what it holds rather than
+   * trying to work out what it missed.
+   */
+  | ({ type: "hello" } & Snapshot)
   | { type: "log"; entry: LogEntry }
   | { type: "state"; device: "lightboard"; state: Omit<LightBoardState, "vocabulary"> }
   | { type: "state"; device: "cardreader"; state: CardReaderState };

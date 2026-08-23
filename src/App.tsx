@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { CardReaderState, LogEntry, Snapshot } from "./api.ts";
 import * as api from "./api.ts";
 import { Activity } from "./Activity.tsx";
@@ -27,33 +27,33 @@ export function App() {
   const [unreachable, setUnreachable] = useState<string | null>(null);
   const [log, setLog] = useState<LogEntry[]>([]);
   const [view, setView] = useState<View>("home");
+  /** Set once the stream has supplied a snapshot, after which the initial fetch is stale. */
+  const hydrated = useRef(false);
 
+  /**
+   * The stream is opened first and reconciled from, not merely appended to.
+   *
+   * `EventSource` reconnects by itself, and every connection — first or reconnect — begins with a
+   * `hello` carrying a whole snapshot. Treating that as authoritative closes two gaps at once:
+   * anything that happened before the stream was listening, and anything that happened while it was
+   * silently away. Nothing has to reason about what was missed.
+   */
   useEffect(() => {
-    let live = true;
-    api.getSnapshot()
-      .then((loaded) => {
-        if (!live) return;
-        setSnapshot(loaded);
-        setLog(loaded.log.slice(-MAX_LINES));
-      })
-      .catch((err: Error) => {
-        if (live) setUnreachable(err.message);
-      });
-    return () => {
-      live = false;
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!snapshot) return;
     return api.subscribe(
       (event) => {
+        if (event.type === "hello") {
+          hydrated.current = true;
+          const { type: _type, ...snapshot } = event;
+          setSnapshot(snapshot);
+          setLog(snapshot.log.slice(-MAX_LINES));
+          setUnreachable(null);
+          return;
+        }
         if (event.type === "log") {
           setLog((previous) => [...previous, event.entry].slice(-MAX_LINES));
           return;
         }
-        if (event.type !== "state") return;
-        // A device's own state replaces its slice; the vocabulary is only ever sent in a snapshot,
+        // A device's own state replaces its slice. The vocabulary only ever arrives in a snapshot,
         // so it is carried forward rather than clobbered.
         setSnapshot((previous) => {
           if (!previous) return previous;
@@ -65,7 +65,29 @@ export function App() {
       },
       (message) => setLog((previous) => [...previous, systemLine(message)].slice(-MAX_LINES)),
     );
-  }, [snapshot !== null]);
+  }, []);
+
+  /**
+   * A first read, only so a backend that is not there says so immediately.
+   *
+   * The stream's `hello` supplies the same snapshot, so this defers to it: a reply that arrives
+   * after the stream has already hydrated is older than what is on screen and is dropped.
+   */
+  useEffect(() => {
+    let live = true;
+    api.getSnapshot()
+      .then((loaded) => {
+        if (!live || hydrated.current) return;
+        setSnapshot(loaded);
+        setLog(loaded.log.slice(-MAX_LINES));
+      })
+      .catch((err: Error) => {
+        if (live && !hydrated.current) setUnreachable(err.message);
+      });
+    return () => {
+      live = false;
+    };
+  }, []);
 
   const fail = useCallback((message: string) => {
     setLog((previous) => [...previous, systemLine(message)].slice(-MAX_LINES));

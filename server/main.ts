@@ -107,8 +107,8 @@ async function handle(request: Request): Promise<Response> {
     });
   }
   if (post && pathname === "/api/cardreader/led") {
-    const { color } = await body<{ color: LedColor | "off" }>();
-    return await attempt(() => cardreader.setLed(color ?? "off"));
+    const { color, blink } = await body<{ color: LedColor | "off"; blink: boolean }>();
+    return await attempt(() => cardreader.setLed(color ?? "off", blink));
   }
   // The one response carrying cardholder data. It is answered to the caller and never recorded.
   if (post && pathname === "/api/cardreader/read") return await attempt(() => cardreader.read());

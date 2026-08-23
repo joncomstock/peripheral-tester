@@ -102,8 +102,9 @@ class MockReader implements HidDevice {
       case "6a":
         this.#reply(this.#next === "unreadable" ? "N6a49" : `P6a00${DEMO_STRIPE}`);
         break;
-      // The indicator: `CP7<digit>` lights a colour, `CP6` puts it out.
+      // The indicator: `CP7<digit>` lights a colour, `CP8<digit><digit>` blinks it, `CP6` puts it out.
       case "P7":
+      case "P8":
       case "P6":
         this.#reply(`P${code}00`);
         break;
@@ -159,6 +160,8 @@ let shutter: Shutter = "unlocked";
  * own LED, so `setLed` is competing with it — which looks exactly like a broken indicator.
  */
 let ledMode: LedControlMode = "manual";
+/** Steady or blinking. The device does not report this either. */
+let ledBlinking = false;
 
 let transaction: TransactionSetting = {
   direction: "back",
@@ -176,6 +179,7 @@ export const state = () => ({
   phase,
   mock,
   led,
+  ledBlinking,
   ledMode,
   shutter,
   seconds,
@@ -228,6 +232,7 @@ export async function disconnect(): Promise<void> {
   status = "closed";
   phase = "idle";
   led = "off";
+  ledBlinking = false;
   shutter = "unlocked";
   ledMode = "manual";
   try {
@@ -265,16 +270,18 @@ export function monitorSeconds(next: number): void {
   tell();
 }
 
-export async function setLed(color: LedColor | "off"): Promise<void> {
+export async function setLed(color: LedColor | "off", blink?: boolean): Promise<void> {
   const open = held();
   // Automatic mode means the reader is driving the LED; asking for a colour while it does would look
   // like the command was ignored, so control comes back first.
   if (ledMode === "automatic") await setLedMode("manual");
   if (color === "off") await open.ledOff();
+  else if (blink) await open.blinkLed(color);
   else await open.setLed(color);
   led = color;
+  ledBlinking = color !== "off" && blink === true;
   tell();
-  log("sent", `LED ${color}`);
+  log("sent", `LED ${color}${ledBlinking ? " blinking" : ""}`);
 }
 
 /**

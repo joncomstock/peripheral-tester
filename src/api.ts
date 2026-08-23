@@ -106,6 +106,7 @@ export interface CardReaderState {
   phase: ReadPhase;
   mock: boolean;
   led: LedColor | "off";
+  ledBlinking: boolean;
   ledMode: LedControlMode;
   shutter: Shutter;
   seconds: number;
@@ -210,7 +211,7 @@ export const cardreader = {
   reset: () => post("/api/cardreader/reset"),
   clear: () => post("/api/cardreader/clear"),
   settings: (next: Partial<TransactionSetting> & { seconds?: number }) => post("/api/cardreader/settings", next),
-  led: (color: LedColor | "off") => post("/api/cardreader/led", { color }),
+  led: (color: LedColor | "off", blink?: boolean) => post("/api/cardreader/led", { color, blink }),
   read: () => post<ReadResult>("/api/cardreader/read"),
   cancel: () => post("/api/cardreader/cancel"),
   shutter: (shutter: Shutter) => post("/api/cardreader/shutter", { shutter }),

@@ -42,6 +42,8 @@ export function CardReaderPage(
   const [outcome, setOutcome] = useState<ReadResult["kind"] | null>(null);
   const [reveal, setReveal] = useState(false);
   const [busy, setBusy] = useState(false);
+  /** Whether the next colour press asks for a blink rather than a steady lamp. */
+  const [blinkLed, setBlinkLed] = useState(false);
 
   const open = state.status === "open";
   const { transaction } = state;
@@ -238,7 +240,7 @@ export function CardReaderPage(
                     className={state.led === color ? "chooser chooser-on" : "chooser"}
                     style={index === 0 ? undefined : { borderLeft: "1px solid #e2e6ea" }}
                     disabled={!open}
-                    onClick={() => guard(api.cardreader.led(color))}
+                    onClick={() => guard(api.cardreader.led(color, blinkLed))}
                   >
                     <span style={{ ...lampStyle(LAMP[color], state.led === color ? "on" : "off", 12), marginRight: 8 }} />
                     {color[0].toUpperCase() + color.slice(1)}
@@ -251,6 +253,16 @@ export function CardReaderPage(
                   onClick={() => guard(api.cardreader.led("off"))}
                 >
                   Off
+                </button>
+                <button
+                  className={state.ledBlinking ? "chooser chooser-on" : "chooser"}
+                  style={{ borderLeft: "1px solid #e2e6ea" }}
+                  disabled={!open}
+                  onClick={() => setBlinkLed((was) => !was)}
+                  aria-pressed={blinkLed}
+                  title="Apply the next colour as a 1 Hz blink"
+                >
+                  Blink
                 </button>
               </div>
             </div>

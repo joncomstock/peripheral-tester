@@ -109,6 +109,11 @@ export interface CardReaderState {
   ledBlinking: boolean;
   ledMode: LedControlMode;
   shutter: Shutter;
+  listening: boolean;
+  /** A listened-for card is held server-side until collected. The stream never carries the card. */
+  cardWaiting: boolean;
+  /** Unidentified literals the driver considers safe to try. Probing is limited to these. */
+  candidates: readonly string[];
   seconds: number;
   transaction: TransactionSetting;
   /** What these settings put on the wire, so the page can show what it is sending. */
@@ -216,6 +221,12 @@ export const cardreader = {
   cancel: () => post("/api/cardreader/cancel"),
   shutter: (shutter: Shutter) => post("/api/cardreader/shutter", { shutter }),
   ledMode: (mode: LedControlMode) => post("/api/cardreader/led-mode", { mode }),
+  listen: () => post("/api/cardreader/listen"),
+  stopListening: () => post("/api/cardreader/stop"),
+  takeCard: () => post<{ ok: boolean; card: CardData | null }>("/api/cardreader/take-card"),
+  identity: () => post<{ ok: boolean; version: string; serialNumber: string; status: string }>("/api/cardreader/identity"),
+  deactivateIcc: () => post("/api/cardreader/deactivate-icc"),
+  probe: (literal: string) => post<{ ok: boolean; literal: string; token: string; accepted: boolean }>("/api/cardreader/probe", { literal }),
   arm: (outcome: NextOutcome) => post("/api/cardreader/arm", { outcome }),
 };
 

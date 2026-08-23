@@ -11,7 +11,7 @@
  */
 
 import type { HidDevice } from "@eai/hid";
-import { ALL_TRACKS, OmronV4KU } from "@eai/omron/v4ku";
+import { ALL_TRACKS, CANDIDATE_LITERALS, OmronV4KU } from "@eai/omron/v4ku";
 import type { CardData, LedColor, LedControlMode, MonitorOutcome, TransactionSetting } from "@eai/omron/v4ku";
 import { announce, record } from "./activity.ts";
 
@@ -112,6 +112,20 @@ class MockReader implements HidDevice {
       case "N3":
         this.#reply("PN300");
         break;
+      // The read-only enquiries answer with a payload, not just a status.
+      case "V0":
+        this.#reply("PV000V4KU-MOCK-1.00");
+        break;
+      case "UE":
+        this.#reply("PUE00MOCK00000001");
+        break;
+      case "N0":
+        this.#reply("PN0000000");
+        break;
+      // IC contacts down.
+      case "C6":
+        this.#reply("PC600");
+        break;
       // The shutter: `CC0` holds a card, `CC1` releases it.
       case "C0":
       case "C1":
@@ -153,6 +167,7 @@ let mock = false;
 let led: LedColor | "off" = "off";
 let seconds = 60;
 let shutter: Shutter = "unlocked";
+let listening = false;
 /**
  * Who drives the bezel LED.
  *
@@ -162,6 +177,14 @@ let shutter: Shutter = "unlocked";
 let ledMode: LedControlMode = "manual";
 /** Steady or blinking. The device does not report this either. */
 let ledBlinking = false;
+/**
+ * A card a listening session read, waiting to be collected.
+ *
+ * Held here rather than pushed. The event stream is shared by every connected client, so putting
+ * cardholder data on it would broadcast one operator's card to every open tab; the stream carries
+ * only that a card is waiting, and whoever wants it fetches it once through {@link takeCard}.
+ */
+let waiting: CardData | null = null;
 
 let transaction: TransactionSetting = {
   direction: "back",
@@ -180,6 +203,9 @@ export const state = () => ({
   mock,
   led,
   ledBlinking,
+  listening,
+  cardWaiting: waiting !== null,
+  candidates: CANDIDATE_LITERALS,
   ledMode,
   shutter,
   seconds,
@@ -235,6 +261,8 @@ export async function disconnect(): Promise<void> {
   ledBlinking = false;
   shutter = "unlocked";
   ledMode = "manual";
+  listening = false;
+  waiting = null;
   try {
     await open.ledOff();
   }
@@ -367,6 +395,93 @@ export async function setShutter(next: Shutter): Promise<void> {
   shutter = next;
   tell();
   log(next === "locked" ? "warned" : "ok", next === "locked" ? "CC0 — shutter locked, card held" : "CC1 — shutter released");
+}
+
+/**
+ * Read cards continuously until {@link stopListening}.
+ *
+ * The driver emits one event per cycle. A card is kept for collection rather than pushed onward, for
+ * the reason on {@link waiting}; the stream is told only that one is there.
+ */
+export function startListening(): void {
+  const open = held();
+  if (listening) return;
+  listening = true;
+  waiting = null;
+  tell();
+  log("info", `Listening — ${state().literals.monitor} per cycle`);
+
+  open.on("card", (card: CardData) => {
+    waiting = card;
+    const decoded = [card.track1 ? "track 1" : null, card.track2 ? "track 2" : null].filter(Boolean).join(" + ");
+    log("ok", `Card read — ${decoded || "no track parsed"}`);
+    tell();
+  });
+  open.on("timeout", () => log("info", "Cycle elapsed with no card"));
+  open.on("readFailed", (status: string) => log("error", `Card present but unreadable (${status})`));
+
+  // Not awaited: the loop runs until stopped, and the caller wants an answer now.
+  open.listen().catch((err: Error) => {
+    listening = false;
+    tell();
+    log("error", err.message);
+  });
+}
+
+export async function stopListening(): Promise<void> {
+  const open = held();
+  listening = false;
+  await open.stop();
+  tell();
+  log("info", "Stopped listening");
+}
+
+/**
+ * Collect the card a listening session read, clearing it.
+ *
+ * Single-shot on purpose: the card leaves this process once, to whoever asked, and is gone. Nothing
+ * keeps a copy and nothing re-serves it.
+ */
+export function takeCard(): CardData | null {
+  const card = waiting;
+  waiting = null;
+  if (card) tell();
+  return card;
+}
+
+/** The device's own identity and status. Read-only enquiries. */
+export async function identity(): Promise<{ version: string; serialNumber: string; status: string }> {
+  const open = held();
+  const version = await open.getVersion();
+  const serialNumber = await open.getSerialNumber();
+  const status = await open.getStatus();
+  log("info", `Version ${version} · serial ${serialNumber} · status ${status}`);
+  return { version, serialNumber, status };
+}
+
+export async function deactivateIcc(): Promise<void> {
+  await held().deactivateIcc();
+  log("sent", "CC6 — IC contacts down");
+}
+
+/**
+ * Send one unidentified literal and report what came back.
+ *
+ * Restricted to the driver's own candidate list. That list exists because the device's command space
+ * also holds firmware download, tamper and rear-destroy operations, and issuing one of those can do
+ * something neither read-only nor undoable — so this takes a choice from a vetted set rather than
+ * free text. It reports whether the device accepted the command; it cannot say what the command
+ * *did*, which is what watching the hardware is for.
+ */
+export async function probe(literal: string): Promise<{ literal: string; token: string; accepted: boolean }> {
+  const open = held();
+  if (!CANDIDATE_LITERALS.includes(literal)) {
+    throw new Error(`'${literal}' is not in the driver's candidate list`);
+  }
+  const response = await open.sendRaw(literal);
+  const accepted = response.outcome === "positive";
+  log(accepted ? "warned" : "info", `${literal} → ${response.token}${accepted ? " — accepted, watch the device" : ""}`);
+  return { literal, token: response.token, accepted };
 }
 
 /** Arm what the mock reader will do next. The page offers this only when mocking. */

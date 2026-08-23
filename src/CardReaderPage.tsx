@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import type {
   CardData,
@@ -70,6 +70,24 @@ export function CardReaderPage(
     }
   };
 
+  // A listening session leaves the card server-side and only flags that one is there. Collect it as
+  // soon as that flag appears: the fetch is single-shot, so nothing accumulates anywhere.
+  useEffect(() => {
+    if (!state.cardWaiting) return;
+    let live = true;
+    api.cardreader.takeCard()
+      .then((result) => {
+        if (!live || !result.card) return;
+        setReveal(false);
+        setOutcome("card");
+        setCard(result.card);
+      })
+      .catch((err: Error) => onFail(err.message));
+    return () => {
+      live = false;
+    };
+  }, [state.cardWaiting, onFail]);
+
   const setTracks = (bit: number) => {
     const next = transaction.tracks ^ bit;
     // The device needs at least one track to read; zero would arm a read that cannot succeed.
@@ -86,7 +104,20 @@ export function CardReaderPage(
               <button className="primary" onClick={read} disabled={!open || busy}>
                 {busy ? "Waiting for a card…" : `Read once · ${state.seconds}s`}
               </button>
-              <button onClick={() => guard(api.cardreader.cancel())} disabled={!open || !busy}>Cancel</button>
+              {state.listening
+                ? (
+                  <button onClick={() => guard(api.cardreader.stopListening())} disabled={!open}>
+                    Stop listening
+                  </button>
+                )
+                : (
+                  <button onClick={() => guard(api.cardreader.listen())} disabled={!open || busy}>
+                    Listen
+                  </button>
+                )}
+              <button onClick={() => guard(api.cardreader.cancel())} disabled={!open || (!busy && !state.listening)}>
+                Cancel
+              </button>
               <button onClick={() => guard(api.cardreader.clear())} disabled={!open || busy}>Clear read data</button>
               <button onClick={() => guard(api.cardreader.reset())} disabled={!open || busy}>Initial reset</button>
             </div>
@@ -271,6 +302,8 @@ export function CardReaderPage(
       </div>
 
       <div className="col col-narrow">
+        <Identity state={state} onFail={onFail} />
+        <Probe state={state} onFail={onFail} />
         {state.mock && (
           <Card title="Mock reader" aside="No hardware">
             <div className="doorsim">
@@ -354,6 +387,104 @@ function CardPanel({ card, reveal, onReveal }: { card: CardData; reveal: boolean
         applies. Masking here is display only, and nothing on this screen is logged or stored.
       </p>
     </div>
+  );
+}
+
+/** What the device says it is. Read-only enquiries, so safe to ask at any time. */
+function Identity({ state, onFail }: { state: CardReaderState; onFail: (message: string) => void }) {
+  const [about, setAbout] = useState<{ version: string; serialNumber: string; status: string } | null>(null);
+  const open = state.status === "open";
+
+  return (
+    <Card title="Device" aside={about ? undefined : "Not read"}>
+      <div className="doorsim">
+        <span className="doorsim-label">Identity</span>
+        <button
+          disabled={!open}
+          onClick={() =>
+            api.cardreader.identity()
+              .then(({ version, serialNumber, status }) => setAbout({ version, serialNumber, status }))
+              .catch((err: Error) => onFail(err.message))}
+        >
+          Read
+        </button>
+        <button disabled={!open} onClick={() => api.cardreader.deactivateIcc().catch((err: Error) => onFail(err.message))}>
+          IC contacts down
+        </button>
+      </div>
+      {about && (
+        <dl className="fields">
+          <div className="field">
+            <dt>Version</dt>
+            <dd>{about.version || "—"}</dd>
+          </div>
+          <div className="field">
+            <dt>Serial</dt>
+            <dd>{about.serialNumber || "—"}</dd>
+          </div>
+          <div className="field">
+            <dt>Status</dt>
+            <dd>{about.status || "—"}</dd>
+          </div>
+        </dl>
+      )}
+    </Card>
+  );
+}
+
+/**
+ * Try an unidentified command and see whether the device accepts it.
+ *
+ * A picker over the driver's own candidate list, never free text: the device's command space also
+ * holds firmware download, tamper and rear-destroy, and the driver excludes those families from the
+ * list for that reason. Acceptance is all this can report — what a command *did* is on the hardware.
+ */
+function Probe({ state, onFail }: { state: CardReaderState; onFail: (message: string) => void }) {
+  const [literal, setLiteral] = useState("");
+  const [results, setResults] = useState<{ literal: string; token: string; accepted: boolean }[]>([]);
+  const open = state.status === "open";
+
+  return (
+    <Card title="Probe" aside="Unidentified literals">
+      <div className="doorsim">
+        <select
+          className="instead__pick"
+          value={literal}
+          onChange={(event) => setLiteral(event.target.value)}
+          disabled={!open}
+          aria-label="literal to try"
+        >
+          <option value="">choose a literal</option>
+          {state.candidates.map((candidate) => <option key={candidate} value={candidate}>{candidate}</option>)}
+        </select>
+        <button
+          disabled={!open || literal === ""}
+          onClick={() =>
+            api.cardreader.probe(literal)
+              .then(({ literal: sent, token, accepted }) =>
+                setResults((previous) => [{ literal: sent, token, accepted }, ...previous].slice(0, 8))
+              )
+              .catch((err: Error) => onFail(err.message))}
+        >
+          Send
+        </button>
+      </div>
+      <p className="masknote">
+        Watch the device. This reports only whether the command was accepted, never what it did.
+      </p>
+      {results.length > 0 && (
+        <dl className="fields">
+          {results.map((result, index) => (
+            <div className="field" key={index}>
+              <dt>{result.literal}</dt>
+              <dd className={result.accepted ? "tone-warn" : "tone-muted"}>
+                {result.token} {result.accepted ? "accepted" : "refused"}
+              </dd>
+            </div>
+          ))}
+        </dl>
+      )}
+    </Card>
   );
 }
 

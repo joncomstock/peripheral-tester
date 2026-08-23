@@ -12,7 +12,7 @@
 
 import type { HidDevice } from "@eai/hid";
 import { ALL_TRACKS, OmronV4KU } from "@eai/omron/v4ku";
-import type { CardData, LedColor, MonitorOutcome, TransactionSetting } from "@eai/omron/v4ku";
+import type { CardData, LedColor, LedControlMode, MonitorOutcome, TransactionSetting } from "@eai/omron/v4ku";
 import { announce, record } from "./activity.ts";
 
 const log = (kind: string, text: string) => record("cardreader", kind, text);
@@ -107,6 +107,10 @@ class MockReader implements HidDevice {
       case "P6":
         this.#reply(`P${code}00`);
         break;
+      // Who drives the bezel LED: `CN3` + mode digit.
+      case "N3":
+        this.#reply("PN300");
+        break;
       // The shutter: `CC0` holds a card, `CC1` releases it.
       case "C0":
       case "C1":
@@ -148,6 +152,13 @@ let mock = false;
 let led: LedColor | "off" = "off";
 let seconds = 60;
 let shutter: Shutter = "unlocked";
+/**
+ * Who drives the bezel LED.
+ *
+ * The device does not report this either. It matters because in `automatic` the reader drives its
+ * own LED, so `setLed` is competing with it — which looks exactly like a broken indicator.
+ */
+let ledMode: LedControlMode = "manual";
 
 let transaction: TransactionSetting = {
   direction: "back",
@@ -165,6 +176,7 @@ export const state = () => ({
   phase,
   mock,
   led,
+  ledMode,
   shutter,
   seconds,
   transaction: { ...transaction },
@@ -217,6 +229,7 @@ export async function disconnect(): Promise<void> {
   phase = "idle";
   led = "off";
   shutter = "unlocked";
+  ledMode = "manual";
   try {
     await open.ledOff();
   }
@@ -254,6 +267,9 @@ export function monitorSeconds(next: number): void {
 
 export async function setLed(color: LedColor | "off"): Promise<void> {
   const open = held();
+  // Automatic mode means the reader is driving the LED; asking for a colour while it does would look
+  // like the command was ignored, so control comes back first.
+  if (ledMode === "automatic") await setLedMode("manual");
   if (color === "off") await open.ledOff();
   else await open.setLed(color);
   led = color;
@@ -313,6 +329,20 @@ export async function cancel(): Promise<void> {
   phase = "idle";
   tell();
   log("info", "Cancel sent");
+}
+
+/**
+ * Hand the bezel LED to the reader, or take it back.
+ *
+ * In `automatic` the reader lights its own LED from what it is doing, and {@link setLed} is then
+ * fighting it — the symptom is an indicator that appears not to respond. Setting a colour therefore
+ * takes control back first rather than leaving the operator to work that out.
+ */
+export async function setLedMode(mode: LedControlMode): Promise<void> {
+  await held().setLedControlMode(mode);
+  ledMode = mode;
+  tell();
+  log("sent", `CN3${mode === "manual" ? 0 : 1} — LED control ${mode}`);
 }
 
 /**

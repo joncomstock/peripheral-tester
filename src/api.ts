@@ -87,6 +87,11 @@ export type NextOutcome = "card" | "timeout" | "unreadable";
  * the slot is the authority.
  */
 export type Shutter = "locked" | "unlocked";
+/**
+ * Who drives the bezel LED. In `automatic` the reader lights it from its own state, and asking for a
+ * colour competes with that — which reads as an indicator that does not work.
+ */
+export type LedControlMode = "manual" | "automatic";
 
 export interface TransactionSetting {
   direction: ReadDirection;
@@ -101,6 +106,7 @@ export interface CardReaderState {
   phase: ReadPhase;
   mock: boolean;
   led: LedColor | "off";
+  ledMode: LedControlMode;
   shutter: Shutter;
   seconds: number;
   transaction: TransactionSetting;
@@ -208,6 +214,7 @@ export const cardreader = {
   read: () => post<ReadResult>("/api/cardreader/read"),
   cancel: () => post("/api/cardreader/cancel"),
   shutter: (shutter: Shutter) => post("/api/cardreader/shutter", { shutter }),
+  ledMode: (mode: LedControlMode) => post("/api/cardreader/led-mode", { mode }),
   arm: (outcome: NextOutcome) => post("/api/cardreader/arm", { outcome }),
 };
 

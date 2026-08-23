@@ -1,6 +1,14 @@
 import { useState } from "react";
 import type { ReactNode } from "react";
-import type { CardData, CardReaderState, LedColor, NextOutcome, ReadDirection, ReadResult } from "./api.ts";
+import type {
+  CardData,
+  CardReaderState,
+  LedColor,
+  LedControlMode,
+  NextOutcome,
+  ReadDirection,
+  ReadResult,
+} from "./api.ts";
 import * as api from "./api.ts";
 import { LAMP, lampStyle } from "./look.ts";
 import { Card } from "./ui.tsx";
@@ -196,6 +204,28 @@ export function CardReaderPage(
                 >
                   Release
                 </button>
+              </div>
+            </div>
+
+            <div className="setting">
+              <span className="setting-label">
+                LED control
+                <span className="setting-note">
+                  In automatic the reader lights its own LED. Setting a colour takes control back.
+                </span>
+              </span>
+              <div className="seg" data-enabled={open}>
+                {(["manual", "automatic"] as LedControlMode[]).map((mode, index) => (
+                  <button
+                    key={mode}
+                    className={state.ledMode === mode ? "chooser chooser-on" : "chooser"}
+                    style={index === 0 ? undefined : { borderLeft: "1px solid #e2e6ea" }}
+                    disabled={!open}
+                    onClick={() => guard(api.cardreader.ledMode(mode))}
+                  >
+                    {mode === "manual" ? "Manual" : "Automatic"}
+                  </button>
+                ))}
               </div>
             </div>
 

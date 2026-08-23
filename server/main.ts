@@ -113,6 +113,10 @@ async function handle(request: Request): Promise<Response> {
   // The one response carrying cardholder data. It is answered to the caller and never recorded.
   if (post && pathname === "/api/cardreader/read") return await attempt(() => cardreader.read());
   if (post && pathname === "/api/cardreader/cancel") return await attempt(() => cardreader.cancel());
+  if (post && pathname === "/api/cardreader/led-mode") {
+    const { mode } = await body<{ mode: "manual" | "automatic" }>();
+    return await attempt(() => cardreader.setLedMode(mode === "automatic" ? "automatic" : "manual"));
+  }
   if (post && pathname === "/api/cardreader/shutter") {
     const { shutter } = await body<{ shutter: cardreader.Shutter }>();
     return await attempt(() => cardreader.setShutter(shutter === "locked" ? "locked" : "unlocked"));

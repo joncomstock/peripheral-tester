@@ -89,9 +89,15 @@ class MockReader implements HidDevice {
       case "6a":
         this.#reply(this.#next === "unreadable" ? "N6a49" : `P6a00${DEMO_STRIPE}`);
         break;
+      // The indicator: `CP7<digit>` lights a colour, `CP6` puts it out.
+      case "P7":
+      case "P6":
+        this.#reply(`P${code}00`);
+        break;
       default:
         // An unknown command still gets an echoing negative, which is what the device does and what
-        // the driver's resynchronisation expects to see.
+        // the driver's resynchronisation expects to see. Every command the driver can actually send
+        // is handled above; reaching this means the driver grew one the mock has not learned.
         this.#reply(`N${code}99`);
     }
     return Promise.resolve();

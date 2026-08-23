@@ -1062,3 +1062,21 @@ button {
   flex-shrink: 0;
   align-self: flex-start;
 }
+
+.setting-label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.setting-note {
+  font-size: var(--font-chip);
+  color: #8d949c;
+}
+
+/* A control with a physical consequence: this one holds a customer's card. */
+.chooser-warn {
+  color: #fff;
+  background: linear-gradient(#d99a3f, #c9861f);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 22%);
+}

@@ -169,6 +169,37 @@ export function CardReaderPage(
             </div>
 
             <div className="setting">
+              <span className="setting-label">
+                Shutter
+                <span className="setting-note">
+                  Locking holds the card in the machine. Release always stays available.
+                </span>
+              </span>
+              <div className="seg" data-enabled={open}>
+                <button
+                  className={state.shutter === "locked" ? "chooser chooser-warn" : "chooser"}
+                  disabled={!open}
+                  onClick={() => guard(api.cardreader.shutter("locked"))}
+                >
+                  Hold card
+                </button>
+                {/*
+                  Never disabled on the shutter's believed state. The tester only knows what it last
+                  commanded, and the pair was documented backwards once — if that belief is wrong,
+                  the way out still has to work.
+                */}
+                <button
+                  className={state.shutter === "unlocked" ? "chooser chooser-on" : "chooser"}
+                  style={{ borderLeft: "1px solid #e2e6ea" }}
+                  disabled={!open}
+                  onClick={() => guard(api.cardreader.shutter("unlocked"))}
+                >
+                  Release
+                </button>
+              </div>
+            </div>
+
+            <div className="setting">
               <span className="setting-label">Indicator</span>
               <div className="seg" data-enabled={open}>
                 {(["green", "orange", "red"] as LedColor[]).map((color, index) => (

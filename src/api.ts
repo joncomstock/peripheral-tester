@@ -80,6 +80,13 @@ export type LedColor = "green" | "red" | "orange";
 export type ReadPhase = "idle" | "waiting" | "reading";
 /** What the mock reader will do next. Offered only when mocking. */
 export type NextOutcome = "card" | "timeout" | "unreadable";
+/**
+ * Whether the shutter is holding a card.
+ *
+ * The device does not report this, so it is what was last commanded — on real hardware the card in
+ * the slot is the authority.
+ */
+export type Shutter = "locked" | "unlocked";
 
 export interface TransactionSetting {
   direction: ReadDirection;
@@ -94,6 +101,7 @@ export interface CardReaderState {
   phase: ReadPhase;
   mock: boolean;
   led: LedColor | "off";
+  shutter: Shutter;
   seconds: number;
   transaction: TransactionSetting;
   /** What these settings put on the wire, so the page can show what it is sending. */
@@ -199,6 +207,7 @@ export const cardreader = {
   led: (color: LedColor | "off") => post("/api/cardreader/led", { color }),
   read: () => post<ReadResult>("/api/cardreader/read"),
   cancel: () => post("/api/cardreader/cancel"),
+  shutter: (shutter: Shutter) => post("/api/cardreader/shutter", { shutter }),
   arm: (outcome: NextOutcome) => post("/api/cardreader/arm", { outcome }),
 };
 

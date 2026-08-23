@@ -25,6 +25,14 @@ const log = (kind: string, text: string) => record("cardreader", kind, text);
 export type NextOutcome = "card" | "timeout" | "unreadable";
 
 /**
+ * Whether the shutter is holding a card.
+ *
+ * The device does not report this, so it is what was last commanded. On real hardware the card in
+ * the slot is the authority — this is here so the page can show which way it last asked.
+ */
+export type Shutter = "locked" | "unlocked";
+
+/**
  * A fabricated stripe: track 1 running straight into track 2, which is how the device delivers
  * them. The PAN is the standard 4111… test number, so nothing here resembles a real card.
  */
@@ -51,6 +59,11 @@ class MockReader implements HidDevice {
 
   #inbound: Uint8Array[] = [];
   #next: NextOutcome = "card";
+  #shutter: Shutter = "unlocked";
+
+  get shutter(): Shutter {
+    return this.#shutter;
+  }
 
   arm(outcome: NextOutcome): void {
     this.#next = outcome;
@@ -94,6 +107,12 @@ class MockReader implements HidDevice {
       case "P6":
         this.#reply(`P${code}00`);
         break;
+      // The shutter: `CC0` holds a card, `CC1` releases it.
+      case "C0":
+      case "C1":
+        this.#shutter = code === "C0" ? "locked" : "unlocked";
+        this.#reply(`P${code}00`);
+        break;
       default:
         // An unknown command still gets an echoing negative, which is what the device does and what
         // the driver's resynchronisation expects to see. Every command the driver can actually send
@@ -128,6 +147,7 @@ let phase: Phase = "idle";
 let mock = false;
 let led: LedColor | "off" = "off";
 let seconds = 60;
+let shutter: Shutter = "unlocked";
 
 let transaction: TransactionSetting = {
   direction: "back",
@@ -145,6 +165,7 @@ export const state = () => ({
   phase,
   mock,
   led,
+  shutter,
   seconds,
   transaction: { ...transaction },
   /** The literals these settings will put on the wire, so the page can show what it is sending. */
@@ -195,6 +216,7 @@ export async function disconnect(): Promise<void> {
   status = "closed";
   phase = "idle";
   led = "off";
+  shutter = "unlocked";
   try {
     await open.ledOff();
   }
@@ -291,6 +313,23 @@ export async function cancel(): Promise<void> {
   phase = "idle";
   tell();
   log("info", "Cancel sent");
+}
+
+/**
+ * Hold a card in the reader, or let it go.
+ *
+ * `CC0` locks the shutter and `CC1` releases it — measured from the vendor DLL, and the pair was
+ * documented backwards once, which would have made locking *open* on a captured card. Releasing is
+ * therefore never gated on believing the shutter is currently held: if the tester's idea of the
+ * state is wrong, the way out still has to work.
+ */
+export async function setShutter(next: Shutter): Promise<void> {
+  const open = held();
+  if (next === "locked") await open.lock();
+  else await open.unlock();
+  shutter = next;
+  tell();
+  log(next === "locked" ? "warned" : "ok", next === "locked" ? "CC0 — shutter locked, card held" : "CC1 — shutter released");
 }
 
 /** Arm what the mock reader will do next. The page offers this only when mocking. */

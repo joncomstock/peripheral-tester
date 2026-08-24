@@ -1,7 +1,7 @@
 import { useState } from "react";
 import type { ReactNode } from "react";
 import type {
-  BarcodeRead,
+  WireBarcode,
   LightSource,
   MrzCheck,
   MrzRead,
@@ -11,7 +11,7 @@ import type {
   StatusLedColor,
 } from "./api.ts";
 import * as api from "./api.ts";
-import { LAMP, lampStyle } from "./look.ts";
+import { hex, LAMP, lampStyle } from "./look.ts";
 import { Card } from "./ui.tsx";
 import { StatusPill } from "./LightBoardPage.tsx";
 
@@ -53,7 +53,7 @@ export function PassportReaderPage(
   { state, onFail, aside }: { state: PassportReaderState; onFail: (message: string) => void; aside: ReactNode },
 ) {
   const [mrz, setMrz] = useState<MrzRead | null>(null);
-  const [barcode, setBarcode] = useState<BarcodeRead | null>(null);
+  const [barcode, setBarcode] = useState<WireBarcode | null>(null);
   const [reveal, setReveal] = useState(false);
   const [busy, setBusy] = useState(false);
   /** Bumped on every read: identifies which scan the image endpoint should be asked for. */
@@ -131,11 +131,10 @@ export function PassportReaderPage(
                 <div className="seg" data-enabled={open}>
                   {availableLights
                     .filter((light) => state.settings.lights.includes(light.value))
-                    .map((light, index) => (
+                    .map((light) => (
                       <button
                         key={light.value}
                         className={imageLight === light.value ? "chooser chooser-on" : "chooser"}
-                        style={index === 0 ? undefined : { borderLeft: "1px solid #e2e6ea" }}
                         onClick={() => setImageLight(light.value)}
                       >
                         {light.label}
@@ -144,7 +143,7 @@ export function PassportReaderPage(
                 </div>
                 <img
                   className="scanshot-image"
-                  src={api.passportreader.imageUrl(imageLight, "jpeg", scan)}
+                  src={api.passportreader.imageUrl(imageLight, scan)}
                   alt={`document scanned under ${imageLight} light`}
                   onError={() => onFail(`No ${imageLight} image for the last scan — was that light enabled?`)}
                 />
@@ -161,11 +160,10 @@ export function PassportReaderPage(
             <div className="setting">
               <span className="setting-label">Light sources</span>
               <div className="seg" data-enabled={open}>
-                {availableLights.map((light, index) => (
+                {availableLights.map((light) => (
                   <button
                     key={light.value}
                     className={state.settings.lights.includes(light.value) ? "chooser chooser-on" : "chooser"}
-                    style={index === 0 ? undefined : { borderLeft: "1px solid #e2e6ea" }}
                     disabled={!open || light.value === "ir"}
                     title={light.value === "ir" ? "Infrared is what the OCR reads" : undefined}
                     onClick={() => toggleLight(light.value)}
@@ -179,11 +177,10 @@ export function PassportReaderPage(
             <div className="setting">
               <span className="setting-label">Resolution</span>
               <div className="seg" data-enabled={open}>
-                {RESOLUTIONS.map(({ value, label }, index) => (
+                {RESOLUTIONS.map(({ value, label }) => (
                   <button
                     key={value}
                     className={state.settings.resolution === value ? "chooser chooser-on" : "chooser"}
-                    style={index === 0 ? undefined : { borderLeft: "1px solid #e2e6ea" }}
                     disabled={!open}
                     onClick={() => guard(api.passportreader.settings({ resolution: value }))}
                   >
@@ -196,11 +193,10 @@ export function PassportReaderPage(
             <div className="setting">
               <span className="setting-label">Status LED</span>
               <div className="seg" data-enabled={open}>
-                {LED_COLORS.map((color, index) => (
+                {LED_COLORS.map((color) => (
                   <button
                     key={color}
                     className={state.led === color ? "chooser chooser-on" : "chooser"}
-                    style={index === 0 ? undefined : { borderLeft: "1px solid #e2e6ea" }}
                     disabled={!open}
                     onClick={() => guard(api.passportreader.led(color))}
                   >
@@ -210,7 +206,6 @@ export function PassportReaderPage(
                 ))}
                 <button
                   className={state.led === "off" ? "chooser chooser-on" : "chooser"}
-                  style={{ borderLeft: "1px solid #e2e6ea" }}
                   disabled={!open}
                   onClick={() => guard(api.passportreader.led("off"))}
                 >
@@ -360,7 +355,7 @@ function Checks({ checks }: { checks: NonNullable<MrzRead["fields"]>["checks"] }
   );
 }
 
-function BarcodeRow({ barcode }: { barcode: BarcodeRead }) {
+function BarcodeRow({ barcode }: { barcode: WireBarcode }) {
   if (!barcode.found) return null;
   return (
     <div className="rawstripe">
@@ -416,4 +411,3 @@ export function PassportReaderControls(
   );
 }
 
-const hex = (value: number) => value.toString(16).padStart(4, "0");

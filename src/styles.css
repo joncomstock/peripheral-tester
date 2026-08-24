@@ -786,12 +786,6 @@ button {
   border-color: #c7ccd3;
 }
 
-.tile-planned {
-  background: #f7f8f9;
-  border: 1px dashed #d7dbe0;
-  box-shadow: none;
-  cursor: not-allowed;
-}
 
 .tile-head {
   display: flex;
@@ -823,11 +817,6 @@ button {
   border-color: #cfe8d8;
 }
 
-.tile-badge--planned {
-  color: #7d5207;
-  background: #fdf3e0;
-  border-color: #f2e1bf;
-}
 
 .tile-model {
   font-size: var(--font-label);
@@ -848,9 +837,6 @@ button {
   color: #2f5fd0;
 }
 
-.tile-planned .tile-action {
-  color: #a3aab2;
-}
 
 /* ---------------------------------------------------------------- card reader */
 

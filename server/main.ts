@@ -25,7 +25,8 @@ import { join } from "@std/path";
 import { serveDir } from "@std/http/file-server";
 import type { LedRequest } from "@eai/ier/s33380";
 import type { LedColor, TransactionSetting } from "@eai/omron/v4ku";
-import type { ImageFormat, LedColorName, LightSourceName, ResolutionName } from "@eai/desko/penta";
+import { LightSource, Resolution } from "@eai/desko/penta";
+import type { LedColorName, LightSourceName, ResolutionName } from "@eai/desko/penta";
 import * as activity from "./activity.ts";
 import * as lightboard from "./lightboard.ts";
 import * as cardreader from "./cardreader.ts";
@@ -128,6 +129,14 @@ async function handle(request: Request): Promise<Response> {
   if (post && pathname === "/api/passportreader/disconnect") return await attempt(() => passportreader.disconnect());
   if (post && pathname === "/api/passportreader/settings") {
     const next = await body<{ lights: LightSourceName[]; resolution: ResolutionName }>();
+    // Checked rather than cast. An unknown resolution reaches the packed struct as `undefined`,
+    // which `setUint32` writes as 0 — a silent scan at the undefined resolution rather than a
+    // refusal. The driver exports the vocabularies, so the check is a lookup.
+    if (next.resolution !== undefined && !(next.resolution in Resolution)) {
+      return json({ ok: false, error: `unknown resolution: ${next.resolution}` }, 400);
+    }
+    const unknownLight = next.lights?.find((light) => !(light in LightSource));
+    if (unknownLight !== undefined) return json({ ok: false, error: `unknown light source: ${unknownLight}` }, 400);
     return await attempt(() => passportreader.settings(next));
   }
   if (post && pathname === "/api/passportreader/led") {
@@ -149,13 +158,14 @@ async function handle(request: Request): Promise<Response> {
    * afterwards.
    */
   if (pathname === "/api/passportreader/image") {
-    const query = new URL(request.url).searchParams;
-    const light = (query.get("light") ?? "visible") as LightSourceName;
-    const format = (query.get("format") ?? "jpeg") as ImageFormat;
+    const light = new URL(request.url).searchParams.get("light") ?? "visible";
+    if (!(light in LightSource)) return json({ ok: false, error: `unknown light source: ${light}` }, 400);
     try {
-      const scan = await passportreader.image(light, format);
-      // Copied into an array backed by a plain ArrayBuffer, which is what a `Response` body accepts.
-      return new Response(new Uint8Array(scan.bytes), {
+      // The encoding is the server's to choose: no control offers one, and under mock only BMP can
+      // be produced. JPEG is what a full-page scan wants.
+      const scan = await passportreader.image(light as LightSourceName, "jpeg");
+      // No copy: `DocumentImage.bytes` is ArrayBuffer-backed, which is what a `Response` body takes.
+      return new Response(scan.bytes, {
         headers: { "content-type": scan.mimeType, "cache-control": "no-store" },
       });
     }

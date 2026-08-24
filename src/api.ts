@@ -148,7 +148,6 @@ export type LightSource = "ir" | "visible" | "uv" | "uv3led";
 export type ScanResolution = "undefined" | "low" | "default" | "high";
 export type ScanPhase = "idle" | "scanning";
 export type StatusLedColor = "black" | "red" | "green" | "yellow" | "blue" | "purple" | "turquoise" | "white";
-export type ImageFormat = "jpeg" | "png" | "bmp";
 /** What the mock scanner will produce next. Offered only when mocking. */
 export type NextScan = "passport" | "smudged" | "noDocument" | "barcodeOnly";
 
@@ -224,7 +223,9 @@ export interface MrzRead {
   fields?: MrzFields;
 }
 
-export interface BarcodeRead {
+/** A barcode as the backend sends it — the driver's own `BarcodeRead` carries bytes, which do not
+ *  survive JSON, so the decoded text and the length cross instead. */
+export interface WireBarcode {
   found: boolean;
   symbology: string;
   symbologyCode: string;
@@ -235,7 +236,7 @@ export interface BarcodeRead {
 export interface ScanResult {
   ok: boolean;
   mrz?: MrzRead;
-  barcode?: BarcodeRead;
+  barcode?: WireBarcode;
   error?: string;
 }
 
@@ -314,10 +315,10 @@ export const passportreader = {
    *
    * A URL rather than a fetch, so an `<img>` can render it directly. The cache-buster is what makes
    * a second read replace the picture: without it the browser would show the previous document,
-   * because the address is otherwise identical.
+   * because the address is otherwise identical. The encoding is the backend's to choose — no
+   * control here offers one, and under mock it can only produce BMP whatever is asked.
    */
-  imageUrl: (light: LightSource, format: ImageFormat, nonce: number) =>
-    `/api/passportreader/image?light=${light}&format=${format}&n=${nonce}`,
+  imageUrl: (light: LightSource, nonce: number) => `/api/passportreader/image?light=${light}&n=${nonce}`,
 };
 
 /** Subscribes to the event stream, which carries every device at once. Returns an unsubscribe. */

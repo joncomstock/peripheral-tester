@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { CardReaderState, LogEntry, PassportReaderState, Snapshot } from "./api.ts";
+import type { LogEntry, Snapshot } from "./api.ts";
 import * as api from "./api.ts";
 import { Activity } from "./Activity.tsx";
 import { Home } from "./Home.tsx";
@@ -59,13 +59,16 @@ export function App() {
         // so it is carried forward rather than clobbered.
         setSnapshot((previous) => {
           if (!previous) return previous;
+          // Named per device rather than defaulting: "anything that is not the light board is the
+          // card reader" held with two devices and stopped holding at three. A fourth would have
+          // been written into `cardreader`, rendering another peripheral's fields on its page.
+          // Naming each also lets the discriminated union narrow, so neither cast is needed.
           if (event.device === "lightboard") {
             return { ...previous, lightboard: { ...previous.lightboard, ...event.state } };
           }
-          if (event.device === "passportreader") {
-            return { ...previous, passportreader: event.state as PassportReaderState };
-          }
-          return { ...previous, cardreader: event.state as CardReaderState };
+          if (event.device === "cardreader") return { ...previous, cardreader: event.state };
+          if (event.device === "passportreader") return { ...previous, passportreader: event.state };
+          return previous;
         });
       },
       (message) => setLog((previous) => [...previous, systemLine(message)].slice(-MAX_LINES)),

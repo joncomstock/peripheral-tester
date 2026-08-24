@@ -111,6 +111,8 @@ let mock = false;
 let dllPath: string | undefined;
 let led: LedColorName | "off" = "off";
 let presenceTimer: ReturnType<typeof setInterval> | undefined;
+/** Guards the poll tick — see {@link startPresencePolling}. */
+let polling = false;
 
 /**
  * Whether a document is on the scan window.
@@ -232,7 +234,11 @@ function startPresencePolling(): void {
   stopPresencePolling();
   presenceTimer = setInterval(async () => {
     const open = penta;
-    if (!open || phase === "scanning") return;
+    // `polling` drops a tick rather than queueing it. Retrieving an image holds the driver's lock
+    // for a full-page USB transfer plus an encode, and without this every tick that elapses
+    // meanwhile piles up behind it, then runs back-to-back answering a question already superseded.
+    if (!open || polling || phase === "scanning") return;
+    polling = true;
     try {
       const present = await open.isDocumentPresent();
       if (present === documentPresent) return;
@@ -247,19 +253,25 @@ function startPresencePolling(): void {
       tell();
       log("info", `Document presence unavailable on this device (${err instanceof Error ? err.message : String(err)})`);
     }
+    finally {
+      polling = false;
+    }
   }, PRESENCE_POLL_MS);
 }
 
 function stopPresencePolling(): void {
   if (presenceTimer !== undefined) clearInterval(presenceTimer);
   presenceTimer = undefined;
+  polling = false;
 }
 
 export async function settings(next: { lights?: LightSourceName[]; resolution?: ResolutionName }): Promise<void> {
   if (next.lights !== undefined) {
-    // Infrared is what the PC-side OCR reads. Dropping it would arm a scan that cannot produce
-    // an MRZ, so the page is not allowed to leave the set empty of it by accident.
-    lights = next.lights.length > 0 ? next.lights : lights;
+    // Infrared is what the PC-side OCR reads, so a set without it arms a scan that cannot produce
+    // an MRZ. Enforced here rather than only in the page: the page disables the button, but the
+    // route is reachable without it, and the failure it causes is a silent `recognized: false`
+    // with nothing saying why.
+    lights = next.lights.includes("ir") ? next.lights : lights;
   }
   if (next.resolution !== undefined) resolution = next.resolution;
   if (penta) await penta.setScanSettings({ lights, resolution });
@@ -294,13 +306,9 @@ export interface ReadResult {
   barcode: WireBarcode;
 }
 
-const forWire = (barcode: BarcodeRead): WireBarcode => ({
-  found: barcode.found,
-  symbology: barcode.symbology,
-  symbologyCode: barcode.symbologyCode,
-  text: barcode.text,
-  byteLength: barcode.data.length,
-});
+// Spread rather than respelled field by field, so a field added to the driver's `BarcodeRead`
+// reaches the page instead of being silently dropped here.
+const forWire = ({ data: _data, ...rest }: BarcodeRead): WireBarcode => ({ ...rest, byteLength: rest.text.length });
 
 export async function read(): Promise<ReadResult> {
   const open = held();

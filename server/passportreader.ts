@@ -11,15 +11,18 @@
  * @module
  */
 
-import { createMockPageScanLib, DeskoPenta, LightSource, Resolution } from "@eai/desko/penta";
+import { createMockPageScanLib, DeskoPenta, LedColor, LightSource, Resolution } from "@eai/desko/penta";
 import type {
   BarcodeRead,
   DocumentImage,
   ImageFormat,
+  ImageRegion,
   LedColorName,
+  LedUsageName,
   LightSourceName,
   MockPageScan,
   MrzRead,
+  ReadMrzOptions,
   ResolutionName,
 } from "@eai/desko/penta";
 import { announce, record } from "./activity.ts";
@@ -110,6 +113,16 @@ let phase: Phase = "idle";
 let mock = false;
 let dllPath: string | undefined;
 let led: LedColorName | "off" = "off";
+let ledUsage: LedUsageName = "permanent";
+let buzzerMs = 300;
+/**
+ * Whether a scan is being held for the read calls to interpret.
+ *
+ * The API keeps one scan for the whole process and it lives only until the next one, so a
+ * `readMrz` with `source: "pc"` against nothing held reads whatever was there before — or nothing.
+ * Tracking it lets the page say which of those it is instead of showing an empty result.
+ */
+let scanned = false;
 let presenceTimer: ReturnType<typeof setInterval> | undefined;
 /** Guards the poll tick — see {@link startPresencePolling}. */
 let polling = false;
@@ -124,6 +137,16 @@ let documentPresent: boolean | null = null;
 
 let lights: LightSourceName[] = ["ir", "visible"];
 let resolution: ResolutionName = "default";
+/** The vendor recommends this whenever document cropping follows, which here it always does. */
+let ambientLightElimination = true;
+/**
+ * Where MRZ recognition runs.
+ *
+ * A tester-side preference rather than a device setting: it selects which pair of API calls a read
+ * makes (`ReadOcrPc` over the held infrared scan, or `ReadOcrDevice` over what the unit's own OCR
+ * produced), so it is passed per call rather than configured on the device.
+ */
+let mrzSource: NonNullable<ReadMrzOptions["source"]> = "pc";
 
 /** Filled on connect, from the device itself. */
 let api: { version: number; number: number; dllVersion: string; compileDate: string } | undefined;
@@ -149,10 +172,15 @@ export function configure(options: { mock: boolean; dllPath?: string }): void {
  *
  * `undefined` is dropped from the resolutions: it is the vendor's "not specified" value, not a
  * setting anyone chooses, and the header guarantees only the other three.
+ *
+ * `black` is dropped from the LED colours for the same kind of reason: it is how the vendor spells
+ * "off", which the page offers as its own control, so listing it would put the same command on two
+ * buttons.
  */
 export const vocabulary = () => ({
   lights: Object.keys(LightSource) as LightSourceName[],
   resolutions: (Object.keys(Resolution) as ResolutionName[]).filter((r) => r !== "undefined"),
+  ledColors: (Object.keys(LedColor) as LedColorName[]).filter((c) => c !== "black"),
 });
 
 export const state = () => ({
@@ -161,8 +189,11 @@ export const state = () => ({
   phase,
   mock,
   led,
+  ledUsage,
+  buzzerMs,
+  scanned,
   documentPresent,
-  settings: { lights: [...lights], resolution },
+  settings: { lights: [...lights], resolution, ambientLightElimination, source: mrzSource },
   api,
   device,
 });
@@ -184,10 +215,10 @@ export async function connect(): Promise<void> {
   try {
     if (mock) {
       mockLib = createMockPageScanLib({ mrzLines: DEMO_MRZ, imageBytes: syntheticScan("visible") });
-      penta = new DeskoPenta(mockLib.symbols, { scanSettings: { lights, resolution } });
+      penta = new DeskoPenta(mockLib.symbols, { scanSettings: scanSettings() });
     }
     else {
-      penta = DeskoPenta.open({ dllPath, scanSettings: { lights, resolution } });
+      penta = DeskoPenta.open({ dllPath, scanSettings: scanSettings() });
     }
     await penta.connect();
 
@@ -225,6 +256,7 @@ export async function disconnect(): Promise<void> {
   status = "closed";
   phase = "idle";
   led = "off";
+  scanned = false;
   documentPresent = null;
   api = undefined;
   device = undefined;
@@ -281,18 +313,76 @@ function stopPresencePolling(): void {
   polling = false;
 }
 
-export async function settings(next: { lights?: LightSourceName[]; resolution?: ResolutionName }): Promise<void> {
-  if (next.lights !== undefined) {
-    // Infrared is what the PC-side OCR reads, so a set without it arms a scan that cannot produce
-    // an MRZ. Enforced here rather than only in the page: the page disables the button, but the
-    // route is reachable without it, and the failure it causes is a silent `recognized: false`
-    // with nothing saying why.
-    lights = next.lights.includes("ir") ? next.lights : lights;
+/** The scan settings as the driver takes them, in one place so connect and a change cannot differ. */
+const scanSettings = () => ({ lights, resolution, ambientLightElimination });
+
+export async function settings(
+  next: {
+    lights?: LightSourceName[];
+    resolution?: ResolutionName;
+    ambientLightElimination?: boolean;
+    source?: NonNullable<ReadMrzOptions["source"]>;
+    buzzerMs?: number;
+  },
+): Promise<void> {
+  // What the scan is exposed under, before anything is applied. Compared against afterwards rather
+  // than testing which fields the request *named*: a refused light set and a re-press of the
+  // already-selected resolution both name a field without moving anything, and reacting to those
+  // discarded a held scan and made a native `SetScanSettingsEx` round trip for no change at all.
+  const before = JSON.stringify(scanSettings());
+  if (next.source !== undefined) mrzSource = next.source;
+  // A scan with no light at all exposes nothing, so an empty set keeps what was there.
+  if (next.lights !== undefined && next.lights.length > 0) lights = next.lights;
+  // `ReadOcrPc` reads specifically the infrared image, so infrared is not optional while the OCR
+  // runs on the PC — a set without it arms a read that cannot recognise anything. `ReadOcrDevice`
+  // needs no scan, so the same set is legitimate there, and refusing it outright made half of the
+  // source choice untestable.
+  //
+  // Satisfied here rather than refused, and applied to the set as it ends up rather than to the
+  // one that was asked for: the two used to be separate steps, so a request that both moved the
+  // OCR to the PC and dropped infrared was repaired and then refused, which reached the right
+  // answer by a route nobody could follow. Enforced on the server as well as in the page because
+  // the route is reachable without it, and the failure it prevents is a silent `recognized: false`
+  // with nothing saying why.
+  if (mrzSource === "pc" && !lights.includes("ir")) {
+    lights = ["ir", ...lights];
+    log("info", "Infrared kept on — ReadOcrPc reads the infrared scan");
   }
   if (next.resolution !== undefined) resolution = next.resolution;
-  if (penta) await penta.setScanSettings({ lights, resolution });
+  if (next.ambientLightElimination !== undefined) ambientLightElimination = next.ambientLightElimination;
+  // A held scan was exposed under the *previous* illumination, so it no longer answers for these.
+  // The OCR source is deliberately not one of them: it selects which pair of native calls the next
+  // read makes and is passed per call, so it says nothing about the scan already being held — but
+  // re-enabling infrared above does change the illumination, so that counts, which is why this
+  // compares the settings themselves rather than which of them the request mentioned.
+  const scanChanged = JSON.stringify(scanSettings()) !== before;
+  if (scanChanged) scanned = false;
+  if (next.buzzerMs !== undefined) buzzerMs = Math.min(2000, Math.max(50, Math.round(next.buzzerMs)));
+  // Only when a scan setting actually moved. `SetScanSettingsEx` is a native round trip, and the
+  // buzzer's − / + stepper would otherwise make one per press for a value the scan never reads.
+  if (penta && scanChanged) await penta.setScanSettings(scanSettings());
   tell();
-  log("info", `Scan: ${lights.join(" + ")} @ ${resolution}`);
+  log(
+    "info",
+    `Scan: ${lights.join(" + ")} @ ${resolution}${ambientLightElimination ? ", ambient light elimination on" : ""}` +
+      ` · OCR on the ${mrzSource === "pc" ? "PC" : "device"} · buzzer ${buzzerMs} ms`,
+  );
+}
+
+/**
+ * Re-initialise the device without dropping the connection.
+ *
+ * The scan settings go back on afterwards: a reset returns the unit to its own defaults, and a page
+ * still showing the settings it was driving would then be describing a device that is not obeying
+ * them.
+ */
+export async function reset(): Promise<void> {
+  const open = held();
+  await open.reset();
+  scanned = false;
+  await open.setScanSettings(scanSettings());
+  tell();
+  log("info", "Device reset — connection kept, scan settings re-applied");
 }
 
 /**
@@ -330,6 +420,21 @@ export interface WireBarcode {
 export interface ReadResult {
   mrz: MrzRead;
   barcode: WireBarcode;
+  /** How long the driver took, measured here. The page shows it beside the presentation. */
+  ms: number;
+}
+
+/**
+ * Time one driver call.
+ *
+ * Measured around the driver rather than in the browser: a full-page scan is a USB transfer plus an
+ * OCR pass, and how long *that* took is the number worth showing — a round trip over loopback would
+ * fold this process's own scheduling into it.
+ */
+async function timed<T>(work: () => Promise<T>): Promise<{ result: T; ms: number }> {
+  const started = performance.now();
+  const result = await work();
+  return { result, ms: Math.round(performance.now() - started) };
 }
 
 /**
@@ -357,11 +462,17 @@ const isPlainText = (text: string) => /^[\t\n\r\x20-\x7e]*$/.test(text);
 export async function read(): Promise<ReadResult> {
   const open = held();
   phase = "scanning";
+  // Dropped before the attempt, not after it. Whatever the driver was holding stops answering the
+  // moment the device is asked to expose again, so a scan that then fails leaves nothing held —
+  // and reporting one would have `Retrieve` encode the document *before* the one that failed.
+  scanned = false;
   tell();
 
   try {
     if (mock) applyArmedOutcome();
-    const result = await open.readDocument();
+    const { result, ms } = await timed(() => open.readDocument({ source: mrzSource }));
+    // `readDocument` scans under one lock before it recognises, so a scan is held afterwards.
+    scanned = true;
     phase = "idle";
     tell();
 
@@ -378,7 +489,7 @@ export async function read(): Promise<ReadResult> {
 
     if (result.barcode.found) log("ok", `Barcode read — ${result.barcode.symbology}, ${result.barcode.data.length} bytes`);
 
-    return { mrz: result.mrz, barcode: forWire(result.barcode) };
+    return { mrz: result.mrz, barcode: forWire(result.barcode), ms };
   }
   catch (err) {
     phase = "idle";
@@ -389,44 +500,125 @@ export async function read(): Promise<ReadResult> {
 }
 
 /**
+ * Expose the document, and hold the result.
+ *
+ * The granular half of {@link read}. Separate calls are what the API actually offers and what a
+ * tester wants: a scan that produces an image but no MRZ, and a recognition that fails on a scan
+ * that was fine, are different faults, and one combined button cannot tell them apart.
+ *
+ * The scan is process-wide and lives only until the next one, which is why {@link read} exists —
+ * it holds the driver's lock across the scan and the recognition so the pairing is guaranteed.
+ */
+export async function scan(): Promise<{ ms: number }> {
+  const open = held();
+  phase = "scanning";
+  // See `read()`: the held scan is gone the moment the device is asked for a new one.
+  scanned = false;
+  tell();
+  let elapsed = 0;
+  try {
+    if (mock) applyArmedOutcome();
+    const { ms } = await timed(() => open.scan());
+    elapsed = ms;
+    scanned = true;
+  }
+  finally {
+    phase = "idle";
+    tell();
+  }
+  log("info", `Scan — ${lights.join(" + ")} @ ${resolution}`);
+  return { ms: elapsed };
+}
+
+/**
+ * Recognise the MRZ of whatever is held, without scanning again.
+ *
+ * **Refuses when the OCR runs on the PC and no scan is held.** `ReadOcrPc` reads the infrared
+ * image the API is holding, and neither it nor the driver checks whether that image is from this
+ * document — so against nothing held it returns the *previous* traveller's name, number and date
+ * of birth, rendered under the current presentation. That is the same stale-buffer fault the image
+ * path had, with a worse payload, and this is the one caller that was left out of the fix.
+ *
+ * `ReadOcrDevice` needs no scan: it returns what the unit's own OCR produced as the document
+ * passed, so it is not gated.
+ */
+export async function readMrz(): Promise<{ mrz: MrzRead; ms: number }> {
+  const open = held();
+  if (mrzSource === "pc" && !scanned) {
+    throw new Error("No scan held — ReadOcrPc reads the last infrared scan, which is another document's. Scan first.");
+  }
+  const { result: mrz, ms } = await timed(() => open.readMrz({ source: mrzSource }));
+  // Which layout, and whether it verified — never the fields themselves.
+  if (!mrz.recognized) log("info", `No MRZ recognised (${mrzSource === "pc" ? "ReadOcrPc" : "ReadOcrDevice"})`);
+  else {
+    const layout = mrz.fields?.format ?? "unrecognised layout";
+    const checks = mrz.fields ? (mrz.fields.allChecksValid ? "check digits valid" : "CHECK DIGITS FAILED") : "not parsed";
+    log(mrz.fields?.allChecksValid ? "ok" : "error", `MRZ read — ${layout}, ${checks}`);
+  }
+  return { mrz, ms };
+}
+
+/** Fetch whatever the device decoded as documents passed the window since the last read. */
+export async function readBarcode(): Promise<{ barcode: WireBarcode; ms: number }> {
+  const { result: barcode, ms } = await timed(() => held().readBarcode());
+  if (barcode.found) log("ok", `Barcode read — ${barcode.symbology}, ${barcode.data.length} bytes`);
+  else log("info", "No barcode decoded since the last read");
+  return { barcode: forWire(barcode), ms };
+}
+
+/**
  * Retrieve an image of the last scan.
  *
  * The bytes go straight to the caller in the response. They are never written to disk: the image
  * is the printed page of somebody's passport, portrait included.
  */
-export async function image(light: LightSourceName, format: ImageFormat): Promise<DocumentImage> {
+export async function image(light: LightSourceName, format: ImageFormat, region: ImageRegion): Promise<DocumentImage> {
   const open = held();
   if (mock && mockLib) mockLib.state.imageBytes = syntheticScan(light);
   // The mock synthesises BMP and nothing else, so asking it for JPEG would return BMP bytes
   // labelled as JPEG. Forcing the format keeps what the page renders honest.
   const wanted = mock ? "bmp" : format;
-  const scan = await open.image(light, { format: wanted, region: "document" });
-  log("info", `Image — ${light}, ${scan.format}, ${scan.bytes.length} bytes`);
-  return scan;
+  const encoded = await open.image(light, { format: wanted, region });
+  log("info", `Image — ${region}, ${light}, ${encoded.format}, ${encoded.bytes.length} bytes`);
+  return encoded;
 }
 
-export async function setLed(color: LedColorName | "off"): Promise<void> {
+/** Milliseconds lit and dark per cycle when the LED is flashing. Ignored while it is permanent. */
+const FLASH_MS = 400;
+
+export async function setLed(color: LedColorName | "off", usage?: LedUsageName): Promise<void> {
   const open = held();
+  if (usage !== undefined) ledUsage = usage;
   const next: LedColorName = color === "off" ? "black" : color;
+  const flashing = ledUsage === "flashing";
   await open.setStatusLed({
     enabled: color !== "off",
     color: next,
-    usage: "permanent",
+    usage: ledUsage,
+    // Zero never lapses, which is what a tester wants: a setting that timed out on its own would
+    // look like the device dropping it.
     durationMs: 0,
-    highTimeMs: 0,
-    lowTimeMs: 0,
+    highTimeMs: flashing ? FLASH_MS : 0,
+    lowTimeMs: flashing ? FLASH_MS : 0,
   });
   await open.useStatusLed(color !== "off");
   led = color;
   tell();
-  log("sent", `Status LED ${color}`);
+  log("sent", `Status LED ${color}${color === "off" ? "" : ` · ${ledUsage}`}`);
 }
 
+/**
+ * Sound the buzzer for the configured duration.
+ *
+ * The duration is a setting, changed through {@link settings}. Folding the two together made the
+ * page's − / + stepper sound the buzzer on every press, which is not what changing a number means.
+ */
 export async function buzz(): Promise<void> {
   const open = held();
-  await open.setBuzzer({ enabled: true, durationMs: 300, highTimeMs: 150, lowTimeMs: 150 });
+  const half = Math.round(buzzerMs / 2);
+  await open.setBuzzer({ enabled: true, durationMs: buzzerMs, highTimeMs: half, lowTimeMs: half });
   await open.useBuzzer();
-  log("sent", "Buzzer");
+  log("sent", `Buzzer — ${buzzerMs} ms`);
 }
 
 // ---------------------------------------------------------------------------------------------

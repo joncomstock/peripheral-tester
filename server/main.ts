@@ -26,7 +26,15 @@ import { serveDir } from "@std/http/file-server";
 import type { LedRequest } from "@eai/ier/s33380";
 import type { LedColor, TransactionSetting } from "@eai/omron/v4ku";
 import { LightSource } from "@eai/desko/penta";
-import type { ImageFormat, LedColorName, LightSourceName, ResolutionName } from "@eai/desko/penta";
+import type {
+  ImageFormat,
+  ImageRegion,
+  LedColorName,
+  LedUsageName,
+  LightSourceName,
+  ReadMrzOptions,
+  ResolutionName,
+} from "@eai/desko/penta";
 import * as activity from "./activity.ts";
 import * as lightboard from "./lightboard.ts";
 import * as cardreader from "./cardreader.ts";
@@ -57,6 +65,21 @@ const known = (vocabulary: object, key: string | undefined): boolean => key !== 
 
 /** Encodings the image route accepts. Typed so a format added to the driver fails to compile here. */
 const IMAGE_FORMATS: Record<ImageFormat, true> = { jpeg: true, png: true, bmp: true };
+
+/** Regions the image route accepts. Typed for the same reason. */
+const IMAGE_REGIONS: Record<ImageRegion, true> = { full: true, document: true };
+
+/** LED behaviours the route accepts, typed for the same reason. */
+const LED_USAGES: Record<LedUsageName, true> = { permanent: true, flashing: true };
+
+/**
+ * Where the route will let recognition run, typed for the same reason.
+ *
+ * Keyed off the driver's own option rather than a pair of string literals: the source selects which
+ * pair of native calls a read makes, so a driver that grows a third has to be handled here rather
+ * than silently 400ing.
+ */
+const OCR_SOURCES: Record<NonNullable<ReadMrzOptions["source"]>, true> = { pc: true, device: true };
 
 const json = (body: unknown, statusCode = 200) =>
   new Response(JSON.stringify(body), { status: statusCode, headers: { "content-type": "application/json" } });
@@ -131,6 +154,10 @@ async function handle(request: Request): Promise<Response> {
   // The one response carrying cardholder data. It is answered to the caller and never recorded.
   if (post && pathname === "/api/cardreader/read") return await attempt(() => cardreader.read());
   if (post && pathname === "/api/cardreader/cancel") return await attempt(() => cardreader.cancel());
+  if (post && pathname === "/api/cardreader/shutter") {
+    const { locked } = await body<{ locked: boolean }>();
+    return await attempt(() => cardreader.shutter(locked === true));
+  }
   if (post && pathname === "/api/cardreader/arm") {
     const { outcome } = await body<{ outcome: cardreader.NextOutcome }>();
     return await attempt(() => cardreader.arm(outcome ?? "card"));
@@ -141,7 +168,13 @@ async function handle(request: Request): Promise<Response> {
   if (post && pathname === "/api/passportreader/connect") return await attempt(() => passportreader.connect());
   if (post && pathname === "/api/passportreader/disconnect") return await attempt(() => passportreader.disconnect());
   if (post && pathname === "/api/passportreader/settings") {
-    const next = await body<{ lights: LightSourceName[]; resolution: ResolutionName }>();
+    const next = await body<{
+      lights: LightSourceName[];
+      resolution: ResolutionName;
+      ambientLightElimination: boolean;
+      source: NonNullable<ReadMrzOptions["source"]>;
+      buzzerMs: number;
+    }>();
     // Checked rather than cast. An unknown resolution reaches the packed struct as `undefined`,
     // which `setUint32` writes as 0 — a silent scan at the undefined resolution rather than a
     // refusal.
@@ -156,11 +189,24 @@ async function handle(request: Request): Promise<Response> {
     }
     const unknownLight = next.lights?.find((light) => !known(LightSource, light));
     if (unknownLight !== undefined) return json({ ok: false, error: `unknown light source: ${unknownLight}` }, 400);
+    // Checked for the same reason as the resolution: `source` picks which pair of native calls a
+    // read makes, and an unrecognised one would silently fall through to the PC pair.
+    if (next.source !== undefined && !known(OCR_SOURCES, next.source)) {
+      return json({ ok: false, error: `unknown OCR source: ${next.source}` }, 400);
+    }
     return await attempt(() => passportreader.settings(next));
   }
+  if (post && pathname === "/api/passportreader/reset") return await attempt(() => passportreader.reset());
+  if (post && pathname === "/api/passportreader/scan") return await attempt(() => passportreader.scan());
+  // The two granular reads. Both carry document data and are answered to the caller only.
+  if (post && pathname === "/api/passportreader/mrz") return await attempt(() => passportreader.readMrz());
+  if (post && pathname === "/api/passportreader/barcode") return await attempt(() => passportreader.readBarcode());
   if (post && pathname === "/api/passportreader/led") {
-    const { color } = await body<{ color: LedColorName | "off" }>();
-    return await attempt(() => passportreader.setLed(color ?? "off"));
+    const { color, usage } = await body<{ color: LedColorName | "off"; usage: LedUsageName }>();
+    if (usage !== undefined && !known(LED_USAGES, usage)) {
+      return json({ ok: false, error: `unknown LED usage: ${usage}` }, 400);
+    }
+    return await attempt(() => passportreader.setLed(color ?? "off", usage));
   }
   if (post && pathname === "/api/passportreader/buzz") return await attempt(() => passportreader.buzz());
   // The one response carrying document data. It is answered to the caller and never recorded.
@@ -185,8 +231,10 @@ async function handle(request: Request): Promise<Response> {
     // the driver's other two image paths on a kiosk. Under mock only BMP can be produced.
     const format = query.get("format") ?? "jpeg";
     if (!known(IMAGE_FORMATS, format)) return json({ ok: false, error: `unknown image format: ${format}` }, 400);
+    const region = query.get("region") ?? "document";
+    if (!known(IMAGE_REGIONS, region)) return json({ ok: false, error: `unknown image region: ${region}` }, 400);
     try {
-      const scan = await passportreader.image(light as LightSourceName, format as ImageFormat);
+      const scan = await passportreader.image(light as LightSourceName, format as ImageFormat, region as ImageRegion);
       // No copy: `DocumentImage.bytes` is ArrayBuffer-backed, which is what a `Response` body takes.
       return new Response(scan.bytes, {
         headers: { "content-type": scan.mimeType, "cache-control": "no-store" },

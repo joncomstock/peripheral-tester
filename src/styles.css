@@ -1,12 +1,14 @@
 /*
- * IER 919 light board tester.
+ * IER 919 peripheral tester.
  *
  * Static styling only: anything that varies with what has been commanded — a lamp, a segmented
  * button, the strip preview — is computed in `look.ts`, because those are functions of state rather
  * than combinations of classes.
  *
- * Light, carded, IBM Plex. Panels sit on a cool grey field with a hairline border and a shallow
- * shadow; the accent is a single blue used for the mark, section tabs and an engaged control.
+ * Carded, IBM Plex, on a cool field with a hairline border and a shallow shadow; the accent is a
+ * single blue used for the mark, section tabs and an engaged control. Every colour is a token
+ * defined once here and redefined under `[data-theme="dark"]`, so the dark theme is the same design
+ * in a different room rather than a second stylesheet.
  *
  * Sized for a touch screen mounted in a kiosk, not a laptop. Every control the operator presses is
  * at least `--touch` tall, which is above the 44px WCAG 2.5.5 asks for, because the finger doing the
@@ -17,10 +19,11 @@
 :root {
   /* Grows a little with viewport height, so mock mode on a laptop is not absurd. */
   --touch: 52px;
-  --row-y: clamp(10px, 1.1vh, 18px);
-  --pad-x: 18px;
-  --gap: 14px;
   --touch-header: 48px;
+  --touch-small: 44px;
+  --row-y: clamp(10px, 1.1vh, 18px);
+  --pad-x: 16px;
+  --gap: 14px;
 
   --font-label: 15px;
   --font-seg: 14.5px;
@@ -28,6 +31,86 @@
   --font-log: 14px;
   --font-head: 12px;
   --font-meta: 13px;
+
+  --accent: #2f5fd0;
+  --bg1: #f5f6f8;
+  --bg2: #eceef1;
+  --card: #ffffff;
+  --hd1: #fcfdfd;
+  --hd2: #f7f8fa;
+  --bar: #fbfcfc;
+  --sunk: #fafbfc;
+  --line: #dde1e6;
+  --line2: #e9ebee;
+  --line3: #f2f3f5;
+  --text: #16191d;
+  --text2: #4d545c;
+  --text3: #6b727a;
+  --text4: #8d949c;
+  --chip: #f4f5f7;
+  --chipline: #e8eaee;
+  --btn1: #ffffff;
+  --btn2: #f6f7f9;
+  --btnline: #d0d5dc;
+  --off1: #f4f6f8;
+  --off2: #d6dbe1;
+  --offring: rgb(16 24 40 / 14%);
+  --dis: #f6f7f8;
+  --disline: #e6e8eb;
+  --distext: #b9bfc6;
+  --ok: #1a6633;
+  --okbg: #eaf6ee;
+  --okline: #cfe8d8;
+  --warn: #7d5207;
+  --warnbg: #fdf3e0;
+  --warnline: #f2e1bf;
+  --bad: #a02c2c;
+  --badbg: #fdeceb;
+  --badline: #f4cfcc;
+  --shadow: 0 1px 2px rgb(16 24 40 / 4%), 0 6px 14px -8px rgb(16 24 40 / 10%);
+  --scroll: #c6ccd3;
+  --scrim: rgb(16 24 40 / 32%);
+}
+
+[data-theme="dark"] {
+  --accent: #4c7ee8;
+  --bg1: #14181c;
+  --bg2: #101316;
+  --card: #1b2025;
+  --hd1: #21272d;
+  --hd2: #1d2329;
+  --bar: #191e23;
+  --sunk: #191e23;
+  --line: #2d343a;
+  --line2: #282e34;
+  --line3: #242a30;
+  --text: #eef1f4;
+  --text2: #c2cad2;
+  --text3: #9aa3ac;
+  --text4: #7d858e;
+  --chip: #232930;
+  --chipline: #313841;
+  --btn1: #262d33;
+  --btn2: #20262c;
+  --btnline: #3b434b;
+  --off1: #2c333a;
+  --off2: #1d2227;
+  --offring: rgb(0 0 0 / 50%);
+  --dis: #1e242a;
+  --disline: #2b3238;
+  --distext: #626b74;
+  --ok: #6fd08c;
+  --okbg: #16301f;
+  --okline: #26492f;
+  --warn: #f0b95e;
+  --warnbg: #33260e;
+  --warnline: #4d3a15;
+  --bad: #f08d86;
+  --badbg: #351a19;
+  --badline: #4f2725;
+  --shadow: 0 1px 2px rgb(0 0 0 / 30%), 0 8px 18px -10px rgb(0 0 0 / 55%);
+  --scroll: #39424a;
+  --scrim: rgb(0 0 0 / 55%);
 }
 
 html,
@@ -35,7 +118,7 @@ body {
   margin: 0;
   padding: 0;
   height: 100%;
-  background: #eef0f3;
+  background: var(--bg2);
 }
 
 * {
@@ -47,6 +130,12 @@ body {
 button,
 input {
   touch-action: manipulation;
+  font-family: "IBM Plex Sans", system-ui, sans-serif;
+}
+
+code,
+.mono {
+  font-family: "IBM Plex Mono", monospace;
 }
 
 @keyframes lampBlink {
@@ -61,48 +150,122 @@ input {
   }
 }
 
+@keyframes lampPulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0.45;
+  }
+}
+
+@keyframes paneIn {
+  from {
+    opacity: 0.55;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+/*
+ * A presentation arriving.
+ *
+ * Re-keyed on the presentation number, so a second read of the *same* document — identical text in
+ * every field — still visibly arrives. Without it, pressing Read again on an unchanged passport
+ * looked like the button had not worked.
+ */
+@keyframes resultIn {
+  from {
+    opacity: 0;
+    transform: translateY(5px);
+  }
+
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes drawerIn {
+  from {
+    transform: translateX(22px);
+    opacity: 0.4;
+  }
+
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+
+/*
+ * A blinking lamp is state, not decoration: it distinguishes "blinking" from "on", and a kiosk
+ * operator reading the board needs that. So reduced motion dims it to a steady half-lit lamp rather
+ * than making it identical to a lit one, and stops everything that is only movement.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .statusdot-opening,
+  [style*="lampBlink"],
+  [style*="lampPulse"] {
+    animation: none !important;
+    opacity: 0.6;
+  }
+
+  .pane,
+  .drawer,
+  .arrival {
+    animation: none !important;
+  }
+}
+
 ::-webkit-scrollbar {
   width: 14px;
   height: 14px;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #c6ccd3;
+  background: var(--scroll);
   border: 4px solid transparent;
   background-clip: content-box;
   border-radius: 8px;
 }
 
-::-webkit-scrollbar-thumb:hover {
-  background: #b7bec6;
-  background-clip: content-box;
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+button:focus:not(:focus-visible),
+input:focus:not(:focus-visible) {
+  outline: none;
 }
 
 .app {
-  min-height: 100vh;
+  height: 100vh;
+  max-height: 100vh;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
-  background: linear-gradient(#f5f6f8, #eceef1 60vh);
+  background: linear-gradient(var(--bg1), var(--bg2) 60vh);
   font-family: "IBM Plex Sans", system-ui, sans-serif;
-  color: #16191d;
+  color: var(--text);
   -webkit-font-smoothing: antialiased;
 }
 
-button {
-  font-family: "IBM Plex Sans", system-ui, sans-serif;
-}
-
-/* ---------------------------------------------------------------- header */
+/* ---------------------------------------------------------------- masthead */
 
 .bar {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 10px 18px;
-  min-height: 72px;
-  padding: 12px clamp(12px, 2vw, 24px);
-  background: linear-gradient(#fff, #fbfbfc);
-  border-bottom: 1px solid #dbdfe4;
+  gap: 10px 14px;
+  padding: 10px clamp(12px, 1.6vw, 20px);
+  background: var(--card);
+  border-bottom: 1px solid var(--line);
   box-shadow: 0 1px 3px rgb(16 24 40 / 5%);
   flex-shrink: 0;
 }
@@ -110,8 +273,9 @@ button {
 .brand {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 11px;
   margin-right: auto;
+  min-width: 0;
 }
 
 .mark {
@@ -119,18 +283,19 @@ button {
   height: 30px;
   border-radius: 8px;
   flex-shrink: 0;
-  background: radial-gradient(circle at 32% 26%, color-mix(in oklab, #2f5fd0 60%, white), #2f5fd0);
-  box-shadow: inset 0 1px 0 rgb(255 255 255 / 35%), 0 1px 2px rgb(16 24 40 / 18%);
+  background: radial-gradient(circle at 32% 26%, color-mix(in oklab, var(--accent) 60%, white), var(--accent));
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 35%), 0 1px 3px rgb(16 24 40 / 20%);
 }
 
 .brand-text {
   display: flex;
   flex-direction: column;
-  line-height: 1.25;
+  line-height: 1.3;
+  min-width: 0;
 }
 
 .brand-name {
-  font-size: 15px;
+  font-size: var(--font-label);
   font-weight: 600;
   letter-spacing: -0.01em;
 }
@@ -138,106 +303,536 @@ button {
 .brand-model {
   font-family: "IBM Plex Mono", monospace;
   font-size: 11px;
-  color: #8d949c;
+  color: var(--text4);
   letter-spacing: 0.04em;
-}
-
-.bar-group {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  flex-wrap: wrap;
-}
-
-.portbox {
-  display: flex;
-  align-items: center;
-  height: var(--touch-header);
-  border: 1px solid #d3d8de;
-  border-radius: 5px;
-  background: #fff;
-  box-shadow: inset 0 1px 2px rgb(16 24 40 / 4%);
+  white-space: nowrap;
   overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.portbox label {
-  padding: 0 12px;
-  font-size: var(--font-chip);
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-  color: #8d949c;
-  border-right: 1px solid #e6e9ed;
-  line-height: 46px;
-  background: #fafbfc;
-}
+/* ---------------------------------------------------------------- buttons */
 
-.portbox input {
-  width: 110px;
-  height: 100%;
-  padding: 0 12px;
-  font-family: "IBM Plex Mono", monospace;
-  font-size: var(--font-label);
-  color: #16191d;
-  background: transparent;
-  border: 0;
-  outline: none;
-}
-
-.portbox input:disabled {
-  color: #8d949c;
-}
-
-.baud {
-  padding: 0 12px;
-  font-family: "IBM Plex Mono", monospace;
-  font-size: var(--font-chip);
-  color: #7b828a;
-  border-left: 1px solid #e6e9ed;
-  line-height: 46px;
-}
-
-.connect {
-  height: var(--touch-header);
-  padding: 0 22px;
-  font-size: var(--font-seg);
-  font-weight: 500;
-  border-radius: 5px;
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: var(--touch-small);
+  padding: 0 14px;
+  font-size: var(--font-meta);
+  color: var(--text2);
+  background: linear-gradient(var(--btn1), var(--btn2));
+  border: 1px solid var(--btnline);
+  border-radius: 7px;
   cursor: pointer;
   white-space: nowrap;
-  border: 1px solid color-mix(in oklab, #2f5fd0 82%, black);
-  background: linear-gradient(color-mix(in oklab, #2f5fd0 88%, white), #2f5fd0);
-  color: #fff;
-  box-shadow: inset 0 1px 0 rgb(255 255 255 / 22%), 0 1px 2px rgb(16 24 40 / 14%);
 }
 
-.connect-open {
-  border: 1px solid #d3d8de;
-  background: linear-gradient(#fff, #f7f8fa);
-  color: #4b5259;
-  box-shadow: 0 1px 1px rgb(16 24 40 / 4%);
-}
-
-.connect:hover:not(:disabled),
-.alloff:hover:not(:disabled) {
+.pill:hover:not(:disabled) {
   filter: brightness(0.97);
 }
 
-.connect:active:not(:disabled) {
-  transform: translateY(0.5px);
+.pill:disabled {
+  color: var(--distext);
+  background: var(--dis);
+  border-color: var(--disline);
+  cursor: not-allowed;
+}
+
+.pill--primary:not(:disabled) {
+  color: #fff;
+  background: linear-gradient(color-mix(in oklab, var(--accent) 88%, white), var(--accent));
+  border-color: color-mix(in oklab, var(--accent) 82%, black);
+  font-weight: 500;
+}
+
+.pill--ok {
+  color: var(--ok);
+  background: var(--okbg);
+  border-color: var(--okline);
+}
+
+.pill--warn {
+  color: var(--warn);
+  background: var(--warnbg);
+  border-color: var(--warnline);
+}
+
+.pill--bad {
+  color: var(--bad);
+  background: var(--badbg);
+  border-color: var(--badline);
+}
+
+.pill-count {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 11px;
+  color: var(--text3);
+  background: var(--chip);
+  border: 1px solid var(--chipline);
+  border-radius: 4px;
+  padding: 2px 6px;
+}
+
+.icon-button {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--touch-header);
+  height: var(--touch-header);
+  flex-shrink: 0;
+  font-size: 19px;
+  line-height: 1;
+  color: var(--text2);
+  background: linear-gradient(var(--btn1), var(--btn2));
+  border: 1px solid var(--btnline);
+  border-radius: 7px;
+  cursor: pointer;
+}
+
+.icon-button--on {
+  background: var(--sunk);
+}
+
+.icon-dot {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #d93a3a;
+  box-shadow: 0 0 0 2px var(--card);
+}
+
+.button {
+  min-height: var(--touch);
+  padding: 0 20px;
+  font-size: var(--font-seg);
+  font-weight: 500;
+  color: var(--text2);
+  background: linear-gradient(var(--btn1), var(--btn2));
+  border: 1px solid var(--btnline);
+  border-radius: 7px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.button:hover:not(:disabled) {
+  filter: brightness(0.97);
+}
+
+.button:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.button:disabled {
+  color: var(--distext);
+  background: var(--dis);
+  border-color: var(--disline);
+  cursor: not-allowed;
+}
+
+.button--primary:not(:disabled) {
+  color: #fff;
+  background: linear-gradient(color-mix(in oklab, var(--accent) 88%, white), var(--accent));
+  border-color: color-mix(in oklab, var(--accent) 82%, black);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 22%), 0 1px 3px rgb(16 24 40 / 16%);
+}
+
+.button--strong:not(:disabled) {
+  color: #fff;
+  background: linear-gradient(#5b636b, #4a5158);
+  border-color: #4a5158;
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 16%);
+}
+
+.button--small {
+  min-height: var(--touch-small);
+  padding: 0 16px;
+  font-size: var(--font-meta);
+}
+
+/* ---------------------------------------------------------------- popover */
+
+.popover-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 55;
+}
+
+.popover-scrim {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  cursor: default;
+}
+
+.popover {
+  position: absolute;
+  top: 8px;
+  right: clamp(12px, 1.6vw, 20px);
+  width: min(380px, 92vw);
+  display: flex;
+  flex-direction: column;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: 0 18px 48px -18px rgb(16 24 40 / 45%);
+  overflow: hidden;
+}
+
+/* ---------------------------------------------------------------- rail */
+
+.body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+.rail {
+  flex: 0 0 268px;
+  width: 268px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--bar);
+  border-right: 1px solid var(--line);
+  transition: flex-basis 120ms ease, width 120ms ease;
+}
+
+.rail--collapsed {
+  flex-basis: 72px;
+  width: 72px;
+}
+
+.rail-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line2);
+  flex-shrink: 0;
+}
+
+.rail--collapsed .rail-head {
+  padding: 10px;
+}
+
+.rail-title {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text3);
+}
+
+.rail-toggle {
+  width: var(--touch-small);
+  height: var(--touch-small);
+  flex-shrink: 0;
+  margin-left: auto;
+  font-size: var(--font-label);
+  color: var(--text3);
+  background: var(--card);
+  border: 1px solid var(--line2);
+  border-radius: 7px;
+  cursor: pointer;
+}
+
+.rail--collapsed .rail-title,
+.rail--collapsed .rail-head .chip,
+.rail--collapsed .rail-text,
+.rail--collapsed .rail-row .badge {
+  display: none;
+}
+
+.rail--collapsed .rail-toggle {
+  margin: 0 auto;
+}
+
+.rail-scroll {
+  flex: 1;
+  overflow: auto;
+  min-height: 0;
+  -webkit-overflow-scrolling: touch;
+}
+
+.rail-row {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  width: 100%;
+  min-height: 66px;
+  padding: 10px 14px 10px 11px;
+  text-align: left;
+  border: 0;
+  border-left: 3px solid transparent;
+  border-bottom: 1px solid var(--line3);
+  background: transparent;
+  cursor: pointer;
+}
+
+.rail-row:hover {
+  background: color-mix(in oklab, var(--card) 60%, transparent);
+}
+
+.rail-row--on {
+  border-left-color: var(--accent);
+  background: var(--card);
+}
+
+.rail-initials {
+  display: none;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: var(--font-meta);
+  font-weight: 500;
+  letter-spacing: 0.03em;
+  color: var(--text3);
+}
+
+.rail--collapsed .rail-row {
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
+  padding: 8px 4px;
+  text-align: center;
+}
+
+.rail--collapsed .rail-initials {
+  display: inline;
+}
+
+.rail-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.rail-name {
+  font-size: var(--font-label);
+  font-weight: 500;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.rail-sub {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 11px;
+  color: var(--text4);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/*
+ * Below this the rail lies down across the top instead of narrowing.
+ *
+ * Declared after the `.rail--collapsed` rules on purpose. They match at the same specificity,
+ * so source order is what decides — and with this block first, collapsing the rail while wide
+ * and then narrowing left the horizontal strip showing two-letter initials with the toggle
+ * that undoes it hidden.
+ *
+ * Narrowing was the first attempt and it was the wrong trade: it left the rail eating width the
+ * controls needed *and* replaced every device name with two initials. Lying down costs one row of
+ * height, keeps the names, and gives the whole width back to the peripheral.
+ */
+@media (width <= 900px) {
+  .body {
+    flex-direction: column;
+  }
+
+  .rail,
+  .rail--collapsed {
+    flex: 0 0 auto;
+    width: auto;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  /* The head is the collapse toggle and a count; neither means anything lying down. */
+  .rail .rail-head {
+    display: none;
+  }
+
+  .rail .rail-scroll {
+    display: flex;
+    gap: 8px;
+    padding: 8px 12px;
+    overflow-x: auto;
+  }
+
+  .rail .rail-row,
+  .rail--collapsed .rail-row {
+    flex: 0 0 auto;
+    flex-direction: row;
+    gap: 9px;
+    width: auto;
+    min-height: 56px;
+    padding: 0 15px;
+    text-align: left;
+    border: 1px solid var(--line2);
+    border-radius: 8px;
+  }
+
+  .rail .rail-row--on {
+    border-color: color-mix(in oklab, var(--accent) 55%, var(--line));
+  }
+
+  .rail .rail-text,
+  .rail--collapsed .rail-text {
+    display: flex;
+  }
+
+  /* No room for a second line or a badge on a pill; the name is what identifies it. */
+  .rail .rail-sub,
+  .rail .rail-initials,
+  .rail--collapsed .rail-initials,
+  .rail .rail-row .badge {
+    display: none;
+  }
+}
+
+/* ---------------------------------------------------------------- workspace */
+
+.workspace {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.notice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 9px clamp(12px, 1.6vw, 20px);
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--line);
+  background: var(--sunk);
+}
+
+.notice--ok {
+  background: var(--okbg);
+  border-bottom-color: var(--okline);
+}
+
+.notice--bad {
+  background: var(--badbg);
+  border-bottom-color: var(--badline);
+}
+
+.notice-text {
+  flex: 1 1 200px;
+  min-width: 0;
+  font-size: var(--font-meta);
+  color: var(--text2);
+  line-height: 1.45;
+  text-wrap: pretty;
+}
+
+/* ---------------------------------------------------------------- device bar */
+
+.devbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 14px;
+  min-height: 68px;
+  padding: 10px clamp(12px, 1.6vw, 20px);
+  background: var(--bar);
+  border-bottom: 1px solid var(--line);
+  flex-shrink: 0;
+}
+
+.addressbox {
+  flex: 0 1 300px;
+  min-width: 168px;
+  display: flex;
+  align-items: center;
+  height: var(--touch-header);
+  border: 1px solid var(--btnline);
+  border-radius: 7px;
+  background: var(--card);
+  overflow: hidden;
+}
+
+.addressbox-label {
+  flex: 0 0 84px;
+  text-align: center;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text3);
+  border-right: 1px solid var(--line2);
+  line-height: 46px;
+  background: var(--sunk);
+}
+
+.addressbox-input,
+.addressbox-value {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 46px;
+  padding: 0 12px;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: var(--font-label);
+  line-height: 46px;
+  color: var(--text);
+  background: transparent;
+  border: 0;
+  outline: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.addressbox-input:disabled {
+  color: var(--text3);
+}
+
+.addressbox-meta {
+  flex: 0 0 auto;
+  max-width: 112px;
+  padding: 0 10px;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 11px;
+  color: var(--text3);
+  border-left: 1px solid var(--line2);
+  line-height: 46px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .statuspill {
+  flex: 0 1 232px;
+  min-width: 132px;
   display: flex;
   align-items: center;
   gap: 9px;
   padding: 0 14px;
   height: var(--touch-header);
-  border: 1px solid #e0e4e8;
-  border-radius: 5px;
-  background: #fafbfc;
-  font-size: var(--font-seg);
-  color: #4b5259;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--card);
+  font-size: var(--font-meta);
+  color: var(--text2);
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .statusdot {
@@ -251,39 +846,41 @@ button {
   animation: lampBlink 0.8s steps(1, end) infinite;
 }
 
-.alloff {
-  height: var(--touch-header);
-  padding: 0 22px;
-  font-size: var(--font-seg);
-  font-weight: 500;
-  border-radius: 5px;
+.devbar-hint {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: var(--font-meta);
+  color: var(--text3);
   white-space: nowrap;
-  border: 1px solid #c7ccd3;
-  background: linear-gradient(#fff, #f4f5f7);
-  color: #24282d;
-  cursor: pointer;
-  box-shadow: 0 1px 1px rgb(16 24 40 / 4%);
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.alloff:disabled {
-  border-color: #e6e8eb;
-  background: #f6f7f8;
-  color: #c1c6cc;
-  cursor: not-allowed;
-  box-shadow: none;
+.devbar-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 0 0 auto;
+}
+
+.devbar-actions .button {
+  min-height: var(--touch-header);
+  min-width: 112px;
 }
 
 /* ---------------------------------------------------------------- layout */
 
-.main {
+.pane {
   flex: 1;
   display: flex;
   flex-wrap: wrap;
   align-items: stretch;
   gap: 12px;
-  padding: 12px clamp(12px, 1.6vw, 20px) clamp(12px, 1.6vw, 20px);
+  padding: 12px clamp(12px, 1.6vw, 20px);
   /* Lets the columns shrink instead of pushing the page taller than the screen. */
   min-height: 0;
+  animation: paneIn 150ms ease-out;
 }
 
 .col {
@@ -298,7 +895,13 @@ button {
 }
 
 .col-narrow {
-  flex: 0 0 380px;
+  flex: 0 0 372px;
+}
+
+@media (width <= 1150px) {
+  .col-narrow {
+    flex: 1 1 100%;
+  }
 }
 
 .pair {
@@ -310,7 +913,7 @@ button {
 }
 
 .pair > .card {
-  flex: 1 1 min(100%, 300px);
+  flex: 1 1 min(100%, 320px);
   min-width: 0;
 }
 
@@ -320,32 +923,45 @@ button {
   display: flex;
   flex-direction: column;
   min-height: 0;
-  background: #fff;
-  border: 1px solid #dde1e6;
+  background: var(--card);
+  border: 1px solid var(--line);
   border-radius: 8px;
-  box-shadow: 0 1px 2px rgb(16 24 40 / 4%), 0 6px 14px -8px rgb(16 24 40 / 10%);
+  box-shadow: var(--shadow);
   overflow: hidden;
 }
 
 .card-head {
   display: flex;
   align-items: center;
-  gap: 11px;
-  /* Tall enough for a touch-sized control in the header, so every card head lines up. */
-  min-height: calc(var(--touch) + 20px);
-  padding: 10px var(--pad-x);
+  gap: 10px;
+  padding: 12px var(--pad-x);
   flex-shrink: 0;
-  background: linear-gradient(#fcfdfd, #f8f9fa);
-  border-bottom: 1px solid #e9ebee;
+  background: linear-gradient(var(--hd1), var(--hd2));
+  border-bottom: 1px solid var(--line2);
 }
 
 .card-head h2 {
   margin: 0;
-  font-size: var(--font-head);
+  font-size: var(--font-meta);
   font-weight: 600;
-  letter-spacing: 0.07em;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: #4d545c;
+  color: var(--text);
+}
+
+.card-head--quiet {
+  background: transparent;
+  border-bottom-color: var(--line3);
+}
+
+.card-head--quiet h2 {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: var(--text3);
+}
+
+.card-head-action {
+  margin-left: 8px;
 }
 
 .tab {
@@ -353,32 +969,64 @@ button {
   height: 14px;
   border-radius: 2px;
   flex-shrink: 0;
-  background: #2f5fd0;
+  background: var(--accent);
   opacity: 0.75;
 }
 
 .card-aside {
   margin-left: auto;
-  font-size: var(--font-meta);
-  color: #a0a7ae;
+  font-size: 11px;
+  color: var(--text3);
   white-space: nowrap;
 }
 
-.clear {
-  margin-left: auto;
-  height: var(--touch-header);
-  padding: 0 18px;
-  font-size: var(--font-meta);
-  color: #8d949c;
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: 4px;
-  cursor: pointer;
+.card-aside code {
+  font-size: 11px;
 }
 
-.clear:hover {
-  background: #eef0f3;
-  color: #4b5259;
+/* ---------------------------------------------------------------- badges + chips */
+
+.badge {
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  padding: 5px 10px;
+  border-radius: 5px;
+  flex-shrink: 0;
+  white-space: nowrap;
+  color: var(--text2);
+  background: var(--chip);
+  border: 1px solid var(--chipline);
+}
+
+.badge--ok {
+  color: var(--ok);
+  background: var(--okbg);
+  border-color: var(--okline);
+}
+
+.badge--warn {
+  color: var(--warn);
+  background: var(--warnbg);
+  border-color: var(--warnline);
+}
+
+.badge--bad {
+  color: var(--bad);
+  background: var(--badbg);
+  border-color: var(--badline);
+}
+
+.chip {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: var(--font-chip);
+  letter-spacing: 0.02em;
+  color: var(--text3);
+  background: var(--chip);
+  border: 1px solid var(--chipline);
+  border-radius: 4px;
+  padding: 4px 9px;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 /* ---------------------------------------------------------------- controls */
@@ -388,38 +1036,33 @@ button {
   min-height: 0;
   overflow: auto;
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 440px), 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 520px), 1fr));
   align-content: start;
 }
 
 .ctl {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: var(--gap);
+  gap: 8px var(--gap);
   padding: var(--row-y) var(--pad-x);
-  border-top: 1px solid #f2f3f5;
+  border-top: 1px solid var(--line3);
+  min-height: 68px;
   min-width: 0;
-}
-
-.ctl:hover {
-  background: #fcfcfd;
 }
 
 .ctl-inline {
   padding: 0;
   border-top: 0;
   gap: 12px;
-}
-
-.ctl-inline:hover {
-  background: none;
+  min-height: 60px;
 }
 
 .ctl-label {
   flex: 1;
   min-width: 0;
   font-size: var(--font-label);
-  color: #24282d;
+  color: var(--text);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -429,33 +1072,19 @@ button {
   flex: 0 0 auto;
 }
 
-.chip {
-  font-family: "IBM Plex Mono", monospace;
-  font-size: var(--font-chip);
-  letter-spacing: 0.02em;
-  color: #6b727a;
-  background: #f4f5f7;
-  border: 1px solid #eaecef;
-  border-radius: 4px;
-  padding: 4px 9px;
-  white-space: nowrap;
-  flex-shrink: 0;
-}
-
 .seg {
   display: flex;
   flex-shrink: 0;
   margin-left: auto;
-  border: 1px solid #d0d5dc;
+  border: 1px solid var(--btnline);
   border-radius: 7px;
   overflow: hidden;
-  background: linear-gradient(#fff, #f6f7f9);
-  box-shadow: 0 1px 2px rgb(16 24 40 / 4%);
+  background: linear-gradient(var(--btn1), var(--btn2));
 }
 
 .seg[data-enabled="false"] {
-  border-color: #e6e8eb;
-  background: #f6f7f8;
+  border-color: var(--disline);
+  background: var(--dis);
 }
 
 .seg button {
@@ -471,13 +1100,17 @@ button {
   transition: background 90ms ease, color 90ms ease;
 }
 
-/* The divider belongs between segments, not on whichever one happens to be first. */
-.seg button + button {
-  border-left: 1px solid #e2e6ea;
+.seg--small button {
+  min-height: var(--touch-small);
+  min-width: 64px;
+  font-size: var(--font-meta);
 }
 
-.seg[data-enabled="false"] button + button {
-  border-left-color: #ebedf0;
+/* The divider belongs between segments, not on whichever one happens to be first. */
+.seg button + button,
+.seg button + .stepper-value,
+.seg .stepper-value + button {
+  border-left: 1px solid var(--line2);
 }
 
 .seg button:disabled {
@@ -488,16 +1121,98 @@ button {
   filter: brightness(0.96);
 }
 
-/* ---------------------------------------------------------------- semaphore */
+.chooser {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  color: var(--text2);
+}
+
+.chooser-on {
+  color: #fff;
+  background: linear-gradient(color-mix(in oklab, var(--accent) 88%, white), var(--accent));
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 22%);
+}
+
+.chooser:disabled {
+  color: var(--distext);
+}
+
+.stepper-value {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 84px;
+  min-height: var(--touch);
+  padding: 0 12px;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: var(--font-seg);
+  color: var(--text);
+}
+
+/* ---------------------------------------------------------------- settings rows */
+
+.setting {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px var(--gap);
+  padding: var(--row-y) var(--pad-x);
+  border-top: 1px solid var(--line3);
+  min-height: 68px;
+}
+
+.setting:first-child,
+.card-head + .setting {
+  border-top: 0;
+}
+
+.setting--stacked {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+}
+
+.setting-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.setting-label {
+  flex: 1 0 auto;
+  min-width: 0;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text3);
+}
+
+.setting > .setting-label,
+.setting-line > .setting-label {
+  font-size: var(--font-label);
+  letter-spacing: normal;
+  text-transform: none;
+  color: var(--text);
+}
+
+.setting-note {
+  font-size: var(--font-meta);
+  color: var(--text3);
+  text-wrap: pretty;
+}
+
+/* ---------------------------------------------------------------- semaphore + strip */
 
 .sem {
   flex: 1;
   min-height: 0;
-  overflow: auto;
   display: flex;
-  align-items: center;
-  gap: 18px;
-  padding: var(--row-y) var(--pad-x);
+  align-items: stretch;
+  gap: 16px;
+  padding: 12px var(--pad-x);
   flex-wrap: wrap;
 }
 
@@ -505,145 +1220,579 @@ button {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 11px;
-  padding: 16px 18px 13px;
-  background: linear-gradient(#f8f9fb, #f1f3f6);
-  border: 1px solid #e6e9ed;
-  border-radius: 5px;
-  box-shadow: inset 0 1px 1px rgb(255 255 255 / 80%);
+  justify-content: center;
+  gap: 10px;
+  padding: 12px 14px;
+  background: var(--sunk);
+  border: 1px solid var(--line2);
+  border-radius: 7px;
 }
 
 .tower-base {
-  width: 26px;
-  height: 17px;
-  background: linear-gradient(#cfd4da, #b9c0c7);
-  border-radius: 1px 1px 2px 2px;
+  width: 22px;
+  height: 14px;
+  background: linear-gradient(var(--off1), var(--off2));
+  border-radius: 2px 2px 3px 3px;
 }
 
 .sem-rows {
-  flex: 1 1 230px;
+  flex: 1 1 320px;
   min-width: 0;
   display: flex;
   flex-direction: column;
-  justify-content: center;
-  gap: var(--row-y);
+  justify-content: space-between;
+  gap: 8px;
 }
 
 .sem-rows .ctl {
   padding: 0;
   border-top: 0;
+  min-height: 60px;
 }
-
-.sem-rows .ctl:hover {
-  background: none;
-}
-
-/* ---------------------------------------------------------------- strip */
 
 .strip {
   flex: 1;
   min-height: 0;
-  overflow: auto;
-  align-content: center;
-  padding: var(--row-y) var(--pad-x);
+  padding: 12px var(--pad-x);
   display: flex;
-  align-items: center;
-  gap: 18px;
-  flex-wrap: wrap;
+  flex-direction: column;
+  justify-content: center;
+  gap: 14px;
 }
 
 .strip-rows {
-  flex: 1 1 420px;
-  display: flex;
-  gap: var(--row-y) 26px;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 330px), 1fr));
+  gap: 10px 20px;
   min-width: 0;
 }
 
 .strip-preview {
-  flex: 1 1 100%;
   width: 100%;
   height: 22px;
   border-radius: 4px;
-  border: 1px solid #d9dde2;
+  border: 1px solid var(--line);
 }
 
-/* ---------------------------------------------------------------- doors */
+/* ---------------------------------------------------------------- doors + simulate */
 
 .doorrow {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: var(--gap);
+  gap: 8px 13px;
   padding: var(--row-y) var(--pad-x);
-  border-top: 1px solid #f2f3f5;
-  min-width: 0;
+  border-top: 1px solid var(--line3);
+  min-height: 62px;
 }
 
 .doorlabel {
   flex: 1;
   min-width: 0;
   font-size: var(--font-label);
-  color: #24282d;
+  color: var(--text);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.doorstate {
-  font-family: "IBM Plex Mono", monospace;
-  font-size: var(--font-chip);
-  letter-spacing: 0.02em;
-  padding: 6px 12px;
-  border-radius: 4px;
-  flex-shrink: 0;
-  color: #7b828a;
-  background: #f4f5f7;
-  border: 1px solid #eaecef;
-}
-
-.doorstate-open {
-  color: #8a5a08;
-  background: #fdf4e3;
-  border-color: #f4e4c4;
-}
-
-.doorsim {
+.simrow {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: var(--row-y) var(--pad-x);
-  border-top: 1px solid #f2f3f5;
-  background: #fafbfc;
+  gap: 8px;
+  padding: 10px var(--pad-x);
+  border-top: 1px solid var(--line3);
+  background: var(--sunk);
   flex-wrap: wrap;
 }
 
-.doorsim-label {
+.simrow-label {
   flex: 1;
-  font-size: var(--font-chip);
-  letter-spacing: 0.05em;
+  font-size: 11px;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: #a0a7ae;
+  color: var(--text3);
   white-space: nowrap;
 }
 
-.doorsim button {
-  min-height: var(--touch);
-  padding: 0 20px;
+/* ---------------------------------------------------------------- read panes */
+
+.phase {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding: 12px var(--pad-x);
+  background: var(--sunk);
+  border-bottom: 1px solid var(--line3);
+}
+
+.phase--active {
+  background: var(--warnbg);
+}
+
+.phase-label {
+  flex: 1 0 auto;
+  font-size: var(--font-label);
+  font-weight: 500;
+}
+
+.phase-note {
+  font-size: var(--font-meta);
+  color: var(--text3);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 12px var(--pad-x);
+}
+
+.lamprow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 14px;
+  padding: 14px var(--pad-x);
+}
+
+/*
+ * A wrapping row of individual choices, where a segmented control would not fit.
+ *
+ * Used for the passport reader's status LED: the unit reports seven colours, and seven
+ * touch-sized segments are wider than the column they sit in.
+ */
+.picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  flex: 1 1 220px;
+  min-width: 0;
+}
+
+.picker-item {
+  min-height: var(--touch-small);
+  min-width: 82px;
+  padding: 0 14px;
   font-size: var(--font-seg);
-  color: #5b6269;
-  background: linear-gradient(#fff, #f7f8f9);
-  border: 1px solid #d7dbe0;
-  border-radius: 4px;
+  font-weight: 500;
+  color: var(--text2);
+  border: 1px solid var(--btnline);
+  border-radius: 7px;
   cursor: pointer;
 }
 
-.doorsim button:hover:not(:disabled) {
-  filter: brightness(0.97);
+.picker-item:hover:not(:disabled) {
+  filter: brightness(0.96);
 }
 
-.doorsim button:disabled {
-  color: #c1c6cc;
+.picker-item:disabled {
+  border-color: var(--disline);
   cursor: not-allowed;
+}
+
+.empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 28px var(--pad-x);
+  min-height: 160px;
+}
+
+.empty-title {
+  font-size: var(--font-label);
+  color: var(--text3);
+}
+
+.empty-note {
+  font-size: var(--font-meta);
+  color: var(--text4);
+  text-align: center;
+  max-width: 48ch;
+  text-wrap: pretty;
+}
+
+.headline {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px 28px;
+  padding: 16px var(--pad-x);
+  border-bottom: 1px solid var(--line3);
+}
+
+.arrival .headline {
+  padding: 0;
+  border-bottom: 0;
+}
+
+.headline-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+
+.headline-value {
+  font-size: 20px;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.fieldlist {
+  padding: 4px 0;
+  overflow: auto;
+  min-height: 0;
+}
+
+.fieldrow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 14px;
+  padding: 9px var(--pad-x);
+  border-top: 1px solid var(--line3);
+}
+
+.fieldrow-label {
+  flex: 0 0 168px;
+  font-size: var(--font-meta);
+  color: var(--text3);
+}
+
+.fieldrow-value {
+  flex: 1 1 160px;
+  min-width: 0;
+  font-size: var(--font-meta);
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.masknote {
+  margin: 0;
+  padding: 12px var(--pad-x);
+  border-top: 1px solid var(--line3);
+  background: var(--sunk);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text3);
+  text-wrap: pretty;
+}
+
+/* ---------------------------------------------------------------- passport */
+
+.arrival {
+  animation: resultIn 170ms ease-out;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  padding: 16px var(--pad-x);
+  border-bottom: 1px solid var(--line3);
+}
+
+.arrival-body {
+  flex: 1 1 260px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.scanframe {
+  flex: 0 0 160px;
+  min-height: 132px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  border: 1px dashed var(--btnline);
+  background: var(--sunk);
+  overflow: hidden;
+}
+
+/*
+ * The scan is a full page at up to 500 dpi, so it is bounded rather than shown at its own size.
+ * `contain` because a passport that has been letterboxed is still readable; one that has been
+ * stretched is not.
+ */
+.scanframe-image {
+  display: block;
+  max-width: 100%;
+  max-height: 220px;
+  object-fit: contain;
+}
+
+.scanframe-note {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 11px;
+  color: var(--text3);
+  text-align: center;
+  padding: 0 8px;
+  text-wrap: pretty;
+}
+
+.imagebar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+  padding: 10px var(--pad-x);
+  border-bottom: 1px solid var(--line3);
+  background: var(--sunk);
+}
+
+.imagebar .setting-label {
+  flex: 0 0 auto;
+}
+
+.imagebar .seg {
+  margin-left: 0;
+}
+
+/*
+ * The MRZ is fixed-width and column-significant: a check digit is only meaningful against the
+ * character positions around it. So these lines scroll rather than reflow.
+ */
+.mrz {
+  padding: 14px var(--pad-x);
+  border-bottom: 1px solid var(--line3);
+  background: var(--sunk);
+  overflow-x: auto;
+}
+
+.mrz-line {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: var(--font-label);
+  line-height: 1.7;
+  letter-spacing: 0.06em;
+  color: var(--text);
+  white-space: pre;
+}
+
+.caps {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px var(--pad-x);
+  border-top: 1px solid var(--line3);
+}
+
+.caps-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.cap {
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  padding: 5px 9px;
+  border-radius: 5px;
+  white-space: nowrap;
+  color: var(--text4);
+  background: var(--chip);
+  border: 1px solid var(--chipline);
+  text-decoration: line-through;
+}
+
+.cap--on {
+  color: var(--ok);
+  background: var(--okbg);
+  border-color: var(--okline);
+  text-decoration: none;
+}
+
+/* ---------------------------------------------------------------- planned */
+
+.planned {
+  flex: 1;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: clamp(16px, 3vw, 44px);
+  min-height: 0;
+}
+
+.planned-card {
+  max-width: 62ch;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 22px 24px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+}
+
+.planned-name {
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.planned-model {
+  font-size: var(--font-label);
+  color: var(--text3);
+}
+
+.planned-note {
+  margin: 0;
+  font-size: var(--font-label);
+  line-height: 1.55;
+  color: var(--text2);
+  text-wrap: pretty;
+}
+
+.planned-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding-top: 12px;
+  width: 100%;
+  border-top: 1px solid var(--line3);
+}
+
+.planned-foot .setting-label {
+  flex: 0 0 auto;
+}
+
+.planned-bus {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 11px;
+  color: var(--text4);
+}
+
+/* ---------------------------------------------------------------- drawer */
+
+.drawer-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.drawer-scrim {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  padding: 0;
+  background: var(--scrim);
+  cursor: pointer;
+}
+
+.drawer {
+  flex: 0 0 min(460px, 94vw);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--card);
+  border-left: 1px solid var(--line);
+  box-shadow: -16px 0 44px -22px rgb(16 24 40 / 55%);
+  animation: drawerIn 160ms ease-out;
+}
+
+.drawer-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  background: linear-gradient(var(--hd1), var(--hd2));
+  border-bottom: 1px solid var(--line2);
+  flex-shrink: 0;
+}
+
+.drawer-head .seg {
+  margin-left: 0;
+}
+
+.drawer-head .icon-button {
+  margin-left: auto;
+}
+
+.drawer-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line3);
+  background: var(--sunk);
+  flex-shrink: 0;
+}
+
+.drawer-tools .seg {
+  margin-left: 0;
+}
+
+.drawer-tools .pill:last-child {
+  margin-left: auto;
+}
+
+.drawer-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-top: 1px solid var(--line3);
+  background: var(--sunk);
+  flex-shrink: 0;
+}
+
+.drawer-note {
+  flex: 1 1 140px;
+  min-width: 0;
+  font-size: 11px;
+  color: var(--text3);
+  text-wrap: pretty;
+}
+
+.bus {
+  flex: 1;
+  overflow: auto;
+  min-height: 0;
+}
+
+.bus-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+  padding: 10px var(--pad-x);
+  border-bottom: 1px solid var(--line3);
+  min-height: 46px;
+}
+
+.bus-address {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: var(--font-meta);
+  color: var(--text2);
+  flex: 0 0 auto;
+}
+
+.bus-name {
+  flex: 1 0 120px;
+  font-size: var(--font-meta);
+  color: var(--text);
+}
+
+.bus-detail {
+  flex: 1 1 100%;
+  font-size: 11px;
+  color: var(--bad);
+  text-wrap: pretty;
 }
 
 /* ---------------------------------------------------------------- activity */
@@ -659,49 +1808,104 @@ button {
   content-visibility: auto;
   contain-intrinsic-size: 0 30px;
   display: flex;
-  gap: 12px;
-  padding: 5px var(--pad-x);
+  flex-wrap: wrap;
+  gap: 4px 11px;
+  padding: 6px var(--pad-x);
   align-items: baseline;
 }
 
 .activity-time {
   font-family: "IBM Plex Mono", monospace;
-  font-size: var(--font-chip);
-  color: #b6bcc3;
+  font-size: 11px;
+  color: var(--text4);
+  flex-shrink: 0;
+}
+
+.activity-device {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text3);
+  background: var(--chip);
+  border: 1px solid var(--chipline);
+  border-radius: 4px;
+  padding: 2px 6px;
   flex-shrink: 0;
 }
 
 .activity-text {
-  font-size: var(--font-log);
+  flex: 1 1 180px;
+  min-width: 0;
+  font-size: var(--font-meta);
   line-height: 1.4;
   overflow-wrap: break-word;
-  min-width: 0;
-}
-
-.tone-normal {
-  color: #3a4046;
-}
-
-.tone-muted {
-  color: #8d949c;
-}
-
-.tone-ok {
-  color: #1c6b36;
-}
-
-.tone-warn {
-  color: #8a5a08;
-}
-
-.tone-bad {
-  color: #b02020;
 }
 
 .activity-empty {
   padding: 14px var(--pad-x);
   font-size: var(--font-log);
-  color: #b6bcc3;
+  color: var(--text4);
+}
+
+.tone-normal {
+  color: var(--text2);
+}
+
+.tone-muted {
+  color: var(--text3);
+}
+
+.tone-ok {
+  color: var(--ok);
+}
+
+.tone-warn {
+  color: var(--warn);
+}
+
+.tone-bad {
+  color: var(--bad);
+}
+
+/* ---------------------------------------------------------------- toasts */
+
+.toasts {
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: 18px;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: center;
+  pointer-events: none;
+}
+
+.toast {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: min(92vw, 520px);
+  padding: 11px 16px;
+  font-size: var(--font-meta);
+  color: var(--text);
+  text-align: left;
+  background: var(--card);
+  border: 1px solid var(--okline);
+  border-radius: 8px;
+  box-shadow: 0 6px 24px -10px rgb(16 24 40 / 45%);
+  cursor: pointer;
+}
+
+.toast--warn {
+  border-color: var(--warnline);
+}
+
+.toast--bad {
+  border-color: var(--badline);
 }
 
 /* ---------------------------------------------------------------- gate */
@@ -711,7 +1915,7 @@ button {
   margin: 14vh auto;
   padding: 0 24px;
   font-family: "IBM Plex Sans", system-ui, sans-serif;
-  color: #3a4046;
+  color: var(--text2);
   font-size: 14px;
   line-height: 1.6;
 }
@@ -719,414 +1923,20 @@ button {
 .gate h1 {
   font-size: 19px;
   font-weight: 600;
-  color: #16191d;
+  color: var(--text);
   margin: 0 0 10px;
 }
 
 .gate-detail {
   font-family: "IBM Plex Mono", monospace;
   font-size: 12px;
-  color: #b02020;
+  color: var(--bad);
   overflow-wrap: break-word;
 }
 
 .gate code {
-  font-family: "IBM Plex Mono", monospace;
   font-size: 12.5px;
-  background: #e7eaee;
+  background: var(--chip);
   border-radius: 3px;
   padding: 1px 5px;
-}
-
-:focus-visible {
-  outline: 2px solid #2f5fd0;
-  outline-offset: 1px;
-}
-
-/* ---------------------------------------------------------------- dashboard */
-
-.back {
-  width: var(--touch);
-  height: var(--touch);
-  flex-shrink: 0;
-  font-size: 20px;
-  line-height: 1;
-  color: #4b5259;
-  background: linear-gradient(#fff, #f7f8fa);
-  border: 1px solid #d3d8de;
-  border-radius: 8px;
-  cursor: pointer;
-}
-
-.back:hover {
-  filter: brightness(0.97);
-}
-
-.tiles {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr));
-  gap: 14px;
-}
-
-.tile {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 18px;
-  text-align: left;
-  min-height: 150px;
-  border-radius: 10px;
-  background: linear-gradient(#fff, #fcfcfd);
-  border: 1px solid #dde1e6;
-  cursor: pointer;
-  box-shadow: 0 1px 2px rgb(16 24 40 / 4%), 0 8px 18px -10px rgb(16 24 40 / 14%);
-}
-
-.tile:hover {
-  border-color: #c7ccd3;
-}
-
-
-.tile-head {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 6px;
-}
-
-.tile-name {
-  font-size: 17px;
-  font-weight: 600;
-  color: #16191d;
-}
-
-.tile-badge {
-  margin-left: auto;
-  font-size: var(--font-chip);
-  padding: 5px 10px;
-  border-radius: 5px;
-  color: #4d545c;
-  background: #f4f5f7;
-  border: 1px solid #e8eaee;
-  white-space: nowrap;
-}
-
-.tile-badge--live {
-  color: #1a6633;
-  background: #eaf6ee;
-  border-color: #cfe8d8;
-}
-
-
-.tile-badge--planned {
-  color: #7d5207;
-  background: #fdf3e0;
-  border-color: #f2e1bf;
-}
-
-.tile-model {
-  font-size: var(--font-label);
-  color: #4d545c;
-}
-
-.tile-bus {
-  font-family: "IBM Plex Mono", monospace;
-  font-size: var(--font-chip);
-  color: #8d949c;
-}
-
-.tile-action {
-  margin-top: auto;
-  padding-top: 12px;
-  font-size: var(--font-seg);
-  font-weight: 500;
-  color: #2f5fd0;
-}
-
-
-.tile-planned {
-  background: #f7f8f9;
-  border: 1px dashed #d7dbe0;
-  box-shadow: none;
-  cursor: not-allowed;
-}
-
-.tile-planned .tile-action {
-  color: #a3aab2;
-}
-
-/* ---------------------------------------------------------------- card reader */
-
-.readpane {
-  flex: 1;
-  min-height: 0;
-  overflow: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  padding: var(--row-y) var(--pad-x);
-}
-
-.readpane-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-}
-
-.readpane-actions button {
-  min-height: var(--touch);
-  padding: 0 18px;
-  font-size: var(--font-seg);
-  font-weight: 500;
-  color: #24282d;
-  background: linear-gradient(#fff, #f4f5f7);
-  border: 1px solid #c7ccd3;
-  border-radius: 7px;
-  cursor: pointer;
-}
-
-.readpane-actions button:hover:not(:disabled) {
-  filter: brightness(0.97);
-}
-
-.readpane-actions button:disabled {
-  color: #c1c6cc;
-  background: #f6f7f8;
-  border-color: #e6e8eb;
-  cursor: not-allowed;
-}
-
-.readpane-actions .primary:not(:disabled) {
-  color: #fff;
-  background: linear-gradient(color-mix(in oklab, #2f5fd0 88%, white), #2f5fd0);
-  border-color: color-mix(in oklab, #2f5fd0 82%, black);
-}
-
-.verdict {
-  padding: 26px var(--pad-x);
-  text-align: center;
-  font-size: var(--font-label);
-  color: #6b727a;
-  background: #fafbfc;
-  border: 1px dashed #dde1e6;
-  border-radius: 8px;
-}
-
-.verdict-bad {
-  color: #8a3d3d;
-  background: #fdf5f5;
-  border-color: #f0d5d5;
-}
-
-.cardpanel {
-  border: 1px solid #dde1e6;
-  border-radius: 8px;
-  overflow: hidden;
-}
-
-.cardpanel-head {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 12px var(--pad-x);
-  background: #f7f9f8;
-  border-bottom: 1px solid #e9ebee;
-}
-
-.cardpanel-title {
-  font-size: var(--font-label);
-  font-weight: 600;
-}
-
-.fields {
-  margin: 0;
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
-}
-
-.field {
-  padding: 12px var(--pad-x);
-  border-top: 1px solid #f2f3f5;
-}
-
-.field dt {
-  font-size: var(--font-chip);
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-  color: #8d949c;
-}
-
-.field dd {
-  margin: 3px 0 0;
-  font-family: "IBM Plex Mono", monospace;
-  font-size: var(--font-label);
-  color: #16191d;
-  word-break: break-all;
-}
-
-.rawstripe {
-  padding: 12px var(--pad-x);
-  border-top: 1px solid #f2f3f5;
-}
-
-.rawstripe code {
-  display: block;
-  margin-top: 5px;
-  font-family: "IBM Plex Mono", monospace;
-  font-size: var(--font-chip);
-  color: #6b727a;
-  word-break: break-all;
-}
-
-.masknote {
-  margin: 0;
-  padding: 12px var(--pad-x);
-  border-top: 1px solid #f2f3f5;
-  font-size: var(--font-chip);
-  color: #8d949c;
-  background: #fafbfc;
-}
-
-.settings {
-  flex: 1;
-  min-height: 0;
-  overflow: auto;
-}
-
-.setting {
-  display: flex;
-  align-items: center;
-  gap: var(--gap);
-  padding: var(--row-y) var(--pad-x);
-  border-top: 1px solid #f2f3f5;
-  flex-wrap: wrap;
-}
-
-.setting:first-child {
-  border-top: 0;
-}
-
-.setting-label {
-  flex: 1;
-  min-width: 120px;
-  font-size: var(--font-label);
-  color: #24282d;
-}
-
-.chooser {
-  display: inline-flex;
-  align-items: center;
-  min-height: var(--touch);
-  padding: 0 16px;
-  font-size: var(--font-seg);
-  font-weight: 500;
-  color: #4d545c;
-  background: transparent;
-  border: 0;
-  cursor: pointer;
-  white-space: nowrap;
-}
-
-.chooser:hover:not(:disabled) {
-  filter: brightness(0.96);
-}
-
-.chooser:disabled {
-  color: #b9bfc6;
-  cursor: not-allowed;
-}
-
-.chooser-on {
-  color: #fff;
-  background: linear-gradient(color-mix(in oklab, #2f5fd0 88%, white), #2f5fd0);
-  box-shadow: inset 0 1px 0 rgb(255 255 255 / 22%);
-}
-
-.stepper-value {
-  display: inline-flex;
-  align-items: center;
-  min-height: var(--touch);
-  padding: 0 14px;
-  font-family: "IBM Plex Mono", monospace;
-  font-size: var(--font-seg);
-  color: #24282d;
-  border-left: 1px solid #e2e6ea;
-}
-
-.activity-device {
-  font-family: "IBM Plex Mono", monospace;
-  font-size: 10.5px;
-  letter-spacing: 0.04em;
-  color: #8d949c;
-  background: #f4f5f7;
-  border: 1px solid #e8eaee;
-  border-radius: 3px;
-  padding: 1px 5px;
-  flex-shrink: 0;
-  align-self: flex-start;
-}
-
-/* ---- passport reader -------------------------------------------------------------------- */
-
-/*
- * The MRZ is fixed-width and column-significant: a check digit is only meaningful against the
- * character positions around it. `.rawstripe code` breaks anywhere to fit, which is right for a
- * magnetic stripe and wrong here, so these lines scroll rather than reflow.
- */
-.rawstripe--mrz code {
-  white-space: pre;
-  overflow-x: auto;
-  word-break: normal;
-  line-height: 1.6;
-  color: #4a5058;
-}
-
-/* The byte view of a binary barcode, under the unreadable text it explains. */
-.barcode-hex {
-  margin-top: 6px;
-  color: #8d949c;
-}
-
-/* A lamp sitting inline before a label — the gap is static; the lamp itself is computed. */
-.lamp-inline {
-  margin-right: 8px;
-}
-
-.checks {
-  padding: 12px var(--pad-x);
-  border-top: 1px solid #f2f3f5;
-}
-
-.checks-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 6px;
-}
-
-.scanshot {
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-}
-
-.scanshot .seg {
-  margin: 12px var(--pad-x) 0;
-  align-self: flex-start;
-}
-
-/*
- * The scan is a full page at up to 500 dpi, so it is bounded rather than shown at its own size.
- * `contain` because a passport that has been letterboxed is still readable; one that has been
- * stretched is not.
- */
-.scanshot-image {
-  display: block;
-  max-width: calc(100% - var(--pad-x) * 2);
-  max-height: 320px;
-  object-fit: contain;
-  margin: 12px var(--pad-x);
-  border: 1px solid #e6e9ec;
-  border-radius: 4px;
-  background: #fafbfc;
 }

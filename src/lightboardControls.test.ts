@@ -147,7 +147,9 @@ describe("stripPreviewStyle", () => {
   const mixes = vocabulary.stripColors;
 
   it("reads as unlit when nothing is on", () => {
-    expect(stripPreviewStyle([], mixes).background).toContain("#eceef1");
+    // The unlit fill is the theme's disabled token, so the preview goes dark with the rest of the
+    // page rather than staying a light grey slab on a dark screen.
+    expect(stripPreviewStyle([], mixes).background).toBe("var(--dis)");
   });
 
   it("shows the colour the strip actually mixes to", () => {

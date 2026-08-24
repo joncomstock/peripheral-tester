@@ -91,13 +91,17 @@ export interface TransactionSetting {
 
 export interface CardReaderState {
   status: Status;
+  /** The interface the driver claims, as the backend read it from the driver. */
+  usb: { vendorId: number; productId: number };
+  /** What the driver accepts, as the backend read it from the driver — never a copy of it. */
+  vocabulary: { ledColors: LedColor[] };
   phase: ReadPhase;
   mock: boolean;
   led: LedColor | "off";
   seconds: number;
   transaction: TransactionSetting;
   /** What these settings put on the wire, so the page can show what it is sending. */
-  literals: { prepare: string; monitor: string; read: string };
+  literals: { prepare: string; monitor: string; read: string; lock: string; unlock: string; led: string };
 }
 
 export interface Track1 {
@@ -154,6 +158,11 @@ export type LightSource = "ir" | "visible" | "uv" | "uv3led";
  */
 export type ScanResolution = "low" | "default" | "high";
 export type ScanPhase = "idle" | "scanning";
+/** Which part of the scan window an image covers. */
+export type ImageRegion = "full" | "document";
+/** Where MRZ recognition runs — on the PC over the held infrared scan, or on the unit itself. */
+export type OcrSource = "pc" | "device";
+export type LedUsage = "permanent" | "flashing";
 export type StatusLedColor = "black" | "red" | "green" | "yellow" | "blue" | "purple" | "turquoise" | "white";
 /** What the mock scanner will produce next. Offered only when mocking. */
 export type NextScan = "passport" | "smudged" | "noDocument" | "barcodeOnly";
@@ -166,13 +175,27 @@ export interface PassportReaderState {
    * Values rather than a copy of them, for the reason this file's header gives: a list written here
    * would be free to disagree with the device.
    */
-  vocabulary: { lights: LightSource[]; resolutions: ScanResolution[] };
+  vocabulary: { lights: LightSource[]; resolutions: ScanResolution[]; ledColors: StatusLedColor[] };
   phase: ScanPhase;
   mock: boolean;
   led: StatusLedColor | "off";
+  ledUsage: LedUsage;
+  buzzerMs: number;
+  /**
+   * Whether a scan is held for the read calls to interpret.
+   *
+   * The API keeps one scan per process and it lives only until the next, so `ReadOcrPc` against
+   * nothing held reads whatever was there before. This is what lets the page say which it is.
+   */
+  scanned: boolean;
   /** `null` when the device has not been asked, or cannot answer — not the same as "no document". */
   documentPresent: boolean | null;
-  settings: { lights: LightSource[]; resolution: ScanResolution };
+  settings: {
+    lights: LightSource[];
+    resolution: ScanResolution;
+    ambientLightElimination: boolean;
+    source: OcrSource;
+  };
   api?: { version: number; number: number; dllVersion: string; compileDate: string };
   device?: {
     deviceType: string;
@@ -253,6 +276,8 @@ export interface ScanResult {
   ok: boolean;
   mrz?: MrzRead;
   barcode?: WireBarcode;
+  /** How long the driver took, measured around the call by the backend rather than round-trip. */
+  ms: number;
   error?: string;
 }
 
@@ -315,16 +340,35 @@ export const cardreader = {
   led: (color: LedColor | "off") => post("/api/cardreader/led", { color }),
   read: () => post<ReadResult>("/api/cardreader/read"),
   cancel: () => post("/api/cardreader/cancel"),
+  /** Drive the shutter now, as opposed to the transaction's locks, which arm the next read. */
+  shutter: (locked: boolean) => post("/api/cardreader/shutter", { locked }),
   arm: (outcome: NextOutcome) => post("/api/cardreader/arm", { outcome }),
 };
 
 export const passportreader = {
   connect: () => post("/api/passportreader/connect"),
   disconnect: () => post("/api/passportreader/disconnect"),
-  settings: (next: { lights?: LightSource[]; resolution?: ScanResolution }) => post("/api/passportreader/settings", next),
-  led: (color: StatusLedColor | "off") => post("/api/passportreader/led", { color }),
+  /** Re-initialise the unit without dropping the connection. The scan settings go back on after. */
+  reset: () => post("/api/passportreader/reset"),
+  settings: (
+    next: {
+      lights?: LightSource[];
+      resolution?: ScanResolution;
+      ambientLightElimination?: boolean;
+      source?: OcrSource;
+      buzzerMs?: number;
+    },
+  ) => post("/api/passportreader/settings", next),
+  led: (color: StatusLedColor | "off", usage?: LedUsage) => post("/api/passportreader/led", { color, usage }),
+  /** Sounds the buzzer for its configured duration. The duration itself is a setting. */
   buzz: () => post("/api/passportreader/buzz"),
   read: () => post<ScanResult>("/api/passportreader/read"),
+  /** Expose the document and hold the result, without recognising it. */
+  scan: () => post<{ ms: number }>("/api/passportreader/scan"),
+  /** Recognise the MRZ of whatever is held. Carries document data; treated like {@link read}. */
+  mrz: () => post<{ mrz: MrzRead; ms: number }>("/api/passportreader/mrz"),
+  /** Whatever the device decoded as documents passed the window since the last read. */
+  barcode: () => post<{ barcode: WireBarcode; ms: number }>("/api/passportreader/barcode"),
   arm: (outcome: NextScan) => post("/api/passportreader/arm", { outcome }),
   /**
    * URL for the scanned page under one light source.
@@ -334,7 +378,8 @@ export const passportreader = {
    * because the address is otherwise identical. The encoding is the backend's to choose — no
    * control here offers one, and under mock it can only produce BMP whatever is asked.
    */
-  imageUrl: (light: LightSource, nonce: number) => `/api/passportreader/image?light=${light}&n=${nonce}`,
+  imageUrl: (light: LightSource, region: ImageRegion, nonce: number) =>
+    `/api/passportreader/image?light=${light}&region=${region}&n=${nonce}`,
 };
 
 /** Subscribes to the event stream, which carries every device at once. Returns an unsubscribe. */

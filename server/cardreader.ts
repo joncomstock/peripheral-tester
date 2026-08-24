@@ -11,11 +11,29 @@
  */
 
 import type { HidDevice } from "@eai/hid";
-import { ALL_TRACKS, OmronV4KU } from "@eai/omron/v4ku";
+import { ALL_TRACKS, LED_COLOR_DIGIT, LED_OFF, LED_ON_PREFIX, OmronV4KU, SHUTTER_COMMANDS, V4KU_PID, V4KU_VID } from "@eai/omron/v4ku";
 import type { CardData, LedColor, MonitorOutcome, TransactionSetting } from "@eai/omron/v4ku";
 import { announce, record } from "./activity.ts";
 
 const log = (kind: string, text: string) => record("cardreader", kind, text);
+
+/**
+ * What the driver accepts, read from the driver rather than listed here.
+ *
+ * The light board and the passport reader both do this, and the README says why: nothing in this
+ * repo keeps its own list, so it cannot disagree with the driver about what the device has. A
+ * colour added to `LED_COLOR_DIGIT` reaches the page without either side being edited.
+ */
+export const vocabulary = () => ({ ledColors: Object.keys(LED_COLOR_DIGIT) as LedColor[] });
+
+/**
+ * The interface the driver claims, from the driver.
+ *
+ * The passport reader's ids come from the device once its DLL has opened one; this reader's are
+ * fixed and known before anything is opened, so they come from `@eai/omron` instead — either way
+ * the page is told rather than told to remember.
+ */
+export const usb = { vendorId: V4KU_VID, productId: V4KU_PID };
 
 // ---------------------------------------------------------------------------------------------
 // A fake reader, for driving the page without hardware.
@@ -41,9 +59,11 @@ const HEADER = 3;
  * framing, echo-matching and track parsing are the ones under test, not a second implementation.
  */
 class MockReader implements HidDevice {
+  // The driver's own ids, so the mock claims to be the device the driver expects rather than a
+  // second copy of the same two numbers written out here.
   readonly info = {
-    vendorId: 0x0590,
-    productId: 0x0034,
+    vendorId: V4KU_VID,
+    productId: V4KU_PID,
     product: "V4KU (mock)",
     manufacturer: "Hitachi-Omron",
   } as unknown as HidDevice["info"];
@@ -92,6 +112,9 @@ class MockReader implements HidDevice {
       // The indicator: `CP7<digit>` lights a colour, `CP6` puts it out.
       case "P7":
       case "P6":
+      // The shutter: `CC0` locks, `CC1` releases.
+      case "C0":
+      case "C1":
         this.#reply(`P${code}00`);
         break;
       default:
@@ -142,6 +165,8 @@ export function configure(options: { mock: boolean }): void {
 
 export const state = () => ({
   status,
+  usb,
+  vocabulary: vocabulary(),
   phase,
   mock,
   led,
@@ -153,6 +178,13 @@ export const state = () => ({
       `${transaction.tracks}${transaction.insertionLock ? 1 : 0}${transaction.pullOutLock ? 1 : 0}`,
     monitor: `C92${String(seconds).padStart(2, "0")}`,
     read: `C6a${transaction.tracks}`,
+    // Measured against the vendor DLL rather than inferred — see `SHUTTER_COMMANDS`, which had
+    // them the wrong way round when they were a guess.
+    lock: SHUTTER_COMMANDS.lock.body,
+    unlock: SHUTTER_COMMANDS.unlock.body,
+    // Built from the driver's own prefix and digit map rather than spelled out: the page was
+    // showing a bare `CP7`, which is not a command — the colour digit is the whole parameter.
+    led: led === "off" ? LED_OFF.body : LED_ON_PREFIX + LED_COLOR_DIGIT[led],
   },
 });
 
@@ -237,6 +269,20 @@ export async function setLed(color: LedColor | "off"): Promise<void> {
   led = color;
   tell();
   log("sent", `LED ${color}`);
+}
+
+/**
+ * Hold the card in the throat, or release it.
+ *
+ * Separate from the transaction's `insertionLock` / `pullOutLock`, which say what the *next* read
+ * should do; these drive the shutter now, which is what someone standing at a kiosk with a card
+ * stuck in it needs.
+ */
+export async function shutter(locked: boolean): Promise<void> {
+  const open = held();
+  if (locked) await open.lock();
+  else await open.unlock();
+  log("sent", `${locked ? SHUTTER_COMMANDS.lock.body : SHUTTER_COMMANDS.unlock.body} — shutter ${locked ? "locked" : "unlocked"}`);
 }
 
 /**

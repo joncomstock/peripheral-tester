@@ -1,7 +1,7 @@
 # Peripheral Tester
 
 A standalone **local hardware test utility** for the peripherals of an IER **919** kiosk. A Deno
-backend owns every device handle; a React/Vite frontend drives them from a dashboard.
+backend owns every device handle; a React/Vite frontend drives them from a device rail.
 
 | Device          | Driver             | Bus                        |
 | --------------- | ------------------ | -------------------------- |
@@ -36,23 +36,36 @@ Browser (React/Vite)  ──/api──►  Deno backend  ──serial / USB HID 
 
 ## What it does
 
-Pick a device from the dashboard, connect, and drive it. Both screens are control panels rather than
-probes: they drive the peripheral and report what came back. Where a channel map or a transaction
+Pick a device from the rail, connect, and drive it. Every screen is a control panel rather than a
+probe: it drives the peripheral and reports what came back. Where a channel map or a transaction
 setting turns out to be wrong for a kiosk, the fix is configuration passed to the driver.
+
+The rail lists **every** peripheral a 919 has, including the four whose drivers exist in
+`hardware-libs` but whose tester screens are not built — knowing what a kiosk has is worth more to
+someone standing at one than a shorter list, and each says which package covers it.
 
 **Light board** — component indicators, bag-tag sides, the semaphore tower, and the LED strip with
 its additive mixes. Service doors report as their switches move. The lamps on screen show what was
 **commanded**: the board acknowledges commands and never reports lamp state.
 
-**Card reader** — read a card, with the transaction settings the device takes: read direction, track
-mask, whether to hold the card, and how long to wait. The literal command each setting produces is
-shown beside it, so what goes on the wire is visible.
+**Card reader** — read a card once or listen cycle after cycle, with the transaction settings the
+device takes: read direction, track mask, whether to hold the card, and how long to wait. The bezel
+LED and the shutter are driven directly. The literal command each setting produces is shown beside
+it, so what goes on the wire is visible.
 
 **Passport reader** — scan a document and read what is on it: the machine-readable zone parsed into
 fields with every ICAO check digit verified, any 1D or 2D barcode, and the scanned page under each
-light source the unit has. The light and resolution settings are the ones the next scan will use.
-Controls a unit cannot honour are not offered — a scanner without the UV lamp says so, and the
-ultraviolet option is then absent rather than dead.
+light source the unit has. `Read document` does all three under one driver lock; `Scan`, `Read MRZ`
+and `Read barcode` are the same calls one at a time, because a scan that produced an image but no
+MRZ and a recognition that failed on a good scan are different faults. The light, resolution,
+ambient-light and OCR-source settings are the ones the next scan will use. Controls a unit cannot
+honour are not offered — a scanner without the UV lamp says so, and the ultraviolet option is then
+absent rather than dead.
+
+**Health sweep** — opens and handshakes every wired device in turn without driving it, and reports
+what each said for itself. It uses the same `connect` the screens do, so a pass means the handle was
+genuinely claimed. A device you already have open is left open. The **Bus** tab lists what the
+handshake found.
 
 ### Cardholder and document data
 
@@ -66,7 +79,9 @@ of birth and a document number — and the scanned page, portrait included. Both
 - The screen masks by default — the card's PAN to its last four, the document's number and date of
   birth likewise, and both blanked inside the raw stripe or MRZ lines that carry them inline.
   Revealing is deliberate, and resets on the next read.
-- A read's data exists only in the reply to the read that produced it.
+- A read's data exists only in the reply to the read that produced it. There is no session history
+  of past reads, and **Export JSON** exports the activity log, which the backend guarantees carries
+  none of this — never a read's contents.
 
 ## Quick start
 
@@ -157,23 +172,33 @@ backend attaches a log handler so those land in **Activity** instead, quoted ver
 
 ## Layout
 
-| Path                        | What                                                            |
-| --------------------------- | --------------------------------------------------------------- |
-| `server/main.ts`            | HTTP routing, and serves `dist/` on a kiosk.                    |
-| `server/activity.ts`        | The shared log and event stream. Carries no cardholder data.    |
-| `server/lightboard.ts`      | The light board session. Owns the COM port.                     |
-| `server/cardreader.ts`      | The card reader session. Owns the USB HID handle.               |
-| `server/passportreader.ts`  | The passport reader session. Owns the loaded `PageScanAPI.dll`. |
-| `server/collisions.ts`      | Which indicator channels two sections share, from the live map. |
-| `src/App.tsx`               | The shell: which device is on screen, and the shared state.     |
-| `src/Home.tsx`              | The dashboard.                                                  |
-| `src/LightBoardPage.tsx`    | The light board's screen and header controls.                   |
-| `src/CardReaderPage.tsx`    | The card reader's screen and header controls.                   |
-| `src/PassportReaderPage.tsx`| The passport reader's screen and header controls.               |
-| `src/Activity.tsx`          | The log panel, filtered to the device on screen.                |
-| `src/lightboardControls.ts` | Vocabulary → controls, and the naming rule the page uses.       |
-| `src/look.ts`               | Lamps, segmented buttons and the strip preview, computed.       |
-| `src/styles.css`            | Everything static. Anything that varies lives in `look.ts`.     |
+| Path                         | What                                                            |
+| ---------------------------- | --------------------------------------------------------------- |
+| `server/main.ts`             | HTTP routing, and serves `dist/` on a kiosk.                    |
+| `server/activity.ts`         | The shared log and event stream. Carries no cardholder data.    |
+| `server/lightboard.ts`       | The light board session. Owns the COM port.                     |
+| `server/cardreader.ts`       | The card reader session. Owns the USB HID handle.               |
+| `server/passportreader.ts`   | The passport reader session. Owns the loaded `PageScanAPI.dll`. |
+| `server/collisions.ts`       | Which indicator channels two sections share, from the live map. |
+| `src/api.ts`                 | The wire contract: every type and every call the page makes.    |
+| `src/App.tsx`                | The shell: which device is on screen, and the shared state.     |
+| `src/ui.tsx`                 | The connection strip, the card, and the rows they are built of. |
+| `src/devices.ts`             | Which peripherals a 919 has, and which have a screen.           |
+| `src/Rail.tsx`               | The device rail.                                                |
+| `src/Planned.tsx`            | The pane for a peripheral with a driver but no screen yet.      |
+| `src/LightBoardPage.tsx`     | The light board's screen and connection strip.                  |
+| `src/CardReaderPage.tsx`     | The card reader's screen and connection strip.                  |
+| `src/PassportReaderPage.tsx` | The passport reader's screen and connection strip.              |
+| `src/Drawer.tsx`             | The side drawer: Activity and Bus.                              |
+| `src/Activity.tsx`           | The log, with its scope and issues filters.                     |
+| `src/sweep.ts`               | The health sweep, over the same `connect` the screens use.      |
+| `src/Toasts.tsx`             | Transient confirmations for effects that are off screen.        |
+| `src/theme.ts`               | Light or dark, remembered per machine.                          |
+| `src/download.ts`            | JSON export. Activity only — never a read's contents.           |
+| `src/lightboardControls.ts`  | Vocabulary → controls, and the naming rule the page uses.       |
+| `src/format.ts`              | Display formatting shared by the screens.                       |
+| `src/look.ts`                | Lamps, segmented buttons and the strip preview, computed.       |
+| `src/styles.css`             | Everything static, and the light and dark tokens.               |
 
 The light board's controls are generated from `/api/state`, which the backend builds from the
 driver's own exported vocabularies (`ACTIONS`, `INDICATOR_SECTIONS`, `STRIP_COLORS`, `STRIP_MIX`,

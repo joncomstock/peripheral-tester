@@ -2,7 +2,7 @@
   "name": "peripheral-tester",
   "private": true,
   "version": "0.1.0",
-  "description": "Browser UI for driving the peripherals of an IER 919 kiosk: the S33380 light board and the Hitachi-Omron V4KU card reader.",
+  "description": "Browser UI for driving the peripherals of an IER 919 kiosk: the S33380 light board, the Hitachi-Omron V4KU card reader and the DESKO PENTA passport reader.",
   "type": "module",
   "scripts": {
     "dev": "vite",

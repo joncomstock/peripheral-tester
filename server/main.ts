@@ -25,7 +25,7 @@ import { join } from "@std/path";
 import { serveDir } from "@std/http/file-server";
 import type { LedRequest } from "@eai/ier/s33380";
 import type { LedColor, TransactionSetting } from "@eai/omron/v4ku";
-import { LightSource, Resolution } from "@eai/desko/penta";
+import { LightSource } from "@eai/desko/penta";
 import type { ImageFormat, LedColorName, LightSourceName, ResolutionName } from "@eai/desko/penta";
 import * as activity from "./activity.ts";
 import * as lightboard from "./lightboard.ts";
@@ -144,8 +144,14 @@ async function handle(request: Request): Promise<Response> {
     const next = await body<{ lights: LightSourceName[]; resolution: ResolutionName }>();
     // Checked rather than cast. An unknown resolution reaches the packed struct as `undefined`,
     // which `setUint32` writes as 0 — a silent scan at the undefined resolution rather than a
-    // refusal. The driver exports the vocabularies, so the check is a lookup.
-    if (next.resolution !== undefined && !known(Resolution, next.resolution)) {
+    // refusal.
+    //
+    // Checked against what is *selectable*, not against the whole enum. `Resolution` includes the
+    // vendor's own `undefined` member, whose value is 0 — so validating against the enum accepted
+    // by name the exact scan this check exists to prevent, through the one door the page does not
+    // offer. The served vocabulary is the authority, so the two cannot disagree again.
+    const selectable = passportreader.vocabulary().resolutions as readonly string[];
+    if (next.resolution !== undefined && !selectable.includes(next.resolution)) {
       return json({ ok: false, error: `unknown resolution: ${next.resolution}` }, 400);
     }
     const unknownLight = next.lights?.find((light) => !known(LightSource, light));

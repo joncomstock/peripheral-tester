@@ -145,7 +145,14 @@ export interface ReadResult {
 // ---- passport reader ------------------------------------------------------------------------
 
 export type LightSource = "ir" | "visible" | "uv" | "uv3led";
-export type ScanResolution = "undefined" | "low" | "default" | "high";
+/**
+ * The resolutions a caller may select.
+ *
+ * The driver's own `Resolution` also carries the vendor's `undefined` member, which is "not
+ * specified" rather than a choice — the backend leaves it out of the served vocabulary and refuses
+ * it, so naming it here would describe a value nothing accepts.
+ */
+export type ScanResolution = "low" | "default" | "high";
 export type ScanPhase = "idle" | "scanning";
 export type StatusLedColor = "black" | "red" | "green" | "yellow" | "blue" | "purple" | "turquoise" | "white";
 /** What the mock scanner will produce next. Offered only when mocking. */

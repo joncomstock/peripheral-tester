@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import type { Snapshot } from "./api.ts";
-import { hex, LAMP, lampStyle } from "./look.ts";
+import { LAMP, lampStyle, usbId } from "./look.ts";
 
 export type View = "home" | "lightboard" | "cardreader" | "passportreader";
 
@@ -38,7 +38,7 @@ export function Home(
       // The USB ids only become known once the DLL has opened a device, so before that this names
       // the transport rather than inventing a pair.
       bus: snapshot.passportreader.device
-        ? `USB · ${hex(snapshot.passportreader.device.vendorId)}:${hex(snapshot.passportreader.device.productId)}`
+        ? `USB · ${usbId(snapshot.passportreader.device.vendorId)}:${usbId(snapshot.passportreader.device.productId)}`
         : "USB · FullPage API",
       live: snapshot.passportreader.status === "open",
     },

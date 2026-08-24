@@ -26,7 +26,7 @@ import { serveDir } from "@std/http/file-server";
 import type { LedRequest } from "@eai/ier/s33380";
 import type { LedColor, TransactionSetting } from "@eai/omron/v4ku";
 import { LightSource, Resolution } from "@eai/desko/penta";
-import type { LedColorName, LightSourceName, ResolutionName } from "@eai/desko/penta";
+import type { ImageFormat, LedColorName, LightSourceName, ResolutionName } from "@eai/desko/penta";
 import * as activity from "./activity.ts";
 import * as lightboard from "./lightboard.ts";
 import * as cardreader from "./cardreader.ts";
@@ -44,6 +44,19 @@ const built = await Deno.stat(join(distDir, "index.html")).then(() => true).catc
 lightboard.configure({ mock, portName: args[0] });
 cardreader.configure({ mock });
 passportreader.configure({ mock, dllPath: Deno.env.get("DESKO_PAGESCAN_DLL_PATH") });
+
+/**
+ * Is `key` one of this vocabulary's own entries?
+ *
+ * `Object.hasOwn`, not `in`: `in` walks the prototype chain, so `"toString" in Resolution` is true
+ * and a request for `?resolution=toString` would pass a check meant to reject it — then reach the
+ * packed struct as a function, which `setUint32` writes as 0. That is the silent scan at the
+ * undefined resolution this validation exists to prevent, arriving through the validation itself.
+ */
+const known = (vocabulary: object, key: string | undefined): boolean => key !== undefined && Object.hasOwn(vocabulary, key);
+
+/** Encodings the image route accepts. Typed so a format added to the driver fails to compile here. */
+const IMAGE_FORMATS: Record<ImageFormat, true> = { jpeg: true, png: true, bmp: true };
 
 const json = (body: unknown, statusCode = 200) =>
   new Response(JSON.stringify(body), { status: statusCode, headers: { "content-type": "application/json" } });
@@ -132,10 +145,10 @@ async function handle(request: Request): Promise<Response> {
     // Checked rather than cast. An unknown resolution reaches the packed struct as `undefined`,
     // which `setUint32` writes as 0 — a silent scan at the undefined resolution rather than a
     // refusal. The driver exports the vocabularies, so the check is a lookup.
-    if (next.resolution !== undefined && !(next.resolution in Resolution)) {
+    if (next.resolution !== undefined && !known(Resolution, next.resolution)) {
       return json({ ok: false, error: `unknown resolution: ${next.resolution}` }, 400);
     }
-    const unknownLight = next.lights?.find((light) => !(light in LightSource));
+    const unknownLight = next.lights?.find((light) => !known(LightSource, light));
     if (unknownLight !== undefined) return json({ ok: false, error: `unknown light source: ${unknownLight}` }, 400);
     return await attempt(() => passportreader.settings(next));
   }
@@ -158,12 +171,16 @@ async function handle(request: Request): Promise<Response> {
    * afterwards.
    */
   if (pathname === "/api/passportreader/image") {
-    const light = new URL(request.url).searchParams.get("light") ?? "visible";
-    if (!(light in LightSource)) return json({ ok: false, error: `unknown light source: ${light}` }, 400);
+    const query = new URL(request.url).searchParams;
+    const light = query.get("light") ?? "visible";
+    if (!known(LightSource, light)) return json({ ok: false, error: `unknown light source: ${light}` }, 400);
+    // The page never asks for an encoding — JPEG is what a full-page scan wants — but the query is
+    // kept and validated, because reaching for `&format=png` by hand is exactly how someone checks
+    // the driver's other two image paths on a kiosk. Under mock only BMP can be produced.
+    const format = query.get("format") ?? "jpeg";
+    if (!known(IMAGE_FORMATS, format)) return json({ ok: false, error: `unknown image format: ${format}` }, 400);
     try {
-      // The encoding is the server's to choose: no control offers one, and under mock only BMP can
-      // be produced. JPEG is what a full-page scan wants.
-      const scan = await passportreader.image(light as LightSourceName, "jpeg");
+      const scan = await passportreader.image(light as LightSourceName, format as ImageFormat);
       // No copy: `DocumentImage.bytes` is ArrayBuffer-backed, which is what a `Response` body takes.
       return new Response(scan.bytes, {
         headers: { "content-type": scan.mimeType, "cache-control": "no-store" },

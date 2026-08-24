@@ -11,7 +11,7 @@ import type {
   StatusLedColor,
 } from "./api.ts";
 import * as api from "./api.ts";
-import { hex, LAMP, lampStyle } from "./look.ts";
+import { LAMP, lampStyle, usbId } from "./look.ts";
 import { Card } from "./ui.tsx";
 import { StatusPill } from "./LightBoardPage.tsx";
 
@@ -386,7 +386,7 @@ export function PassportReaderControls(
     else if (!opening) api.passportreader.connect().catch(() => {});
   };
 
-  const usb = state.device ? `${hex(state.device.vendorId)}:${hex(state.device.productId)}` : "1ac2:—";
+  const usb = state.device ? `${usbId(state.device.vendorId)}:${usbId(state.device.productId)}` : "1ac2:—";
 
   return (
     <>

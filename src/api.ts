@@ -153,6 +153,13 @@ export type NextScan = "passport" | "smudged" | "noDocument" | "barcodeOnly";
 
 export interface PassportReaderState {
   status: Status;
+  /**
+   * What the driver accepts, as the backend read it from the driver.
+   *
+   * Values rather than a copy of them, for the reason this file's header gives: a list written here
+   * would be free to disagree with the device.
+   */
+  vocabulary: { lights: LightSource[]; resolutions: ScanResolution[] };
   phase: ScanPhase;
   mock: boolean;
   led: StatusLedColor | "off";

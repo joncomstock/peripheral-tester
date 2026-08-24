@@ -11,7 +11,7 @@
  * @module
  */
 
-import { createMockPageScanLib, DeskoPenta } from "@eai/desko/penta";
+import { createMockPageScanLib, DeskoPenta, LightSource, Resolution } from "@eai/desko/penta";
 import type {
   BarcodeRead,
   DocumentImage,
@@ -140,8 +140,24 @@ export function configure(options: { mock: boolean; dllPath?: string }): void {
   dllPath = options.dllPath;
 }
 
+/**
+ * What the driver accepts, read from the driver rather than listed here.
+ *
+ * The light board does the same and the README says why: nothing in this repo keeps its own list,
+ * so it cannot disagree with the driver about what the device has. A source added to `@eai/desko`
+ * reaches the page without either side being edited.
+ *
+ * `undefined` is dropped from the resolutions: it is the vendor's "not specified" value, not a
+ * setting anyone chooses, and the header guarantees only the other three.
+ */
+export const vocabulary = () => ({
+  lights: Object.keys(LightSource) as LightSourceName[],
+  resolutions: (Object.keys(Resolution) as ResolutionName[]).filter((r) => r !== "undefined"),
+});
+
 export const state = () => ({
   status,
+  vocabulary: vocabulary(),
   phase,
   mock,
   led,

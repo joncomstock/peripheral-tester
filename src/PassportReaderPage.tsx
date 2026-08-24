@@ -17,26 +17,48 @@ import { Card } from "./ui.tsx";
 import { StatusPill } from "./LightBoardPage.tsx";
 
 /**
- * The light sources, and which device capability gates each.
+ * Operator-facing names for the driver's identifiers.
  *
- * A unit without the UV lamp reports so, and the control for it is then not offered — an operator
- * pressing a button that cannot do anything learns nothing about the kiosk.
+ * The only thing this page keeps its own copy of, and the light board's screen takes the same
+ * exception for the same reason. A source the driver grows and this has not been named falls back
+ * to the identifier, so it *appears* rather than disappearing — which is the failure that let
+ * `uv3led` go missing when the list itself lived here.
  */
-export const LIGHTS: { value: LightSource; label: string; needs?: string }[] = [
-  { value: "ir", label: "Infrared" },
-  { value: "visible", label: "Visible" },
-  { value: "uv", label: "Ultraviolet", needs: "uvLight" },
-  // The vendor's fourth source: the UV lamp with white light alongside it. Rarely configured, and
-  // gated on the same lamp, but the driver encodes it and the scan settings accept it — a tester
-  // that cannot ask for a source the device has is a tester with a blind spot.
-  { value: "uv3led", label: "UV + visible", needs: "uvLight" },
-];
+const LIGHT_LABELS: Partial<Record<LightSource, string>> = {
+  ir: "Infrared",
+  visible: "Visible",
+  uv: "Ultraviolet",
+  uv3led: "UV + visible",
+};
 
-const RESOLUTIONS: { value: ScanResolution; label: string }[] = [
-  { value: "low", label: "Low" },
-  { value: "default", label: "Default" },
-  { value: "high", label: "High" },
-];
+const RESOLUTION_LABELS: Partial<Record<ScanResolution, string>> = {
+  low: "Low",
+  default: "Default",
+  high: "High",
+};
+
+/** Which capability each source needs. Both ultraviolet sources use the one lamp. */
+const LIGHT_NEEDS: Partial<Record<LightSource, string>> = { uv: "uvLight", uv3led: "uvLight" };
+
+export interface LightChoice {
+  value: LightSource;
+  label: string;
+}
+
+/**
+ * The sources this unit can actually be asked for: what the driver offers, less what it lacks.
+ *
+ * A unit without the UV lamp reports so, and the controls for both ultraviolet sources are then not
+ * offered — an operator pressing a button that cannot do anything learns nothing about the kiosk.
+ */
+export function lightsFor(sources: readonly LightSource[], capabilities: Record<string, boolean>): LightChoice[] {
+  return sources
+    .filter((value) => {
+      const needs = LIGHT_NEEDS[value];
+      return needs === undefined || capabilities[needs] === true;
+    })
+    .map((value) => ({ value, label: LIGHT_LABELS[value] ?? value }));
+}
 
 /** The status-LED colours offered, chosen as the four the tester already draws lamps for. */
 const LED_COLORS = ["green", "yellow", "red", "blue"] as const satisfies readonly StatusLedColor[];
@@ -101,7 +123,7 @@ export function PassportReaderPage(
     guard(api.passportreader.settings({ lights: next }));
   };
 
-  const availableLights = LIGHTS.filter((light) => light.needs === undefined || capabilities[light.needs]);
+  const availableLights = lightsFor(state.vocabulary.lights, capabilities);
 
   return (
     <>
@@ -182,14 +204,14 @@ export function PassportReaderPage(
             <div className="setting">
               <span className="setting-label">Resolution</span>
               <div className="seg" data-enabled={open}>
-                {RESOLUTIONS.map(({ value, label }) => (
+                {state.vocabulary.resolutions.map((value) => (
                   <button
                     key={value}
                     className={state.settings.resolution === value ? "chooser chooser-on" : "chooser"}
                     disabled={!open}
                     onClick={() => guard(api.passportreader.settings({ resolution: value }))}
                   >
-                    {label}
+                    {RESOLUTION_LABELS[value] ?? value}
                   </button>
                 ))}
               </div>

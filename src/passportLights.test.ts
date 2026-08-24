@@ -1,30 +1,44 @@
 import { describe, expect, it } from "vitest";
-import { LIGHTS } from "./PassportReaderPage.tsx";
+import { lightsFor } from "./PassportReaderPage.tsx";
 import type { LightSource } from "./api.ts";
 
 /**
- * Every light source the driver accepts, spelled out.
+ * What the backend serves, which it reads from the driver.
  *
- * Written here rather than derived from `LightSource`, because a type cannot be enumerated at
- * runtime — and this list existing separately is the point: it fails when the driver grows a source
- * the page has not been taught, which is exactly how `uv3led` went missing.
+ * These tests drive `lightsFor` with that list rather than a copy of it kept here, because a copy
+ * is what the earlier version of this file got wrong: it compared one hand-written list against
+ * another and would have stayed green while both drifted from the device.
  */
-const EVERY_SOURCE: LightSource[] = ["ir", "visible", "uv", "uv3led"];
+const FROM_DRIVER: LightSource[] = ["ir", "visible", "uv", "uv3led"];
 
-describe("the light-source controls", () => {
-  it("offers every source the driver accepts", () => {
-    expect(LIGHTS.map((l) => l.value).sort()).toEqual([...EVERY_SOURCE].sort());
+const withUv = { uvLight: true, barcode: true };
+const withoutUv = { uvLight: false, barcode: true };
+const values = (caps: Record<string, boolean>) => lightsFor(FROM_DRIVER, caps).map((l) => l.value);
+
+describe("light-source gating", () => {
+  it("offers every source the driver reports when the lamp is fitted", () => {
+    expect(values(withUv)).toEqual(FROM_DRIVER);
   });
 
-  it("gates both ultraviolet sources on the UV lamp, and neither of the others", () => {
-    const needs = Object.fromEntries(LIGHTS.map((l) => [l.value, l.needs]));
-    expect(needs.uv).toBe("uvLight");
-    expect(needs.uv3led).toBe("uvLight");
-    expect(needs.ir).toBeUndefined();
-    expect(needs.visible).toBeUndefined();
+  it("withholds both ultraviolet sources when the unit has no UV lamp", () => {
+    // The behaviour, not the metadata: deleting the filter makes this fail.
+    expect(values(withoutUv)).toEqual(["ir", "visible"]);
   });
 
-  it("labels each source in words rather than the driver's identifier", () => {
-    for (const { value, label } of LIGHTS) expect(label).not.toBe(value);
+  it("withholds them when the device reported no capabilities at all", () => {
+    // A unit that has not answered yet must not be offered a lamp it may not have.
+    expect(values({})).toEqual(["ir", "visible"]);
+  });
+
+  it("shows a source the driver grew but this page has no name for, rather than hiding it", () => {
+    // The failure that let uv3led go missing: a source nothing here knows about must still appear.
+    const unknown = "newSource" as LightSource;
+    const grown = lightsFor([...FROM_DRIVER, unknown], withUv);
+    expect(grown.map((l) => l.value)).toContain(unknown);
+    expect(grown.find((l) => l.value === unknown)?.label).toBe(unknown);
+  });
+
+  it("names the sources it does know in words rather than identifiers", () => {
+    for (const { value, label } of lightsFor(FROM_DRIVER, withUv)) expect(label).not.toBe(value);
   });
 });

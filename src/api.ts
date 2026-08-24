@@ -227,6 +227,8 @@ export interface MrzRead {
  *  survive JSON, so the decoded text and the length cross instead. */
 export interface WireBarcode {
   found: boolean;
+  /** Present when the payload is not plainly printable — the bytes, so binary is still diagnosable. */
+  hex?: string;
   symbology: string;
   symbologyCode: string;
   text: string;

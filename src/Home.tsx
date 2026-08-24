@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import type { Snapshot } from "./api.ts";
-import { LAMP, lampStyle, usbId } from "./look.ts";
+import { LAMP, lampStyle } from "./look.ts";
+import { usbId } from "./format.ts";
 
 export type View = "home" | "lightboard" | "cardreader" | "passportreader";
 

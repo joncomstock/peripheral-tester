@@ -11,7 +11,8 @@ import type {
   StatusLedColor,
 } from "./api.ts";
 import * as api from "./api.ts";
-import { LAMP, lampStyle, usbId } from "./look.ts";
+import { LAMP, lampStyle } from "./look.ts";
+import { usbId } from "./format.ts";
 import { Card } from "./ui.tsx";
 import { StatusPill } from "./LightBoardPage.tsx";
 
@@ -21,10 +22,14 @@ import { StatusPill } from "./LightBoardPage.tsx";
  * A unit without the UV lamp reports so, and the control for it is then not offered — an operator
  * pressing a button that cannot do anything learns nothing about the kiosk.
  */
-const LIGHTS: { value: LightSource; label: string; needs?: string }[] = [
+export const LIGHTS: { value: LightSource; label: string; needs?: string }[] = [
   { value: "ir", label: "Infrared" },
   { value: "visible", label: "Visible" },
   { value: "uv", label: "Ultraviolet", needs: "uvLight" },
+  // The vendor's fourth source: the UV lamp with white light alongside it. Rarely configured, and
+  // gated on the same lamp, but the driver encodes it and the scan settings accept it — a tester
+  // that cannot ask for a source the device has is a tester with a blind spot.
+  { value: "uv3led", label: "UV + visible", needs: "uvLight" },
 ];
 
 const RESOLUTIONS: { value: ScanResolution; label: string }[] = [
@@ -200,7 +205,7 @@ export function PassportReaderPage(
                     disabled={!open}
                     onClick={() => guard(api.passportreader.led(color))}
                   >
-                    <span style={{ ...lampStyle(LAMP[color], state.led === color ? "on" : "off", 12), marginRight: 8 }} />
+                    <span className="lamp-inline" style={lampStyle(LAMP[color], state.led === color ? "on" : "off", 12)} />
                     {color[0].toUpperCase() + color.slice(1)}
                   </button>
                 ))}
@@ -243,7 +248,7 @@ function PresenceLamp({ present, open }: { present: boolean | null; open: boolea
   if (present === null) return <span className="card-aside">presence unavailable</span>;
   return (
     <span className="card-aside">
-      <span style={{ ...lampStyle(present ? LAMP.green : LAMP.amber, present ? "on" : "off", 12), marginRight: 8 }} />
+      <span className="lamp-inline" style={lampStyle(present ? LAMP.green : LAMP.amber, present ? "on" : "off", 12)} />
       {present ? "document on the glass" : "window clear"}
     </span>
   );
@@ -361,6 +366,8 @@ function BarcodeRow({ barcode }: { barcode: WireBarcode }) {
     <div className="rawstripe">
       <span className="setting-label">Barcode · {barcode.symbology} · {barcode.byteLength} bytes</span>
       <code>{barcode.text}</code>
+      {/* Only present for a payload that is not printable, where the text above is not readable. */}
+      {barcode.hex && <code className="barcode-hex">{barcode.hex}</code>}
     </div>
   );
 }

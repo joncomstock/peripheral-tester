@@ -1081,6 +1081,17 @@ button {
   color: #4a5058;
 }
 
+/* The byte view of a binary barcode, under the unreadable text it explains. */
+.barcode-hex {
+  margin-top: 6px;
+  color: #8d949c;
+}
+
+/* A lamp sitting inline before a label — the gap is static; the lamp itself is computed. */
+.lamp-inline {
+  margin-right: 8px;
+}
+
 .checks {
   padding: 12px var(--pad-x);
   border-top: 1px solid #f2f3f5;

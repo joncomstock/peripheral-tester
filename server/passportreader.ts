@@ -293,6 +293,16 @@ export interface WireBarcode {
   symbologyCode: string;
   text: string;
   byteLength: number;
+  /**
+   * The payload as hex, for a barcode carrying bytes rather than characters.
+   *
+   * `text` cannot stand in for it: the driver renders through windows-1252, so `0x80`-`0x9F` decode
+   * to code points outside the byte range and cannot be read back. The vendor header warns the
+   * payload may be any binary, and a tester that can only show mojibake for one is a tester that
+   * cannot diagnose it. Only sent when the text is not plainly printable, so a boarding pass — which
+   * is ASCII — does not carry a second copy of itself.
+   */
+  hex?: string;
 }
 
 /**
@@ -306,9 +316,27 @@ export interface ReadResult {
   barcode: WireBarcode;
 }
 
-// Spread rather than respelled field by field, so a field added to the driver's `BarcodeRead`
-// reaches the page instead of being silently dropped here.
-const forWire = ({ data: _data, ...rest }: BarcodeRead): WireBarcode => ({ ...rest, byteLength: rest.text.length });
+/**
+ * A barcode, shaped for the wire.
+ *
+ * Spread rather than respelled field by field, so a field added to the driver's `BarcodeRead`
+ * reaches the page instead of being silently dropped here.
+ *
+ * The count is taken from `data`, not from `text.length`. Those happen to be equal — the driver
+ * yields one code point per byte — but that is a decoding choice in another package, and a byte
+ * count depending on it would start reporting characters the day it changed.
+ *
+ * `data` itself does not cross: a `Uint8Array` serialises as an object of numeric keys, which is
+ * neither the bytes nor useful. `hex` carries them instead when the text alone would not.
+ */
+export const forWire = ({ data, ...rest }: BarcodeRead): WireBarcode => ({
+  ...rest,
+  byteLength: data.length,
+  ...(isPlainText(rest.text) ? {} : { hex: [...data].map((b) => b.toString(16).padStart(2, "0")).join(" ") }),
+});
+
+/** Printable ASCII plus tab, newline and carriage return — what a boarding pass is made of. */
+const isPlainText = (text: string) => /^[\t\n\r\x20-\x7e]*$/.test(text);
 
 export async function read(): Promise<ReadResult> {
   const open = held();

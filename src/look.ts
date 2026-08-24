@@ -27,9 +27,6 @@ export const LAMP = {
 
 export const ACCENT = "#2f5fd0";
 
-/** One half of a USB id — vendor or product — as the four lower-case hex digits a device page shows. */
-export const usbId = (value: number) => value.toString(16).padStart(4, "0");
-
 /** Colour of the physical lamp a strip or semaphore control drives. */
 export function lampColor(label: string): string {
   const key = label.toLowerCase() as keyof typeof LAMP;

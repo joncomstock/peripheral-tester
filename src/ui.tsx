@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { LAMP } from "./look.ts";
 
 /**
  * A titled panel.
@@ -27,3 +28,24 @@ export function Card(
     </section>
   );
 }
+
+/** A connection state, worded by whichever device is showing. Shared chrome, not one device's. */
+export function StatusPill(
+  { status, open, opening, shut }: { status: string; open: string; opening: string; shut: string },
+) {
+  const isOpen = status === "open";
+  const isOpening = status === "opening";
+  return (
+    <div className="statuspill">
+      <span
+        className={isOpening ? "statusdot statusdot-opening" : "statusdot"}
+        style={{
+          background: isOpen ? LAMP.green : isOpening ? LAMP.amber : "#c3c9cf",
+          boxShadow: isOpen ? `0 0 6px color-mix(in oklab, ${LAMP.green} 55%, transparent)` : "none",
+        }}
+      />
+      <span>{isOpen ? open : isOpening ? opening : shut}</span>
+    </div>
+  );
+}
+

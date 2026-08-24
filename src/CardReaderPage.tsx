@@ -11,8 +11,8 @@ import type {
 } from "./api.ts";
 import * as api from "./api.ts";
 import { LAMP, lampStyle } from "./look.ts";
-import { Card } from "./ui.tsx";
-import { StatusPill } from "./LightBoardPage.tsx";
+import { Card, StatusPill } from "./ui.tsx";
+
 
 const TRACK_BITS: { bit: number; label: string }[] = [
   { bit: 1, label: "Track 1" },
@@ -33,7 +33,8 @@ function maskPan(pan: string): string {
 }
 
 /** Group into fours so a revealed PAN can be read back against the card in hand. */
-const spaced = (pan: string) => pan.replace(/(.{4})/g, "$1 ").trim();
+const IN_FOURS = /(.{4})/g;
+const spaced = (pan: string) => pan.replace(IN_FOURS, "$1 ").trim();
 
 export function CardReaderPage(
   { state, onFail, aside }: { state: CardReaderState; onFail: (message: string) => void; aside: ReactNode },
@@ -133,11 +134,10 @@ export function CardReaderPage(
             <div className="setting">
               <span className="setting-label">Read direction</span>
               <div className="seg" data-enabled={open}>
-                {DIRECTIONS.map(({ value, label }, index) => (
+                {DIRECTIONS.map(({ value, label }) => (
                   <button
                     key={value}
                     className={transaction.direction === value ? "chooser chooser-on" : "chooser"}
-                    style={index === 0 ? undefined : { borderLeft: "1px solid #e2e6ea" }}
                     disabled={!open}
                     onClick={() => guard(api.cardreader.settings({ direction: value }))}
                   >
@@ -150,11 +150,10 @@ export function CardReaderPage(
             <div className="setting">
               <span className="setting-label">Tracks</span>
               <div className="seg" data-enabled={open}>
-                {TRACK_BITS.map(({ bit, label }, index) => (
+                {TRACK_BITS.map(({ bit, label }) => (
                   <button
                     key={bit}
                     className={(transaction.tracks & bit) !== 0 ? "chooser chooser-on" : "chooser"}
-                    style={index === 0 ? undefined : { borderLeft: "1px solid #e2e6ea" }}
                     disabled={!open}
                     onClick={() => setTracks(bit)}
                   >
@@ -176,7 +175,6 @@ export function CardReaderPage(
                 </button>
                 <button
                   className={transaction.pullOutLock ? "chooser chooser-on" : "chooser"}
-                  style={{ borderLeft: "1px solid #e2e6ea" }}
                   disabled={!open}
                   onClick={() => guard(api.cardreader.settings({ pullOutLock: !transaction.pullOutLock }))}
                 >
@@ -199,7 +197,6 @@ export function CardReaderPage(
                 <span className="stepper-value">{state.seconds}s</span>
                 <button
                   className="chooser"
-                  style={{ borderLeft: "1px solid #e2e6ea" }}
                   disabled={!open}
                   onClick={() => guard(api.cardreader.settings({ seconds: state.seconds + 5 }))}
                   aria-label="more time"
@@ -231,7 +228,6 @@ export function CardReaderPage(
                 */}
                 <button
                   className={state.shutter === "unlocked" ? "chooser chooser-on" : "chooser"}
-                  style={{ borderLeft: "1px solid #e2e6ea" }}
                   disabled={!open}
                   onClick={() => guard(api.cardreader.shutter("unlocked"))}
                 >
@@ -248,11 +244,10 @@ export function CardReaderPage(
                 </span>
               </span>
               <div className="seg" data-enabled={open}>
-                {(["manual", "automatic"] as LedControlMode[]).map((mode, index) => (
+                {(["manual", "automatic"] as LedControlMode[]).map((mode) => (
                   <button
                     key={mode}
                     className={state.ledMode === mode ? "chooser chooser-on" : "chooser"}
-                    style={index === 0 ? undefined : { borderLeft: "1px solid #e2e6ea" }}
                     disabled={!open}
                     onClick={() => guard(api.cardreader.ledMode(mode))}
                   >
@@ -265,11 +260,10 @@ export function CardReaderPage(
             <div className="setting">
               <span className="setting-label">Indicator</span>
               <div className="seg" data-enabled={open}>
-                {(["green", "orange", "red"] as LedColor[]).map((color, index) => (
+                {(["green", "orange", "red"] as LedColor[]).map((color) => (
                   <button
                     key={color}
                     className={state.led === color ? "chooser chooser-on" : "chooser"}
-                    style={index === 0 ? undefined : { borderLeft: "1px solid #e2e6ea" }}
                     disabled={!open}
                     onClick={() => guard(api.cardreader.led(color, blinkLed))}
                   >
@@ -279,7 +273,6 @@ export function CardReaderPage(
                 ))}
                 <button
                   className={state.led === "off" ? "chooser chooser-on" : "chooser"}
-                  style={{ borderLeft: "1px solid #e2e6ea" }}
                   disabled={!open}
                   onClick={() => guard(api.cardreader.led("off"))}
                 >
@@ -287,7 +280,6 @@ export function CardReaderPage(
                 </button>
                 <button
                   className={state.ledBlinking ? "chooser chooser-on" : "chooser"}
-                  style={{ borderLeft: "1px solid #e2e6ea" }}
                   disabled={!open}
                   onClick={() => setBlinkLed((was) => !was)}
                   aria-pressed={blinkLed}

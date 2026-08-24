@@ -5,7 +5,7 @@ import * as api from "./api.ts";
 import type { Commanded, Control } from "./lightboardControls.ts";
 import { controlsFor, fullName, modeOf, requestFor, towerMode } from "./lightboardControls.ts";
 import { LAMP, lampColor, lampStyle, segStyle, stripPreviewStyle } from "./look.ts";
-import { Card } from "./ui.tsx";
+import { Card, StatusPill } from "./ui.tsx";
 
 /**
  * The light board's controls.
@@ -191,25 +191,6 @@ export function LightBoardControls(
         All Off
       </button>
     </>
-  );
-}
-
-export function StatusPill(
-  { status, open, opening, shut }: { status: string; open: string; opening: string; shut: string },
-) {
-  const isOpen = status === "open";
-  const isOpening = status === "opening";
-  return (
-    <div className="statuspill">
-      <span
-        className={isOpening ? "statusdot statusdot-opening" : "statusdot"}
-        style={{
-          background: isOpen ? LAMP.green : isOpening ? LAMP.amber : "#c3c9cf",
-          boxShadow: isOpen ? `0 0 6px color-mix(in oklab, ${LAMP.green} 55%, transparent)` : "none",
-        }}
-      />
-      <span>{isOpen ? open : isOpening ? opening : shut}</span>
-    </div>
   );
 }
 

@@ -476,6 +476,18 @@ button {
   border-left: 1px solid #e2e6ea;
 }
 
+/*
+ * The stepper puts a value between its two buttons, so `button + button` does not reach across it.
+ * Both edges of that value need their own divider or the group loses one.
+ */
+.seg .stepper-value + button {
+  border-left: 1px solid #e2e6ea;
+}
+
+.seg[data-enabled="false"] .stepper-value + button {
+  border-left-color: #ebedf0;
+}
+
 .seg[data-enabled="false"] button + button {
   border-left-color: #ebedf0;
 }

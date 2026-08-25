@@ -1,4 +1,5 @@
 import type { LogEntry, Snapshot } from "./api.ts";
+import { useDialog } from "./dialog.ts";
 import { Activity } from "./Activity.tsx";
 import type { DeviceId } from "./devices.ts";
 import { busLine, deviceEntry, isLive, verdict, WIRED } from "./devices.ts";
@@ -34,10 +35,11 @@ export function Drawer(
   },
 ) {
   // Escape is handled once, in `App`, because it has to close the settings panel before this.
+  const panel = useDialog<HTMLDivElement>();
   return (
     <div className="drawer-layer">
-      <button className="drawer-scrim" onClick={onClose} aria-label="Close" />
-      <div className="drawer" role="dialog" aria-modal="true" aria-label="Activity and bus">
+      <button className="drawer-scrim" onClick={onClose} aria-label="Close the drawer" />
+      <div className="drawer" role="dialog" aria-modal="true" aria-label="Activity and bus" ref={panel}>
         <div className="drawer-head">
           <div className="seg seg--small" data-enabled="true">
             <button className={tab === "activity" ? "chooser chooser-on" : "chooser"} onClick={() => onTab("activity")}>
@@ -106,7 +108,7 @@ function Bus(
         });
         return (
           <div className="bus-row" key={id}>
-            <span style={lampStyle(color, mode, 14)} />
+            <span data-lamp="" style={lampStyle(color, mode, 14)} />
             <span className="bus-address">{busLine(snapshot, id)}</span>
             <span className="bus-name">{deviceEntry(id).model}</span>
             <span className={badgeClass(tone)}>{glyph(tone)}{text}</span>

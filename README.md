@@ -62,6 +62,11 @@ ambient-light and OCR-source settings are the ones the next scan will use. Contr
 honour are not offered — a scanner without the UV lamp says so, and the ultraviolet option is then
 absent rather than dead.
 
+**The keyboard** — `1`–`8` open a device, `[` collapses the rail, `Enter` fires whichever action
+the open screen draws as primary, `Esc` closes whatever is on top, and `?` lists all of it. No
+modifiers: this is driven one-handed while the other hand holds a card. The theme, the rail and the
+device you were on are remembered, because a kiosk reloads whenever anyone restarts the backend.
+
 **Health sweep** — opens and handshakes every wired device in turn without driving it, and reports
 what each said for itself. It uses the same `connect` the screens do, so a pass means the handle was
 genuinely claimed. A device you already have open is left open. The **Bus** tab lists what the
@@ -232,6 +237,7 @@ backend attaches a log handler so those land in **Activity** instead, quoted ver
 | `server/passportreader.ts`   | The passport reader session. Owns the loaded `PageScanAPI.dll`. |
 | `server/collisions.ts`       | Which indicator channels two sections share, from the live map. |
 | `src/api.ts`                 | The wire contract: every type and every call the page makes.    |
+| `src/main.tsx`               | The entry point, and the self-hosted fonts.                     |
 | `src/App.tsx`                | The shell: which device is on screen, and the shared state.     |
 | `src/ui.tsx`                 | The connection strip, the card, and the rows they are built of. |
 | `src/devices.ts`             | Which peripherals a 919 has, and which have a screen.           |
@@ -244,7 +250,9 @@ backend attaches a log handler so those land in **Activity** instead, quoted ver
 | `src/Activity.tsx`           | The log, with its scope and issues filters.                     |
 | `src/sweep.ts`               | The health sweep, over the same `connect` the screens use.      |
 | `src/Toasts.tsx`             | Transient confirmations for effects that are off screen.        |
-| `src/theme.ts`               | Light or dark, remembered per machine.                          |
+| `src/prefs.ts`               | Theme, rail and open device, remembered per machine.            |
+| `src/dialog.ts`              | Focus trap and focus return, shared by all three overlays.      |
+| `src/pending.ts`             | Which commands are in flight, so a control can say it is busy.  |
 | `src/download.ts`            | JSON export. Activity only — never a read's contents.           |
 | `src/lightboardControls.ts`  | Vocabulary → controls, and the naming rule the page uses.       |
 | `src/format.ts`              | Display formatting shared by the screens.                       |

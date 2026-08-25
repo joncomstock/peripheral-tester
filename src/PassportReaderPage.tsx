@@ -14,7 +14,8 @@ import * as api from "./api.ts";
 import { badgeClass, glyph, LAMP, lampColor, lampStyle, segStyle } from "./look.ts";
 import type { Tone } from "./look.ts";
 import { clockTime, usbId } from "./format.ts";
-import { Card, DeviceBar, Row, Stepper } from "./ui.tsx";
+import { useCommands } from "./pending.ts";
+import { Card, DeviceBar, Row, Stepper, Tip } from "./ui.tsx";
 
 /**
  * Operator-facing names for the driver's identifiers.
@@ -90,6 +91,10 @@ export function lightsFor(sources: readonly LightSource[], capabilities: Record<
     .map((value) => ({ value, label: LIGHT_LABELS[value] ?? value }));
 }
 
+/** Said in one place, because a tooltip and an accessible label must not drift apart. */
+const MRZ_NEEDS_SCAN = "ReadOcrPc reads the held infrared scan — scan first, or move the OCR to the device";
+const IR_LOCKED = "Infrared is the image ReadOcrPc reads";
+
 /** Everything but the last two characters, hidden. */
 function mask(value: string): string {
   if (value.length <= 2) return value;
@@ -97,10 +102,12 @@ function mask(value: string): string {
 }
 
 export function PassportReaderPage(
-  { state, onFail, toast }: {
+  { state, onFail, toast, progress }: {
     state: PassportReaderState;
     onFail: (message: string) => void;
     toast: (text: string, tone?: Tone) => void;
+    /** The device's newest log line, shown while it opens. See `DeviceBar`. */
+    progress?: string;
   },
 ) {
   const [mrz, setMrz] = useState<MrzRead | null>(null);
@@ -131,7 +138,9 @@ export function PassportReaderPage(
   const opening = state.status === "opening";
   const capabilities = state.device?.capabilities ?? {};
   const settings = state.settings;
-  const guard = (work: Promise<unknown>) => work.catch((err: Error) => onFail(err.message));
+  /** Posting a command and saying so while it is in the air — see `useCommands`. */
+  // `busy` and `waiting` are already taken on this page, by the read and the document wait.
+  const { send, seg, busy: inFlight } = useCommands(open, onFail);
 
   /**
    * Forget everything read from the document that was on the glass.
@@ -300,7 +309,7 @@ export function PassportReaderPage(
       toast("Infrared must stay on while the OCR runs on the PC — it is the image it reads", "warn");
       return;
     }
-    guard(api.passportreader.settings({ lights: next }));
+    send("lights", api.passportreader.settings({ lights: next }));
   };
 
   /**
@@ -329,6 +338,32 @@ export function PassportReaderPage(
 
   const availableLights = lightsFor(state.vocabulary.lights, capabilities);
   const hasResult = mrz !== null || barcode !== null;
+
+  /**
+   * What the read produced, in a sentence, carrying nothing that was on the document.
+   *
+   * The layout and whether the check digits verified — which is what the operator is listening
+   * for — never the name, the number or the date of birth.
+   */
+  const announcement = !hasResult ? "" : [
+    mrz?.recognized
+      ? `MRZ read — ${mrz.fields?.format ?? "layout not recognised"}, ${
+        mrz.fields ? (mrz.fields.allChecksValid ? "every check digit verified" : "a check digit failed") : "not parsed"
+      }`
+      : mrz
+      ? "No machine-readable zone recognised"
+      : undefined,
+    barcode?.found ? `barcode ${barcode.symbology}, ${barcode.byteLength} bytes` : barcode ? "no barcode" : undefined,
+  ].filter(Boolean).join(" · ");
+
+  /*
+   * A read that produced nothing trustworthy interrupts.
+   *
+   * Both cases: the engine recognised no zone at all, and a zone whose check digits do not verify
+   * — the second matters more, not less, because it looks like a successful read until someone
+   * notices the number is wrong. Neither reaches a toast, so this is the only announcement of it.
+   */
+  const failed = !!mrz && (!mrz.recognized || (!!mrz.fields && !mrz.fields.allChecksValid));
   /**
    * Whether the presentation card carries a number.
    *
@@ -357,16 +392,26 @@ export function PassportReaderPage(
         status={state.status}
         open={state.device ? `Connected · ${state.device.deviceType}` : "Connected"}
         opening="Opening scanner"
+        progress={progress}
         shut="Not connected"
         hint="Connect to load PageScanAPI.dll and enable the read calls"
       >
         <button
           className="button"
           disabled={!open || busy}
+          {...inFlight("reset")}
+          /*
+           * The toast is inside the promise handed to `send`, not chained after it: `send` reports
+           * a refusal and resolves, so a `.then` on the outside would announce a successful reset
+           * after a failed one.
+           */
           onClick={() =>
-            api.passportreader.reset()
-              .then(() => toast("Device reset — connection kept, scan settings re-applied", "warn"))
-              .catch((err: Error) => onFail(err.message))}
+            send(
+              "reset",
+              api.passportreader.reset().then(() =>
+                toast("Device reset — connection kept, scan settings re-applied", "warn")
+              ),
+            )}
         >
           Reset
         </button>
@@ -386,23 +431,34 @@ export function PassportReaderPage(
 
             <div className="actions">
               <button className="button button--primary" onClick={readDocument} disabled={!open || busy}>Read document</button>
-              <button
-                className={waiting ? "button button--strong" : "button"}
-                onClick={() => setWaiting((was) => !was)}
-                disabled={!open || busy || state.documentPresent === null}
-                title={state.documentPresent === null ? "This unit cannot report document presence" : undefined}
-              >
-                {waiting ? "Stop waiting" : "Wait for document"}
-              </button>
+              {/*
+                * Wrapped, not `title`-ed: a disabled button fires no tooltip in most browsers, so
+                * the one explanation that matters never appeared. The wrapper takes the hover and
+                * the label carries the same words for a screen reader.
+                */}
+              <Tip tip={state.documentPresent === null ? "This unit cannot report document presence" : undefined}>
+                <button
+                  className={waiting ? "button button--strong" : "button"}
+                  onClick={() => setWaiting((was) => !was)}
+                  disabled={!open || busy || state.documentPresent === null}
+                  aria-label={state.documentPresent === null
+                    ? "Wait for document — unavailable: this unit cannot report document presence"
+                    : undefined}
+                >
+                  {waiting ? "Stop waiting" : "Wait for document"}
+                </button>
+              </Tip>
               <button className="button" onClick={scan} disabled={!open || busy}>Scan</button>
-              <button
-                className="button"
-                onClick={readMrz}
-                disabled={!open || busy || !mrzReadable}
-                title={mrzReadable ? undefined : "ReadOcrPc reads the held infrared scan — scan first, or move the OCR to the device"}
-              >
-                Read MRZ
-              </button>
+              <Tip tip={mrzReadable ? undefined : MRZ_NEEDS_SCAN}>
+                <button
+                  className="button"
+                  onClick={readMrz}
+                  disabled={!open || busy || !mrzReadable}
+                  aria-label={mrzReadable ? undefined : `Read MRZ — unavailable: ${MRZ_NEEDS_SCAN}`}
+                >
+                  Read MRZ
+                </button>
+              </Tip>
               <button className="button" onClick={readBarcode} disabled={!open || busy}>Read barcode</button>
               {/* Enabled for anything on screen, not only a recognised result: after a bare Scan
                   there is still a retrieved image and a duration, and this is what clears them. */}
@@ -411,19 +467,22 @@ export function PassportReaderPage(
               </button>
             </div>
 
+            {/* On the group: the four buttons set one thing. */}
             {state.mock && (
               <div className="simrow">
                 <span className="simrow-label">Simulate · next scan</span>
-                {(Object.keys(ARM_LABELS) as NextScan[]).map((next) => (
-                  <button
-                    key={next}
-                    className="button button--small"
-                    disabled={!open}
-                    onClick={() => guard(api.passportreader.arm(next))}
-                  >
-                    {ARM_LABELS[next]}
-                  </button>
-                ))}
+                <span className="run" {...inFlight("arm")}>
+                  {(Object.keys(ARM_LABELS) as NextScan[]).map((next) => (
+                    <button
+                      key={next}
+                      className="button button--small"
+                      disabled={!open}
+                      onClick={() => send("arm", api.passportreader.arm(next))}
+                    >
+                      {ARM_LABELS[next]}
+                    </button>
+                  ))}
+                </span>
               </div>
             )}
           </Card>
@@ -440,6 +499,11 @@ export function PassportReaderPage(
               )
               : undefined}
           >
+            {/* The outcome, not the panel — see the card reader: a live region around the fields
+                spoke the document number aloud the moment Reveal was pressed. */}
+            <p className="visually-hidden" role="status">{failed ? "" : announcement}</p>
+            {/* See the card reader: politeness is fixed when the region is created. */}
+            <p className="visually-hidden" role="alert">{failed ? announcement : ""}</p>
             {hasResult || state.scanned
               ? (
                 <>
@@ -510,35 +574,39 @@ export function PassportReaderPage(
 
           <Card title="Scan settings" aside="Applied on the next scan" quiet>
             <Row label="Light sources">
-              <div className="seg" data-enabled={open}>
-                {availableLights.map((light) => (
-                  <button
-                    key={light.value}
-                    className="chooser"
-                    style={segStyle({
-                      active: settings.lights.includes(light.value),
-                      enabled: open && !(irRequired && light.value === "ir"),
-                      tint: light.value.startsWith("uv") ? LAMP.blue : undefined,
-                    })}
-                    disabled={!open || (irRequired && light.value === "ir")}
-                    title={irRequired && light.value === "ir" ? "Infrared is the image ReadOcrPc reads" : undefined}
-                    onClick={() => toggleLight(light.value)}
-                  >
-                    {light.label}
-                  </button>
-                ))}
+              <div {...seg("lights")}>
+                {availableLights.map((light) => {
+                  const locked = irRequired && light.value === "ir";
+                  return (
+                    <Tip key={light.value} tip={locked ? IR_LOCKED : undefined}>
+                      <button
+                        className="chooser"
+                        style={segStyle({
+                          active: settings.lights.includes(light.value),
+                          enabled: open && !locked,
+                          tint: light.value.startsWith("uv") ? LAMP.blue : undefined,
+                        })}
+                        disabled={!open || locked}
+                        aria-label={locked ? `${light.label} — locked on: ${IR_LOCKED}` : undefined}
+                        onClick={() => toggleLight(light.value)}
+                      >
+                        {light.label}
+                      </button>
+                    </Tip>
+                  );
+                })}
               </div>
             </Row>
 
             <Row label="Resolution">
-              <div className="seg" data-enabled={open}>
+              <div {...seg("resolution")}>
                 {state.vocabulary.resolutions.map((value) => (
                   <button
                     key={value}
                     className="chooser"
                     style={segStyle({ active: settings.resolution === value, enabled: open })}
                     disabled={!open}
-                    onClick={() => guard(api.passportreader.settings({ resolution: value }))}
+                    onClick={() => send("resolution", api.passportreader.settings({ resolution: value }))}
                   >
                     {RESOLUTION_LABELS[value] ?? value}
                   </button>
@@ -547,14 +615,14 @@ export function PassportReaderPage(
             </Row>
 
             <Row label="Ambient light elimination">
-              <div className="seg" data-enabled={open}>
+              <div {...seg("ale")}>
                 {([[true, "On"], [false, "Off"]] as const).map(([on, label]) => (
                   <button
                     key={label}
                     className="chooser"
                     style={segStyle({ active: settings.ambientLightElimination === on, off: !on, enabled: open })}
                     disabled={!open}
-                    onClick={() => guard(api.passportreader.settings({ ambientLightElimination: on }))}
+                    onClick={() => send("ale", api.passportreader.settings({ ambientLightElimination: on }))}
                   >
                     {label}
                   </button>
@@ -563,14 +631,14 @@ export function PassportReaderPage(
             </Row>
 
             <Row label="OCR runs on" chip={settings.source === "pc" ? "ReadOcrPc" : "ReadOcrDevice"}>
-              <div className="seg" data-enabled={open}>
+              <div {...seg("source")}>
                 {([["pc", "PC"], ["device", "Device"]] as const).map(([source, label]) => (
                   <button
                     key={source}
                     className="chooser"
                     style={segStyle({ active: settings.source === source, enabled: open })}
                     disabled={!open}
-                    onClick={() => guard(api.passportreader.settings({ source: source as OcrSource }))}
+                    onClick={() => send("source", api.passportreader.settings({ source: source as OcrSource }))}
                   >
                     {label}
                   </button>
@@ -629,6 +697,7 @@ export function PassportReaderPage(
           <Card title="Status LED & buzzer" quiet>
             <div className="lamprow">
               <span
+                data-lamp=""
                 style={lampStyle(
                   lampColor(state.led),
                   state.led === "off" || !open ? "off" : state.ledUsage === "flashing" ? "blink" : "on",
@@ -641,14 +710,15 @@ export function PassportReaderPage(
                 * driver's, served with the lights and resolutions, so a colour the vendor adds
                 * appears here without this file being edited.
                 */}
-              <div className="picker">
+              {/* On the group, not each button: one round trip is one bar, the way a `.seg` gets one. */}
+              <div className="picker" {...inFlight("led")}>
                 {state.vocabulary.ledColors.map((color) => (
                   <button
                     key={color}
                     className="picker-item"
                     style={segStyle({ active: state.led === color, enabled: open, tint: lampColor(color) })}
                     disabled={!open}
-                    onClick={() => guard(api.passportreader.led(color))}
+                    onClick={() => send("led", api.passportreader.led(color))}
                   >
                     {color[0].toUpperCase() + color.slice(1)}
                   </button>
@@ -657,7 +727,7 @@ export function PassportReaderPage(
                   className="picker-item"
                   style={segStyle({ active: state.led === "off", off: true, enabled: open })}
                   disabled={!open}
-                  onClick={() => guard(api.passportreader.led("off"))}
+                  onClick={() => send("led", api.passportreader.led("off"))}
                 >
                   Off
                 </button>
@@ -665,14 +735,14 @@ export function PassportReaderPage(
             </div>
 
             <Row label="Usage">
-              <div className="seg" data-enabled={open}>
+              <div {...seg("usage")}>
                 {([["permanent", "Permanent"], ["flashing", "Flashing"]] as const).map(([usage, label]) => (
                   <button
                     key={usage}
                     className="chooser"
                     style={segStyle({ active: state.ledUsage === usage, enabled: open })}
                     disabled={!open}
-                    onClick={() => guard(api.passportreader.led(state.led, usage))}
+                    onClick={() => send("usage", api.passportreader.led(state.led, usage))}
                   >
                     {label}
                   </button>
@@ -683,14 +753,20 @@ export function PassportReaderPage(
             <Row label="Buzzer">
               {/* Changing the number is a setting; sounding it is the button beside it. */}
               <Stepper
+                {...inFlight("buzzer")}
                 value={`${state.buzzerMs} ms`}
                 enabled={open}
                 less="shorter"
                 more="longer"
-                onLess={() => guard(api.passportreader.settings({ buzzerMs: state.buzzerMs - 100 }))}
-                onMore={() => guard(api.passportreader.settings({ buzzerMs: state.buzzerMs + 100 }))}
+                onLess={() => send("buzzer", api.passportreader.settings({ buzzerMs: state.buzzerMs - 100 }))}
+                onMore={() => send("buzzer", api.passportreader.settings({ buzzerMs: state.buzzerMs + 100 }))}
               />
-              <button className="button button--small" disabled={!open} onClick={() => guard(api.passportreader.buzz())}>
+              <button
+                className="button button--small"
+                {...inFlight("sound")}
+                disabled={!open}
+                onClick={() => send("sound", api.passportreader.buzz())}
+              >
                 Sound
               </button>
             </Row>
@@ -729,6 +805,7 @@ function Phase({ state, waiting, busy }: { state: PassportReaderState; waiting: 
   return (
     <div className={waiting || busy ? "phase phase--active" : "phase"}>
       <span
+        data-lamp=""
         style={lampStyle(
           waiting || busy ? LAMP.amber : LAMP.green,
           waiting || busy ? "blink" : open && present ? "on" : "off",

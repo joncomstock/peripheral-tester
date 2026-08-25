@@ -34,7 +34,7 @@ export function Rail(
         <button
           className="rail-toggle"
           onClick={onToggle}
-          title={collapsed ? "Expand the device rail" : "Collapse the device rail"}
+          data-tip={collapsed ? "Expand the device rail" : "Collapse the device rail"}
           aria-label={collapsed ? "Expand the device rail" : "Collapse the device rail"}
         >
           {collapsed ? "»" : "«"}
@@ -49,6 +49,7 @@ export function Rail(
             selected={entry.id === current}
             result={isWired(entry.id) ? results[entry.id] : undefined}
             testing={testing === entry.id}
+            collapsed={collapsed}
             onOpen={onOpen}
           />
         ))}
@@ -58,12 +59,14 @@ export function Rail(
 }
 
 function RailRow(
-  { entry, snapshot, selected, result, testing, onOpen }: {
+  { entry, snapshot, selected, result, testing, collapsed, onOpen }: {
     entry: DeviceEntry;
     snapshot: Snapshot;
     selected: boolean;
     result?: { pass: boolean; detail: string };
     testing: boolean;
+    /** Collapsed hides the name, so it has to come back as something focus can reach. */
+    collapsed: boolean;
     onOpen: (id: DeviceId) => void;
   },
 ) {
@@ -78,9 +81,15 @@ function RailRow(
       className={selected ? "rail-row rail-row--on" : "rail-row"}
       onClick={() => onOpen(entry.id)}
       aria-current={selected ? "true" : undefined}
-      title={`${entry.name} · ${entry.model} · ${text}`}
+      aria-label={`${entry.name} · ${entry.model} · ${text}`}
+      /*
+       * Collapsed, the name is gone from the row and two initials are all that is left. A `title`
+       * was carrying it, which meant it did not exist for a keyboard or a touch screen — and this
+       * runs on both. Expanded, the name is on the row and a tooltip repeating it is noise.
+       */
+      data-tip={collapsed ? `${entry.name} · ${entry.model}` : undefined}
     >
-      <span style={lampStyle(color, mode, 14)} />
+      <span data-lamp="" style={lampStyle(color, mode, 14)} />
       <span className="rail-initials">{initials}</span>
       <span className="rail-text">
         <span className="rail-name">{entry.name}</span>

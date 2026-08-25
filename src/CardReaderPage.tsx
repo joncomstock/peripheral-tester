@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { CardData, CardReaderState, NextOutcome, ReadDirection, ReadResult } from "./api.ts";
 import * as api from "./api.ts";
 import { usbId } from "./format.ts";
+import { useCommands } from "./pending.ts";
 import { LAMP, lampColor, lampStyle, segStyle } from "./look.ts";
 import type { Tone } from "./look.ts";
 import { Card, DeviceBar, Row, Stepper } from "./ui.tsx";
@@ -63,10 +64,12 @@ export function maskStripe(raw: string, pans: readonly (string | undefined)[]): 
 const CYCLE_FLOOR_MS = 250;
 
 export function CardReaderPage(
-  { state, onFail, toast }: {
+  { state, onFail, toast, progress }: {
     state: CardReaderState;
     onFail: (message: string) => void;
     toast: (text: string, tone?: Tone) => void;
+    /** The device's newest log line, shown while it opens. See `DeviceBar`. */
+    progress?: string;
   },
 ) {
   const [card, setCard] = useState<CardData | null>(null);
@@ -81,7 +84,9 @@ export function CardReaderPage(
   const opening = state.status === "opening";
   const { transaction } = state;
 
-  const guard = (work: Promise<unknown>) => work.catch((err: Error) => onFail(err.message));
+  /** Posting a command and saying so while it is in the air — see `useCommands`. */
+  // `busy` is already this page's read-in-flight flag, so the helper takes the other name.
+  const { send, seg, busy: waiting } = useCommands(open, onFail);
 
   // A closed reader is not listening, and nothing it read is still on the device.
   useEffect(() => {
@@ -135,7 +140,7 @@ export function CardReaderPage(
   const stop = () => {
     listen.current = false;
     setListening(false);
-    return guard(api.cardreader.cancel());
+    return send("cancel", api.cardreader.cancel());
   };
 
   /**
@@ -179,10 +184,25 @@ export function CardReaderPage(
       toast("At least one track must stay selected", "warn");
       return;
     }
-    guard(api.cardreader.settings({ tracks: next }));
+    send("tracks", api.cardreader.settings({ tracks: next }));
   };
 
   const monitoring = busy;
+
+  /** What a read produced, in a sentence, carrying nothing that was on the card. */
+  const announcement = card
+    ? `Card read — ${
+      [card.track1 && "track 1", card.track2 && "track 2"].filter(Boolean).join(" and ") || "no track decoded"
+    }`
+    : verdictFor(outcome, open, busy).title;
+  /*
+   * A card that was present and would not decode interrupts; everything else waits its turn.
+   *
+   * It is the one outcome that reaches no toast — the request succeeded, the *device* did not —
+   * so without this the only failure on the screen was also the only one announced politely. A
+   * timeout is not a failure: no card arrived, which is a thing that happens.
+   */
+  const failed = outcome === "readFailed";
 
   return (
     <>
@@ -197,10 +217,11 @@ export function CardReaderPage(
         status={state.status}
         open="Connected · reader claimed"
         opening="Opening reader"
+        progress={progress}
         shut="Not connected"
         hint="Connect to enable the transaction calls"
       >
-        <button className="button" onClick={stop} disabled={!open}>Cancel</button>
+        <button className="button" {...waiting("cancel")} onClick={stop} disabled={!open}>Cancel</button>
         <button className={open ? "button button--strong" : "button button--primary"} onClick={toggle} disabled={opening}>
           {open ? "Disconnect" : opening ? "Opening…" : "Connect"}
         </button>
@@ -211,6 +232,7 @@ export function CardReaderPage(
           <Card title="Read control" aside={<code>{state.literals.monitor}</code>} quiet>
             <div className={monitoring ? "phase phase--active" : "phase"}>
               <span
+                data-lamp=""
                 style={lampStyle(
                   monitoring ? LAMP.amber : outcome === "readFailed" ? LAMP.red : LAMP.green,
                   monitoring ? "blink" : open && outcome ? "on" : "off",
@@ -244,27 +266,40 @@ export function CardReaderPage(
               >
                 {listening ? "Stop listening" : "Listen"}
               </button>
-              <button className="button" onClick={() => guard(api.cardreader.clear())} disabled={!open || busy}>
+              <button
+                className="button"
+                {...waiting("clear")}
+                onClick={() => send("clear", api.cardreader.clear())}
+                disabled={!open || busy}
+              >
                 Clear read data
               </button>
-              <button className="button" onClick={() => guard(api.cardreader.reset())} disabled={!open || busy}>
+              <button
+                className="button"
+                {...waiting("reset")}
+                onClick={() => send("reset", api.cardreader.reset())}
+                disabled={!open || busy}
+              >
                 Initial reset
               </button>
             </div>
 
+            {/* On the group: the three buttons set one thing, so one round trip is one bar. */}
             {state.mock && (
               <div className="simrow">
                 <span className="simrow-label">Simulate · next read</span>
-                {(Object.keys(ARM_LABELS) as NextOutcome[]).map((next) => (
-                  <button
-                    key={next}
-                    className="button button--small"
-                    disabled={!open}
-                    onClick={() => guard(api.cardreader.arm(next))}
-                  >
-                    {ARM_LABELS[next]}
-                  </button>
-                ))}
+                <span className="run" {...waiting("arm")}>
+                  {(Object.keys(ARM_LABELS) as NextOutcome[]).map((next) => (
+                    <button
+                      key={next}
+                      className="button button--small"
+                      disabled={!open}
+                      onClick={() => send("arm", api.cardreader.arm(next))}
+                    >
+                      {ARM_LABELS[next]}
+                    </button>
+                  ))}
+                </span>
               </div>
             )}
           </Card>
@@ -272,6 +307,7 @@ export function CardReaderPage(
           <Card
             title="Card data"
             grow={1}
+            aside={card ? undefined : "Nothing read yet"}
             action={card
               ? (
                 <button className="pill card-head-action" onClick={() => setReveal((was) => !was)}>
@@ -280,19 +316,32 @@ export function CardReaderPage(
               )
               : undefined}
           >
+            {/*
+              * The *outcome* is announced, not the panel.
+              *
+              * A live region around the card data spoke the PAN aloud the moment Reveal was
+              * pressed — on a kiosk, in a terminal, for a reason that is usually "show it to the
+              * person next to me". What a screen reader needs is that a read landed and how it
+              * decoded; the number itself is there to be navigated to, deliberately, like the
+              * button that unmasked it.
+              */}
+            <p className="visually-hidden" role="status">{failed ? "" : announcement}</p>
+            {/* Two nodes, not one with a switched `aria-live`: politeness is read when the region
+                is created, so flipping it on an existing one is not reliably honoured. */}
+            <p className="visually-hidden" role="alert">{failed ? announcement : ""}</p>
             {card ? <CardPanel card={card} reveal={reveal} /> : <Empty outcome={outcome} open={open} busy={busy} />}
           </Card>
 
           <Card title="Transaction settings" aside={<code>{state.literals.prepare}</code>} quiet>
             <Row label="Read direction">
-              <div className="seg" data-enabled={open}>
+              <div {...seg("direction")}>
                 {DIRECTIONS.map(({ value, label }) => (
                   <button
                     key={value}
                     className="chooser"
                     style={segStyle({ active: transaction.direction === value, enabled: open })}
                     disabled={!open}
-                    onClick={() => guard(api.cardreader.settings({ direction: value }))}
+                    onClick={() => send("direction", api.cardreader.settings({ direction: value }))}
                   >
                     {label}
                   </button>
@@ -301,7 +350,7 @@ export function CardReaderPage(
             </Row>
 
             <Row label="ISO tracks" chip={state.literals.read}>
-              <div className="seg" data-enabled={open}>
+              <div {...seg("tracks")}>
                 {TRACK_BITS.map(({ bit, label }) => (
                   <button
                     key={bit}
@@ -318,12 +367,12 @@ export function CardReaderPage(
             </Row>
 
             <Row label="Hold the card">
-              <div className="seg" data-enabled={open}>
+              <div {...seg("locks")}>
                 <button
                   className="chooser"
                   style={segStyle({ active: transaction.insertionLock, enabled: open, tint: LAMP.amber })}
                   disabled={!open}
-                  onClick={() => guard(api.cardreader.settings({ insertionLock: !transaction.insertionLock }))}
+                  onClick={() => send("locks", api.cardreader.settings({ insertionLock: !transaction.insertionLock }))}
                 >
                   On insertion
                 </button>
@@ -331,7 +380,7 @@ export function CardReaderPage(
                   className="chooser"
                   style={segStyle({ active: transaction.pullOutLock, enabled: open, tint: LAMP.amber })}
                   disabled={!open}
-                  onClick={() => guard(api.cardreader.settings({ pullOutLock: !transaction.pullOutLock }))}
+                  onClick={() => send("locks", api.cardreader.settings({ pullOutLock: !transaction.pullOutLock }))}
                 >
                   On withdrawal
                 </button>
@@ -340,12 +389,13 @@ export function CardReaderPage(
 
             <Row label="Monitor seconds">
               <Stepper
+                {...waiting("seconds")}
                 value={`${state.seconds}s`}
                 enabled={open && !busy}
                 less="less time"
                 more="more time"
-                onLess={() => guard(api.cardreader.settings({ seconds: state.seconds - 5 }))}
-                onMore={() => guard(api.cardreader.settings({ seconds: state.seconds + 5 }))}
+                onLess={() => send("seconds", api.cardreader.settings({ seconds: state.seconds - 5 }))}
+                onMore={() => send("seconds", api.cardreader.settings({ seconds: state.seconds + 5 }))}
               />
             </Row>
           </Card>
@@ -354,15 +404,15 @@ export function CardReaderPage(
         <div className="col col-narrow">
           <Card title="Bezel LED" aside={<code>{state.literals.led}</code>} quiet>
             <div className="lamprow">
-              <span style={lampStyle(lampColor(state.led), state.led === "off" ? "off" : "on", 30)} />
-              <div className="seg" data-enabled={open}>
+              <span data-lamp="" style={lampStyle(lampColor(state.led), state.led === "off" ? "off" : "on", 30)} />
+              <div {...seg("led")}>
                 {state.vocabulary.ledColors.map((color) => (
                   <button
                     key={color}
                     className="chooser"
                     style={segStyle({ active: state.led === color, enabled: open, tint: lampColor(color) })}
                     disabled={!open}
-                    onClick={() => guard(api.cardreader.led(color))}
+                    onClick={() => send("led", api.cardreader.led(color))}
                   >
                     {color[0].toUpperCase() + color.slice(1)}
                   </button>
@@ -371,7 +421,7 @@ export function CardReaderPage(
                   className="chooser"
                   style={segStyle({ active: state.led === "off", off: true, enabled: open })}
                   disabled={!open}
-                  onClick={() => guard(api.cardreader.led("off"))}
+                  onClick={() => send("led", api.cardreader.led("off"))}
                 >
                   Off
                 </button>
@@ -381,8 +431,15 @@ export function CardReaderPage(
 
           <Card title="Shutter" aside={<code>{state.literals.lock} / {state.literals.unlock}</code>} quiet>
             <div className="actions">
-              <button className="button" disabled={!open} onClick={() => guard(api.cardreader.shutter(true))}>Lock</button>
-              <button className="button" disabled={!open} onClick={() => guard(api.cardreader.shutter(false))}>Unlock</button>
+              {/* On the pair, not each button — both drive the one shutter. */}
+              <span className="run" {...waiting("shutter")}>
+                <button className="button" disabled={!open} onClick={() => send("shutter", api.cardreader.shutter(true))}>
+                  Lock
+                </button>
+                <button className="button" disabled={!open} onClick={() => send("shutter", api.cardreader.shutter(false))}>
+                  Unlock
+                </button>
+              </span>
             </div>
             <p className="masknote">
               Drives the shutter now, as opposed to the transaction locks above, which say what the
@@ -396,8 +453,13 @@ export function CardReaderPage(
   );
 }
 
-/** What a read produced when it produced no card. */
-function Empty({ outcome, open, busy }: { outcome: ReadResult["kind"] | null; open: boolean; busy: boolean }) {
+/**
+ * What a read produced when it produced no card.
+ *
+ * Split from the rendering so the same words can be spoken: the empty state and the announcement
+ * were two descriptions of one outcome, and they would have drifted.
+ */
+function verdictFor(outcome: ReadResult["kind"] | null, open: boolean, busy: boolean): { title: string; note: string } {
   const [title, note] = !open
     ? ["Reader not claimed", "Connect the reader, start a cycle, then insert a card."]
     : busy
@@ -412,7 +474,11 @@ function Empty({ outcome, open, busy }: { outcome: ReadResult["kind"] | null; op
       "A card was present but no rule in the driver's track parser accepted a PAN, so nothing is handed up. Retry the read.",
     ]
     : ["No card read yet", "Claim the reader, start a cycle, then insert a card."];
+  return { title, note };
+}
 
+function Empty({ outcome, open, busy }: { outcome: ReadResult["kind"] | null; open: boolean; busy: boolean }) {
+  const { title, note } = verdictFor(outcome, open, busy);
   return (
     <div className="empty">
       <span className="empty-title">{title}</span>

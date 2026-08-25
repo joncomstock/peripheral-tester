@@ -5,6 +5,7 @@ import type { Commanded, Control } from "./lightboardControls.ts";
 import { controlsFor, fullName, modeOf, requestFor, towerMode } from "./lightboardControls.ts";
 import { badgeClass, LAMP, lampColor, lampStyle, segStyle, stripPreviewStyle } from "./look.ts";
 import type { Tone } from "./look.ts";
+import { useCommands } from "./pending.ts";
 import { Card, DeviceBar } from "./ui.tsx";
 
 /**
@@ -15,10 +16,12 @@ import { Card, DeviceBar } from "./ui.tsx";
  * closes.
  */
 export function LightBoardPage(
-  { state, onFail, toast }: {
+  { state, onFail, toast, progress }: {
     state: LightBoardState;
     onFail: (message: string) => void;
     toast: (text: string, tone?: Tone) => void;
+    /** The device's newest log line, shown while it opens. See `DeviceBar`. */
+    progress?: string;
   },
 ) {
   const [commanded, setCommanded] = useState<Commanded>({});
@@ -36,7 +39,20 @@ export function LightBoardPage(
   useEffect(() => setPortName(state.portName), [state.portName]);
 
   const controls = useMemo(() => controlsFor(state.vocabulary), [state.vocabulary]);
+  /**
+   * Only for the two commands that are *not* optimistic.
+   *
+   * A lamp moves on the press, so there is nothing to wait for and a marker on every segment would
+   * be noise. "All off" and the door simulation have no such echo — one clears the whole board
+   * when it lands, the other changes only what the backend reports — so without this they are the
+   * dead clicks the rest of this work removed, in the same slot as the card reader's Cancel.
+   */
+  const { send: post, busy: waiting } = useCommands(open, onFail);
 
+  /**
+   * Deliberately not routed through `useCommands`: the lamp is drawn from what was commanded, so
+   * it has already moved by the time this returns and there is nothing for a busy marker to say.
+   */
   const send = useCallback((control: Control, action: Action) => {
     setCommanded((previous) => ({ ...previous, [control.key]: action }));
     api.lightboard.led(requestFor(control.base, action)).catch((err: Error) => onFail(err.message));
@@ -56,14 +72,14 @@ export function LightBoardPage(
     else if (!opening) api.lightboard.connect(portName).catch(() => {});
   };
 
-  const allOff = () => {
-    api.lightboard.allOff()
-      .then(() => {
+  const allOff = () =>
+    post(
+      "alloff",
+      api.lightboard.allOff().then(() => {
         setCommanded({});
         toast("Every indicator off", "warn");
-      })
-      .catch((err: Error) => onFail(err.message));
-  };
+      }),
+    );
 
   return (
     <>
@@ -84,10 +100,11 @@ export function LightBoardPage(
         status={state.status}
         open="Connected · handshake OK"
         opening="Opening port"
+        progress={progress}
         shut="Not connected"
         hint="Set a port and connect to drive the indicators"
       >
-        <button className="button" onClick={allOff} disabled={!open}>All off</button>
+        <button className="button" {...waiting("alloff")} onClick={allOff} disabled={!open}>All off</button>
         <button className={open ? "button button--strong" : "button button--primary"} onClick={toggle} disabled={opening}>
           {open ? "Disconnect" : opening ? "Opening…" : "Connect"}
         </button>
@@ -127,8 +144,8 @@ export function LightBoardPage(
             <Card title="Semaphore tower" aside="Yellow = red + green" quiet>
               <div className="sem">
                 <div className="tower">
-                  <span style={lampStyle(LAMP.red, towerMode(commanded, "red"), 26)} />
-                  <span style={lampStyle(LAMP.green, towerMode(commanded, "green"), 26)} />
+                  <span data-lamp="" style={lampStyle(LAMP.red, towerMode(commanded, "red"), 26)} />
+                  <span data-lamp="" style={lampStyle(LAMP.green, towerMode(commanded, "green"), 26)} />
                   <span className="tower-base" />
                 </div>
                 <div className="sem-rows">
@@ -169,26 +186,29 @@ export function LightBoardPage(
           <Card title="Service doors" aside="Reported" quiet>
             {(["upper", "lower"] as Door[]).map((door) => (
               <div className="doorrow" key={door}>
-                <span style={lampStyle(LAMP.amber, state.doors[door] === "open" ? "on" : "off", 16)} />
+                <span data-lamp="" style={lampStyle(LAMP.amber, state.doors[door] === "open" ? "on" : "off", 16)} />
                 <span className="doorlabel">{door === "upper" ? "Upper" : "Lower"} service door</span>
                 <span className={badgeClass(state.doors[door] === "open" ? "warn" : "neutral")}>
                   {state.doors[door] === "open" ? "⚠ Open" : "Closed"}
                 </span>
               </div>
             ))}
+            {/* On the group: the two buttons drive the one pair of switches. */}
             {state.mock && (
               <div className="simrow">
                 <span className="simrow-label">Simulate · switch</span>
-                {(["upper", "lower"] as Door[]).map((door) => (
-                  <button
-                    key={door}
-                    className="button button--small"
-                    onClick={() => api.lightboard.simulateDoor(door).catch((err: Error) => onFail(err.message))}
-                    disabled={!open}
-                  >
-                    {door === "upper" ? "Upper" : "Lower"}
-                  </button>
-                ))}
+                <span className="run" {...waiting("door")}>
+                  {(["upper", "lower"] as Door[]).map((door) => (
+                    <button
+                      key={door}
+                      className="button button--small"
+                      onClick={() => post("door", api.lightboard.simulateDoor(door))}
+                      disabled={!open}
+                    >
+                      {door === "upper" ? "Upper" : "Lower"}
+                    </button>
+                  ))}
+                </span>
               </div>
             )}
           </Card>
@@ -237,8 +257,8 @@ interface Driven {
 /** A control with its own lamp: the component indicators and the bag-tag sides. */
 function LampControl({ control, mode, color, enabled, onSend }: Driven & { color: string }) {
   return (
-    <div className="ctl" title={`${control.fullLabel} · channel ${control.channel}`}>
-      <span style={lampStyle(color, mode)} />
+    <div className="ctl">
+      <span data-lamp="" style={lampStyle(color, mode)} />
       <ControlName control={control} />
       <Segments control={control} mode={mode} enabled={enabled} onSend={onSend} />
     </div>
@@ -248,7 +268,7 @@ function LampControl({ control, mode, color, enabled, onSend }: Driven & { color
 /** A semaphore colour. No lamp of its own: the tower beside it shows both lamps. */
 function TowerControl({ control, mode, enabled, onSend }: Driven) {
   return (
-    <div className="ctl" title={`${control.fullLabel} · channel ${control.channel}`}>
+    <div className="ctl">
       <ControlName control={control} />
       <Segments control={control} mode={mode} enabled={enabled} onSend={onSend} />
     </div>
@@ -258,8 +278,8 @@ function TowerControl({ control, mode, enabled, onSend }: Driven) {
 /** A strip colour. Flows inline with the other colours, above the preview. */
 function StripControl({ control, mode, color, enabled, onSend }: Driven & { color: string }) {
   return (
-    <div className="ctl ctl-inline" title={`${control.fullLabel} · channel ${control.channel}`}>
-      <span style={lampStyle(color, mode)} />
+    <div className="ctl ctl-inline">
+      <span data-lamp="" style={lampStyle(color, mode)} />
       <ControlName control={control} />
       <Segments control={control} mode={mode} enabled={enabled} onSend={onSend} />
     </div>
@@ -269,10 +289,14 @@ function StripControl({ control, mode, color, enabled, onSend }: Driven & { colo
 /**
  * The control's name and the channel it drives.
  *
- * The channel is on the row rather than only in the row's `title`: this runs on a touch screen,
- * where nothing has a hover, and a wrong channel map is the specific fault this screen exists to
- * find. The `title` stays as well, but it carries the *full* name — "Semaphore green · channel 1"
- * against a row reading "Green" — which is the part the layout has no room for.
+ * Both are on the row, where a touch screen can read them: a wrong channel map is the specific
+ * fault this screen exists to find, and a native tooltip would have hidden it from every way this
+ * kiosk is actually driven.
+ *
+ * There is no tooltip carrying the *full* name either. "Green" is ambiguous between the semaphore
+ * and the strip only until you notice which card it is in, and the segment buttons already carry
+ * `${control.fullLabel} On` as their accessible name — so a hover-only repeat of it would be a
+ * third copy that only a mouse could reach.
  */
 function ControlName({ control }: { control: Control }) {
   return (

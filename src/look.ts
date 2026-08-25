@@ -51,7 +51,19 @@ export function lampColor(label: string): string {
   return LAMP[key] ?? LAMP.green;
 }
 
-/** A round lamp, dark or lit, optionally blinking or pulsing. */
+/**
+ * A round lamp, dark or lit, optionally blinking or pulsing.
+ *
+ * Every element drawn with this also carries a bare `data-lamp`, which is how `styles.css` eases
+ * them all as a set — a marker rather than a class, because the rest of a lamp's appearance is
+ * computed here and splitting it across both files would put half the lamp in each.
+ *
+ * The fill is a flat `backgroundColor` with the highlight cast as an inset shadow, rather than the
+ * `radial-gradient` this used to be. It looks the same and it can *move*: two gradients have no
+ * defined interpolation, so a lamp built from one changes colour in a single frame no matter what
+ * transition is on it — the glow eased and the lamp itself still snapped. Both halves now settle
+ * over the 120ms in `styles.css`.
+ */
 export function lampStyle(color: string, mode: LampMode, size = 18): CSSProperties {
   const base: CSSProperties = {
     width: size,
@@ -60,17 +72,21 @@ export function lampStyle(color: string, mode: LampMode, size = 18): CSSProperti
     flexShrink: 0,
     display: "inline-block",
   };
+  /** The off-centre sheen a round indicator catches, sized with the lamp. */
+  const sheen = `inset ${Math.round(size * 0.16)}px ${Math.round(size * 0.16)}px ${Math.round(size * 0.3)}px ` +
+    `-${Math.round(size * 0.1)}px`;
   if (mode === "off") {
     return {
       ...base,
-      background: "radial-gradient(circle at 34% 28%, var(--off1), var(--off2))",
-      boxShadow: "inset 0 0 0 1px var(--offring)",
+      backgroundColor: "var(--off2)",
+      boxShadow: `${sheen} var(--off1), inset 0 0 0 1px var(--offring)`,
     };
   }
   const lit: CSSProperties = {
     ...base,
-    background: `radial-gradient(circle at 34% 28%, color-mix(in oklab, ${color} 55%, white), ${color})`,
-    boxShadow: `0 0 0 1px color-mix(in oklab, ${color} 70%, black), ` +
+    backgroundColor: color,
+    boxShadow: `${sheen} color-mix(in oklab, ${color} 40%, white), ` +
+      `0 0 0 1px color-mix(in oklab, ${color} 70%, black), ` +
       `0 0 ${Math.round(size * 0.9)}px color-mix(in oklab, ${color} 60%, transparent)`,
   };
   if (mode === "blink") return { ...lit, animation: "lampBlink 0.9s steps(1,end) infinite" };

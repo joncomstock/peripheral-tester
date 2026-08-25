@@ -57,7 +57,10 @@
   --offring: rgb(16 24 40 / 14%);
   --dis: #f6f7f8;
   --disline: #e6e8eb;
-  --distext: #b9bfc6;
+  /* 3.39:1 on --dis and 3.64:1 on --card. The old #b9bfc6 was 1.73:1 — under the 3:1 floor
+     even for disabled text, on exactly the controls a first-time user stares at wondering why
+     nothing happens. Still visibly not-enabled against --text2 at 7:1. */
+  --distext: #7f8790;
   --ok: #1a6633;
   --okbg: #eaf6ee;
   --okline: #cfe8d8;
@@ -98,7 +101,7 @@
   --offring: rgb(0 0 0 / 50%);
   --dis: #1e242a;
   --disline: #2b3238;
-  --distext: #626b74;
+  --distext: #7d868f; /* 4.23:1 on --dis; the old #626b74 was 2.89:1 */
   --ok: #6fd08c;
   --okbg: #16301f;
   --okline: #26492f;
@@ -136,6 +139,18 @@ input {
 code,
 .mono {
   font-family: "IBM Plex Mono", monospace;
+}
+
+/*
+ * A lamp settling.
+ *
+ * The fill and the glow both, now that `look.ts` builds a lamp from a flat colour and an inset
+ * shadow rather than a gradient — two gradients have no defined interpolation, so the old lamp
+ * changed colour in one frame however long this said. It reports hardware state, which is the
+ * only thing motion here is allowed to do.
+ */
+[data-lamp] {
+  transition: background-color 120ms ease-out, box-shadow 120ms ease-out, opacity 120ms ease-out;
 }
 
 @keyframes lampBlink {
@@ -219,6 +234,11 @@ code,
   .drawer,
   .arrival {
     animation: none !important;
+  }
+
+  [data-lamp],
+  [data-tip]::after {
+    transition: none;
   }
 }
 
@@ -453,6 +473,92 @@ input:focus:not(:focus-visible) {
   font-size: var(--font-meta);
 }
 
+/*
+ * Said to a screen reader, shown to nobody.
+ *
+ * Not `display: none`, which removes it from the accessibility tree along with everything else.
+ */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ----------------------------------------------------------------- tooltip */
+
+/*
+ * A tooltip on hover *and* keyboard focus.
+ *
+ * `title` was doing this job and doing it badly: it never appears on keyboard focus, never on
+ * touch, and waits about a second before it does. It also does not fire at all on a **disabled**
+ * element, which is exactly where an explanation is most wanted — so for those the attribute goes
+ * on a `.tip` wrapper and the disabled control sits inside it.
+ *
+ * Keyed off the attribute rather than a class, so an element that is already a flex row (a rail
+ * button) can carry one without having its layout rewritten. This is the sighted half only; every
+ * site pairs it with an `aria-label` carrying the same words.
+ */
+[data-tip] {
+  position: relative;
+}
+
+/* Only when wrapping a control, where a bare span would collapse. */
+.tip {
+  display: inline-flex;
+}
+
+[data-tip]::after {
+  content: attr(data-tip);
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 70;
+  width: max-content;
+  max-width: 28ch;
+  padding: 7px 10px;
+  font-size: var(--font-meta);
+  line-height: 1.4;
+  color: var(--text);
+  text-align: left;
+  text-wrap: pretty;
+  white-space: normal;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  box-shadow: var(--shadow);
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 90ms ease, visibility 90ms;
+}
+
+[data-tip]:hover::after,
+[data-tip]:focus-visible::after,
+.tip:focus-within::after {
+  opacity: 1;
+  visibility: visible;
+}
+
+/* At the top of the page there is nothing above to put it in; drop it below instead. */
+.bar [data-tip]::after {
+  bottom: auto;
+  top: calc(100% + 8px);
+}
+
+/* Against the left edge of the rail there is nowhere to centre; pin it beside instead. */
+.rail-row[data-tip]::after {
+  bottom: auto;
+  top: 50%;
+  left: calc(100% + 8px);
+  transform: translateY(-50%);
+}
+
 /* ---------------------------------------------------------------- popover */
 
 .popover-layer {
@@ -484,6 +590,31 @@ input:focus:not(:focus-visible) {
   border-radius: 10px;
   box-shadow: 0 18px 48px -18px rgb(16 24 40 / 45%);
   overflow: hidden;
+}
+
+/*
+ * The shortcut sheet, which is not anchored to anything in the masthead.
+ *
+ * After `.popover`, not before: they match at the same specificity, so source order is what
+ * decides — and declared first this lost every property it overrides, putting the sheet half
+ * off the top of the viewport at the wrong width.
+ */
+.popover--centred {
+  top: 50%;
+  right: auto;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: min(460px, 92vw);
+}
+
+.popover kbd {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: var(--font-meta);
+  color: var(--text);
+  background: var(--chip);
+  border: 1px solid var(--chipline);
+  border-radius: 4px;
+  padding: 2px 7px;
 }
 
 /* ---------------------------------------------------------------- rail */
@@ -1072,14 +1203,65 @@ input:focus:not(:focus-visible) {
   flex: 0 0 auto;
 }
 
+/*
+ * `overflow: visible`, with the corners rounded on the end children instead.
+ *
+ * Clipping to the group's radius was doing two jobs, and the second one was unwanted: it also cut
+ * off the tooltip of any control inside, so the two disabled segments that most needed to explain
+ * themselves showed nothing at all.
+ */
 .seg {
   display: flex;
   flex-shrink: 0;
   margin-left: auto;
   border: 1px solid var(--btnline);
   border-radius: 7px;
-  overflow: hidden;
   background: linear-gradient(var(--btn1), var(--btn2));
+}
+
+.seg > :first-child,
+.seg > :first-child > button {
+  border-start-start-radius: 6px;
+  border-end-start-radius: 6px;
+}
+
+.seg > :last-child,
+.seg > :last-child > button {
+  border-start-end-radius: 6px;
+  border-end-end-radius: 6px;
+}
+
+/*
+ * Waiting on the device.
+ *
+ * An underline rather than a dim: dimming is what disabled looks like, and a control that is
+ * working is the opposite of one that cannot be used. No motion — the bar appears and leaves, and
+ * a pulsing control on an instrument panel reads as decoration.
+ *
+ * Keyed off `aria-busy` so one rule covers a segmented group and a lone button alike. It was a
+ * class on the group only, which left the shutter, the buzzer and the LED picker — all of which
+ * round-trip through the device — looking like dead clicks, the exact thing this is for.
+ */
+[aria-busy="true"] {
+  position: relative;
+}
+
+/*
+ * A bar, not `box-shadow`. `segStyle()` returns a `box-shadow` inline on whichever segment is
+ * engaged, and inline wins — so the busy marker was invisible on exactly the active control the
+ * press had just moved. `:not([data-tip])` keeps it clear of the tooltip's own pseudo-element.
+ */
+[aria-busy="true"]:not([data-tip])::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 2px;
+  /* Matches the corner radius of the groups it sits under, which no longer clip it. */
+  border-end-start-radius: 6px;
+  border-end-end-radius: 6px;
+  background: var(--accent);
 }
 
 .seg[data-enabled="false"] {
@@ -1106,10 +1288,18 @@ input:focus:not(:focus-visible) {
   font-size: var(--font-meta);
 }
 
-/* The divider belongs between segments, not on whichever one happens to be first. */
-.seg button + button,
-.seg button + .stepper-value,
-.seg .stepper-value + button {
+/*
+ * The divider belongs between segments, not on whichever one happens to be first.
+ *
+ * Any child, not specifically a button: a segment wrapped for its tooltip is a span, and naming
+ * the element dropped the divider either side of it.
+ */
+.seg > :not(:first-child) {
+  /*
+   * `:not()` rather than `* + *`, for specificity alone: `.seg button` sets `border: 0` at (0,1,1)
+   * and the adjacent-sibling form is (0,1,0), so it lost and every divider disappeared. This is
+   * (0,2,0).
+   */
   border-left: 1px solid var(--line2);
 }
 
@@ -1347,6 +1537,18 @@ input:focus:not(:focus-visible) {
   flex-wrap: wrap;
   gap: 10px;
   padding: 12px var(--pad-x);
+}
+
+/*
+ * A run of buttons that act on one thing, so the busy bar hugs them.
+ *
+ * Marking the padded band instead drew a 2px line the full width of the card, 12px clear of the
+ * buttons — which reads as a section divider, not as a control working.
+ */
+.run {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 10px;
 }
 
 .lamprow {

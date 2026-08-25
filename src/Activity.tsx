@@ -4,7 +4,11 @@ import { downloadJson } from "./download.ts";
 import type { DeviceId } from "./devices.ts";
 import { deviceEntry, isWired } from "./devices.ts";
 import { toneOf } from "./look.ts";
+import { Tip } from "./ui.tsx";
 import type { Tone } from "./look.ts";
+
+/** Why the device scope is unavailable. Said once, because a tooltip and a label must not drift. */
+const NO_LINES = "This device has no screen yet, so it produces no lines";
 
 /**
  * Short tag shown beside a line when every device's lines are mixed together.
@@ -102,14 +106,16 @@ export function Activity(
           <button className={scope === "all" ? "chooser chooser-on" : "chooser"} onClick={() => setScope("all")}>
             All devices
           </button>
-          <button
-            className={scope === "device" ? "chooser chooser-on" : "chooser"}
-            disabled={!isWired(view)}
-            title={isWired(view) ? undefined : "This device has no screen yet, so it produces no lines"}
-            onClick={() => setScope("device")}
-          >
-            This device
-          </button>
+          <Tip tip={isWired(view) ? undefined : NO_LINES}>
+            <button
+              className={scope === "device" ? "chooser chooser-on" : "chooser"}
+              disabled={!isWired(view)}
+              aria-label={isWired(view) ? undefined : `This device — unavailable: ${NO_LINES}`}
+              onClick={() => setScope("device")}
+            >
+              This device
+            </button>
+          </Tip>
         </div>
         <button className={issuesOnly ? "pill pill--warn" : "pill"} onClick={() => setIssuesOnly((was) => !was)}>
           Issues only

@@ -49,8 +49,18 @@ export function Toasts({ toasts, onDismiss }: { toasts: Toast[]; onDismiss: (id:
   return (
     <div className="toasts" role="status" aria-live="polite">
       {toasts.map((entry) => (
-        <button key={entry.id} className={`toast toast--${entry.tone}`} onClick={() => onDismiss(entry.id)}>
-          <span style={lampStyle(lampFor(entry.tone), "on", 10)} />
+        <button
+          key={entry.id}
+          className={`toast toast--${entry.tone}`}
+          /*
+           * A failure interrupts; a confirmation waits its turn. Per toast rather than on the
+           * container, because one stack carries both and the container's politeness is fixed at
+           * the moment the region is created.
+           */
+          role={entry.tone === "bad" ? "alert" : undefined}
+          onClick={() => onDismiss(entry.id)}
+        >
+          <span data-lamp="" style={lampStyle(lampFor(entry.tone), "on", 10)} />
           <span>{entry.text}</span>
         </button>
       ))}

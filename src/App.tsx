@@ -2,7 +2,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { LogEntry, Snapshot } from "./api.ts";
 import * as api from "./api.ts";
 import type { DeviceId, WiredId } from "./devices.ts";
-import { deviceEntry, isWired } from "./devices.ts";
+import { DEVICES, deviceEntry, isDeviceId, isWired, statusOf, WIRED } from "./devices.ts";
+import { useDialog } from "./dialog.ts";
 import { Drawer } from "./Drawer.tsx";
 import { clockTime } from "./format.ts";
 import type { DrawerTab } from "./Drawer.tsx";
@@ -11,14 +12,26 @@ import { Planned } from "./Planned.tsx";
 import { Rail } from "./Rail.tsx";
 import { handshake, runSweep } from "./sweep.ts";
 import type { SweepResult, SweepResults } from "./sweep.ts";
-import { applyTheme, loadTheme } from "./theme.ts";
-import type { Theme } from "./theme.ts";
+import { applyTheme, loadTheme, recall, remember } from "./prefs.ts";
+import type { Theme } from "./prefs.ts";
 import { Toasts, useToasts } from "./Toasts.tsx";
 import { CardReaderPage } from "./CardReaderPage.tsx";
 import { PassportReaderPage } from "./PassportReaderPage.tsx";
 import { LightBoardPage, phrase as lightboardPhrase } from "./LightBoardPage.tsx";
 
 const MAX_LINES = 200;
+
+type RailState = "open" | "collapsed";
+const isRailState = (value: string): value is RailState => value === "open" || value === "collapsed";
+
+/** What each key does, shown by `?` and the single place the handler's behaviour is described. */
+const SHORTCUTS: { keys: string; does: string }[] = [
+  { keys: `1 – ${DEVICES.length}`, does: "Open that device from the rail, in the order it is listed" },
+  { keys: "[", does: "Collapse or expand the rail" },
+  { keys: "Enter", does: "Fire the open screen's primary action, when it has one" },
+  { keys: "Esc", does: "Close whatever is on top — this sheet, then settings, then the drawer" },
+  { keys: "?", does: "Show this" },
+];
 
 /**
  * The shell: which device is on screen, and the state every screen shares.
@@ -31,11 +44,12 @@ export function App() {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [unreachable, setUnreachable] = useState<string | null>(null);
   const [log, setLog] = useState<LogEntry[]>([]);
-  const [view, setView] = useState<DeviceId>("lightboard");
+  const [view, setView] = useState<DeviceId>(() => recall("device", "lightboard", isDeviceId));
   const [theme, setTheme] = useState<Theme>(loadTheme);
   const [drawer, setDrawer] = useState<DrawerTab | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [railCollapsed, setRailCollapsed] = useState(false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [railCollapsed, setRailCollapsed] = useState(() => recall("rail", "open", isRailState) === "collapsed");
   const [results, setResults] = useState<SweepResults>({});
   const [sweeping, setSweeping] = useState(false);
   const [testing, setTesting] = useState<DeviceId | null>(null);
@@ -47,22 +61,68 @@ export function App() {
   latest.current = snapshot;
 
   useEffect(() => applyTheme(theme), [theme]);
+  useEffect(() => remember("device", view), [view]);
+  useEffect(() => remember("rail", railCollapsed ? "collapsed" : "open"), [railCollapsed]);
 
   /**
-   * Escape closes whatever is on top.
+   * The keyboard.
    *
-   * One handler rather than one per overlay: the settings panel can sit over the drawer, and two
-   * independent listeners would have closed both with a single press.
+   * One handler for all of it, rather than one per overlay: two independent listeners would have
+   * closed both with a single press. Only one overlay can actually be open at a time — each scrims
+   * the masthead and traps Tab — so the order below is belt and braces rather than a live case,
+   * and the rest must not fire while any of them is open: a number key that switched device out
+   * from under an open drawer would leave it describing a screen nobody is looking at.
+   *
+   * Deliberately no modifier keys. This is driven one-handed while the other hand holds a card.
    */
   useEffect(() => {
-    const closeTopmost = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      if (settingsOpen) setSettingsOpen(false);
-      else setDrawer(null);
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        if (shortcutsOpen) setShortcutsOpen(false);
+        else if (settingsOpen) setSettingsOpen(false);
+        else setDrawer(null);
+        return;
+      }
+      /*
+       * Never steal a key from something being typed into, and never from an overlay.
+       *
+       * `instanceof Element` rather than a cast: a keydown's target is normally the focused
+       * element, but it is `document` when nothing is focused and when one is dispatched
+       * programmatically — and `document.closest` does not exist, so casting turned every
+       * shortcut into a TypeError in exactly the state the shortcuts are for.
+       */
+      const target = event.target instanceof Element ? event.target : null;
+      if (target?.closest("input, textarea, select, [contenteditable]")) return;
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
+      if (shortcutsOpen || settingsOpen || drawer) return;
+
+      if (event.key === "?") {
+        setShortcutsOpen(true);
+        return;
+      }
+      if (event.key === "[") {
+        setRailCollapsed((was) => !was);
+        return;
+      }
+      if (event.key === "Enter") {
+        // Not when a control already has focus — Enter belongs to that control, and firing both
+        // would send a device two commands from one press.
+        if (target?.closest("button, a, [role='button']")) return;
+        /*
+         * "The primary action" is defined as the button drawn primary, found rather than declared.
+         * A page that says which of its buttons is primary can disagree with the page; the one it
+         * renders that way cannot. Scoped to the workspace so the rail is out of reach, and
+         * `:not([disabled])` means this can never fire a command the screen is refusing.
+         */
+        document.querySelector<HTMLButtonElement>(".workspace .button--primary:not([disabled])")?.click();
+        return;
+      }
+      const slot = Number(event.key);
+      if (Number.isInteger(slot) && slot >= 1 && slot <= DEVICES.length) setView(DEVICES[slot - 1].id);
     };
-    document.addEventListener("keydown", closeTopmost);
-    return () => document.removeEventListener("keydown", closeTopmost);
-  }, [settingsOpen]);
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [settingsOpen, drawer, shortcutsOpen]);
 
   /**
    * The stream is opened first and reconciled from, not merely appended to.
@@ -128,6 +188,9 @@ export function App() {
       live = false;
     };
   }, []);
+
+  /** See where it is written, below the snapshot guard — this only holds the value. */
+  const idleLine = useRef<Partial<Record<WiredId, LogEntry | undefined>>>({});
 
   const fail = useCallback((message: string) => {
     setLog((previous) => [...previous, systemLine("failed", message)].slice(-MAX_LINES));
@@ -201,6 +264,44 @@ export function App() {
 
   if (!snapshot) return <div className="gate"><p>Loading…</p></div>;
 
+  /** The newest line each device has produced, in one pass rather than three. */
+  const newest: Partial<Record<WiredId, LogEntry>> = {};
+  for (let i = log.length - 1; i >= 0; i--) {
+    const line = log[i];
+    // `system` lines belong to no device and are never a connect stage.
+    if (line.device !== "system" && newest[line.device] === undefined) newest[line.device] = line;
+  }
+
+  /**
+   * The line each device had last produced while it was *not* opening.
+   *
+   * Recorded on every render that finds the device idle, rather than on the transition into
+   * opening: the stream delivers the new status and the first stage line as two messages React
+   * frequently batches into one render, so a mark taken when opening is first *seen* is already
+   * past the line it was meant to include. Lagging it cannot race the batch — a render where the
+   * device is opening never moves it.
+   *
+   * The entry itself, not its index. `log` is a sliding window capped at `MAX_LINES`, so once a
+   * session fills it every index is 200 forever and an index comparison silently stops matching
+   * anything — the stage line would work all morning and then quietly never appear again.
+   */
+  for (const id of WIRED) if (statusOf(snapshot, id) !== "opening") idleLine.current[id] = newest[id];
+
+  /**
+   * The newest line this device has produced since it began opening, for the connection strip.
+   *
+   * Compared by identity against the line it had before, because the newest line a device has
+   * *ever* produced is, on a reconnect, the previous session's "Reader released" — a stale line
+   * presented as the stage the device is at now.
+   *
+   * Phrased, because the light board records a command as the request it put on the wire.
+   */
+  const progress = (() => {
+    if (!isWired(view) || statusOf(snapshot, view) !== "opening") return undefined;
+    const line = newest[view];
+    return line && line !== idleLine.current[view] ? lightboardPhrase(line) : undefined;
+  })();
+
   const entry = deviceEntry(view);
   const result = isWired(view) ? results[view] : undefined;
   const failures = Object.values(results).filter((each) => !each.pass).length;
@@ -225,15 +326,25 @@ export function App() {
           Activity{log.length > 0 && <span className="pill-count">{log.length}</span>}
         </button>
         <button
+          className="icon-button"
+          onClick={() => setShortcutsOpen(true)}
+          data-tip="Keyboard shortcuts"
+          aria-label="Keyboard shortcuts"
+        >
+          ?
+        </button>
+        <button
           className={settingsOpen ? "icon-button icon-button--on" : "icon-button"}
           onClick={() => setSettingsOpen((was) => !was)}
-          title="Tester settings"
+          data-tip="Tester settings"
           aria-label="Tester settings"
           aria-expanded={settingsOpen}
         >
           ⚙{failures > 0 && <span className="icon-dot" />}
         </button>
       </header>
+
+      {shortcutsOpen && <Shortcuts onClose={() => setShortcutsOpen(false)} />}
 
       {settingsOpen && (
         <Settings
@@ -260,7 +371,7 @@ export function App() {
         <div className="workspace">
           {result && (
             <div className={result.pass ? "notice notice--ok" : "notice notice--bad"}>
-              <span style={lampStyle(result.pass ? LAMP.green : LAMP.red, "on", 12)} />
+              <span data-lamp="" style={lampStyle(result.pass ? LAMP.green : LAMP.red, "on", 12)} />
               <span className="notice-text">
                 {glyph(result.pass ? "ok" : "bad")}
                 Handshake {result.pass ? "passed" : "failed"} at {result.at} — {result.detail}
@@ -269,9 +380,15 @@ export function App() {
             </div>
           )}
 
-          {view === "lightboard" && <LightBoardPage state={snapshot.lightboard} onFail={fail} toast={toast} />}
-          {view === "cardreader" && <CardReaderPage state={snapshot.cardreader} onFail={fail} toast={toast} />}
-          {view === "passportreader" && <PassportReaderPage state={snapshot.passportreader} onFail={fail} toast={toast} />}
+          {view === "lightboard" && (
+            <LightBoardPage state={snapshot.lightboard} onFail={fail} toast={toast} progress={progress} />
+          )}
+          {view === "cardreader" && (
+            <CardReaderPage state={snapshot.cardreader} onFail={fail} toast={toast} progress={progress} />
+          )}
+          {view === "passportreader" && (
+            <PassportReaderPage state={snapshot.passportreader} onFail={fail} toast={toast} progress={progress} />
+          )}
           {!entry.ready && <Planned entry={entry} />}
         </div>
       </div>
@@ -302,6 +419,57 @@ export function App() {
   );
 }
 
+/** What the keyboard does. Opened with `?`, and the only place a shortcut is discoverable. */
+function Shortcuts({ onClose }: { onClose: () => void }) {
+  const panel = useDialog<HTMLDivElement>();
+  /**
+   * What Enter would do right now, read from the screen behind this sheet.
+   *
+   * Read rather than declared, for the same reason the handler finds the button rather than being
+   * told about it — the same selector, so the sheet cannot disagree with the key. Shown because
+   * Enter is genuinely inert on a connected light board, which has thirty equal controls and no
+   * one primary among them: a key that sometimes does nothing should say when.
+   *
+   * Read on every render, not once on mount. This re-renders with the shell, so a connect that
+   * lands while the sheet is open updates it — held in state it would have gone on describing the
+   * screen as it was when the sheet opened.
+   */
+  const primary = document.querySelector<HTMLButtonElement>(".workspace .button--primary:not([disabled])")
+    ?.textContent?.trim();
+
+  return (
+    <div className="popover-layer">
+      <button className="popover-scrim" onClick={onClose} aria-label="Close the shortcut sheet" />
+      <div className="popover popover--centred" role="dialog" aria-modal="true" aria-label="Keyboard shortcuts" ref={panel}>
+        <div className="card-head">
+          <span className="tab" />
+          <h2>Keyboard</h2>
+          <button className="icon-button" onClick={onClose} aria-label="Close the shortcut sheet">✕</button>
+        </div>
+        <div className="fieldlist">
+          {SHORTCUTS.map(({ keys, does }) => (
+            <div className="fieldrow" key={keys}>
+              <span className="fieldrow-label"><kbd>{keys}</kbd></span>
+              <span className="fieldrow-value">
+                {does}
+                {keys === "Enter" && (
+                  <span className="tone-muted">
+                    {primary ? ` — right now, ${primary}` : " — this screen has none right now"}
+                  </span>
+                )}
+              </span>
+            </div>
+          ))}
+        </div>
+        <p className="masknote">
+          No modifiers, and nothing fires while a panel is open or while you are typing in the port
+          field — this is driven one-handed with a card in the other.
+        </p>
+      </div>
+    </div>
+  );
+}
+
 /** Appearance, and the one action that is about the whole kiosk rather than one device. */
 function Settings(
   { theme, sweeping, results, onTheme, onSweep, onClose }: {
@@ -313,6 +481,7 @@ function Settings(
     onClose: () => void;
   },
 ) {
+  const panel = useDialog<HTMLDivElement>();
   const done = Object.values(results);
   const failures = done.filter((result) => !result.pass).length;
   // The most recent attempt of any of them: a pass from twenty minutes ago is worth distrusting.
@@ -321,7 +490,7 @@ function Settings(
   return (
     <div className="popover-layer">
       <button className="popover-scrim" onClick={onClose} aria-label="Close settings" />
-      <div className="popover" role="dialog" aria-modal="true" aria-label="Tester settings">
+      <div className="popover" role="dialog" aria-modal="true" aria-label="Tester settings" ref={panel}>
         <div className="card-head">
           <span className="tab" />
           <h2>Tester settings</h2>
@@ -343,6 +512,7 @@ function Settings(
         <div className="setting setting--stacked">
           <div className="setting-line">
             <span
+              data-lamp=""
               style={lampStyle(failures ? LAMP.red : LAMP.green, sweeping ? "pulse" : done.length ? "on" : "off", 12)}
             />
             <span className="setting-label">Health sweep</span>

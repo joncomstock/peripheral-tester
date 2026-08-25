@@ -89,6 +89,9 @@ export const WIRED: WiredId[] = ["lightboard", "cardreader", "passportreader"];
 
 export const isWired = (id: DeviceId): id is WiredId => (WIRED as DeviceId[]).includes(id);
 
+/** Whether a remembered id still names a device. An old build may have written one that is gone. */
+export const isDeviceId = (value: string): value is DeviceId => DEVICES.some((device) => device.id === value);
+
 export function deviceEntry(id: DeviceId): DeviceEntry {
   const entry = DEVICES.find((d) => d.id === id);
   // Thrown rather than defaulted. `DeviceId` is closed, so this cannot happen from typed code —

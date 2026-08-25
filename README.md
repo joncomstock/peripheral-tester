@@ -40,9 +40,19 @@ Pick a device from the rail, connect, and drive it. Every screen is a control pa
 probe: it drives the peripheral and reports what came back. Where a channel map or a transaction
 setting turns out to be wrong for a kiosk, the fix is configuration passed to the driver.
 
-The rail lists **every** peripheral a 919 has, including the four whose drivers exist in
-`hardware-libs` but whose tester screens are not built — knowing what a kiosk has is worth more to
-someone standing at one than a shorter list, and each says which package covers it.
+**Choose the devices first.** A bench is one kiosk at a time, and `hardware-libs` has drivers for
+more peripherals than any single unit fits, so the rail carries a chosen subset rather than the
+whole catalogue. The picker opens by itself on a first landing and lives behind the settings gear
+after that: pick the kiosk in front of you — IER 919, Embross V1, SITA D4, NCR Touchport 120 — and
+its devices are ticked for you, or tick your own set, down to one. A preset that ticks fewer boxes
+than that kiosk has devices says which of its components `hardware-libs` has no driver for, so a
+short list reads as the state of the catalogue rather than as a bug. Every tick applies to the rail
+immediately; there is no OK and no Cancel. The choice is kept per machine, like the theme.
+
+The rail lists the chosen devices, including any whose driver exists in `hardware-libs` but whose
+tester screen is not built — knowing what a kiosk has is worth more to someone standing at one than
+a shorter list, and each says which package covers it. The health sweep and the **Bus** tab follow
+the rail: a device you took off it is never opened.
 
 **Light board** — component indicators, bag-tag sides, the semaphore tower, and the LED strip with
 its additive mixes. Service doors report as their switches move. The lamps on screen show what was
@@ -62,14 +72,15 @@ ambient-light and OCR-source settings are the ones the next scan will use. Contr
 honour are not offered — a scanner without the UV lamp says so, and the ultraviolet option is then
 absent rather than dead.
 
-**The keyboard** — `1`–`8` open a device, `[` collapses the rail, `Enter` fires whichever action
+**The keyboard** — `1`–`9` open a device from the rail, in the order it lists them, `[` collapses
+it, `Enter` fires whichever action
 the open screen draws as primary, `Esc` closes whatever is on top, and `?` lists all of it. No
 modifiers: this is driven one-handed while the other hand holds a card. The theme, the rail and the
 device you were on are remembered, because a kiosk reloads whenever anyone restarts the backend.
 
-**Health sweep** — opens and handshakes every wired device in turn without driving it, and reports
-what each said for itself. It uses the same `connect` the screens do, so a pass means the handle was
-genuinely claimed. A device you already have open is left open. The **Bus** tab lists what the
+**Health sweep** — opens and handshakes every wired device _on the rail_ in turn without driving it,
+and reports what each said for itself. It uses the same `connect` the screens do, so a pass means
+the handle was genuinely claimed. A device you already have open is left open. The **Bus** tab lists what the
 handshake found.
 
 ### Cardholder and document data
@@ -228,36 +239,37 @@ backend attaches a log handler so those land in **Activity** instead, quoted ver
 
 ## Layout
 
-| Path                         | What                                                            |
-| ---------------------------- | --------------------------------------------------------------- |
-| `server/main.ts`             | HTTP routing, and serves `dist/` on a kiosk.                    |
-| `server/activity.ts`         | The shared log and event stream. Carries no cardholder data.    |
-| `server/lightboard.ts`       | The light board session. Owns the COM port.                     |
-| `server/cardreader.ts`       | The card reader session. Owns the USB HID handle.               |
-| `server/passportreader.ts`   | The passport reader session. Owns the loaded `PageScanAPI.dll`. |
-| `server/collisions.ts`       | Which indicator channels two sections share, from the live map. |
-| `src/api.ts`                 | The wire contract: every type and every call the page makes.    |
-| `src/main.tsx`               | The entry point, and the self-hosted fonts.                     |
-| `src/App.tsx`                | The shell: which device is on screen, and the shared state.     |
-| `src/ui.tsx`                 | The connection strip, the card, and the rows they are built of. |
-| `src/devices.ts`             | Which peripherals a 919 has, and which have a screen.           |
-| `src/Rail.tsx`               | The device rail.                                                |
-| `src/Planned.tsx`            | The pane for a peripheral with a driver but no screen yet.      |
-| `src/LightBoardPage.tsx`     | The light board's screen and connection strip.                  |
-| `src/CardReaderPage.tsx`     | The card reader's screen and connection strip.                  |
-| `src/PassportReaderPage.tsx` | The passport reader's screen and connection strip.              |
-| `src/Drawer.tsx`             | The side drawer: Activity and Bus.                              |
-| `src/Activity.tsx`           | The log, with its scope and issues filters.                     |
-| `src/sweep.ts`               | The health sweep, over the same `connect` the screens use.      |
-| `src/Toasts.tsx`             | Transient confirmations for effects that are off screen.        |
-| `src/prefs.ts`               | Theme, rail and open device, remembered per machine.            |
-| `src/dialog.ts`              | Focus trap and focus return, shared by all three overlays.      |
-| `src/pending.ts`             | Which commands are in flight, so a control can say it is busy.  |
-| `src/download.ts`            | JSON export. Activity only — never a read's contents.           |
-| `src/lightboardControls.ts`  | Vocabulary → controls, and the naming rule the page uses.       |
-| `src/format.ts`              | Display formatting shared by the screens.                       |
-| `src/look.ts`                | Lamps, segmented buttons and the strip preview, computed.       |
-| `src/styles.css`             | Everything static, and the light and dark tokens.               |
+| Path                         | What                                                              |
+| ---------------------------- | ----------------------------------------------------------------- |
+| `server/main.ts`             | HTTP routing, and serves `dist/` on a kiosk.                      |
+| `server/activity.ts`         | The shared log and event stream. Carries no cardholder data.      |
+| `server/lightboard.ts`       | The light board session. Owns the COM port.                       |
+| `server/cardreader.ts`       | The card reader session. Owns the USB HID handle.                 |
+| `server/passportreader.ts`   | The passport reader session. Owns the loaded `PageScanAPI.dll`.   |
+| `server/collisions.ts`       | Which indicator channels two sections share, from the live map.   |
+| `src/api.ts`                 | The wire contract: every type and every call the page makes.      |
+| `src/main.tsx`               | The entry point, and the self-hosted fonts.                       |
+| `src/App.tsx`                | The shell: which device is on screen, and the shared state.       |
+| `src/ui.tsx`                 | The connection strip, the card, and the rows they are built of.   |
+| `src/devices.ts`             | The driver catalogue, the kiosk presets, and which have a screen. |
+| `src/DevicePicker.tsx`       | Choosing which of the catalogue the rail carries.                 |
+| `src/Rail.tsx`               | The device rail.                                                  |
+| `src/Planned.tsx`            | The pane for a peripheral with a driver but no screen yet.        |
+| `src/LightBoardPage.tsx`     | The light board's screen and connection strip.                    |
+| `src/CardReaderPage.tsx`     | The card reader's screen and connection strip.                    |
+| `src/PassportReaderPage.tsx` | The passport reader's screen and connection strip.                |
+| `src/Drawer.tsx`             | The side drawer: Activity and Bus.                                |
+| `src/Activity.tsx`           | The log, with its scope and issues filters.                       |
+| `src/sweep.ts`               | The health sweep, over the same `connect` the screens use.        |
+| `src/Toasts.tsx`             | Transient confirmations for effects that are off screen.          |
+| `src/prefs.ts`               | Theme, rail, chosen devices and open device, per machine.         |
+| `src/dialog.ts`              | Focus trap and focus return, shared by every overlay.             |
+| `src/pending.ts`             | Which commands are in flight, so a control can say it is busy.    |
+| `src/download.ts`            | JSON export. Activity only — never a read's contents.             |
+| `src/lightboardControls.ts`  | Vocabulary → controls, and the naming rule the page uses.         |
+| `src/format.ts`              | Display formatting shared by the screens.                         |
+| `src/look.ts`                | Lamps, segmented buttons and the strip preview, computed.         |
+| `src/styles.css`             | Everything static, and the light and dark tokens.                 |
 
 The light board's controls are generated from `/api/state`, which the backend builds from the
 driver's own exported vocabularies (`ACTIONS`, `INDICATOR_SECTIONS`, `STRIP_COLORS`, `STRIP_MIX`,

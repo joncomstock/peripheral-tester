@@ -1,8 +1,8 @@
 import type { LogEntry, Snapshot } from "./api.ts";
 import { useDialog } from "./dialog.ts";
 import { Activity } from "./Activity.tsx";
-import type { DeviceId } from "./devices.ts";
-import { busLine, deviceEntry, isLive, verdict, WIRED } from "./devices.ts";
+import type { DeviceId, WiredId } from "./devices.ts";
+import { busLine, deviceEntry, isLive, verdict } from "./devices.ts";
 import { badgeClass, glyph, lampStyle } from "./look.ts";
 import type { Tone } from "./look.ts";
 import type { SweepResults } from "./sweep.ts";
@@ -17,9 +17,11 @@ export type DrawerTab = "activity" | "bus";
  * they moved off the screen and the whole width went to the peripherals.
  */
 export function Drawer(
-  { tab, snapshot, log, view, results, sweeping, testing, phrase, onTab, onClose, onSweep, onClear, toast }: {
+  { tab, snapshot, wired, log, view, results, sweeping, testing, phrase, onTab, onClose, onSweep, onClear, toast }: {
     tab: DrawerTab;
     snapshot: Snapshot;
+    /** The wired devices on the rail — the ones the sweep would claim. May be empty. */
+    wired: WiredId[];
     log: LogEntry[];
     view: DeviceId;
     results: SweepResults;
@@ -52,7 +54,7 @@ export function Drawer(
 
         {tab === "activity"
           ? <Activity log={log} view={view} phrase={phrase} onClear={onClear} toast={toast} />
-          : <Bus snapshot={snapshot} results={results} sweeping={sweeping} testing={testing} onSweep={onSweep} />}
+          : <Bus snapshot={snapshot} wired={wired} results={results} sweeping={sweeping} testing={testing} onSweep={onSweep} />}
       </div>
     </div>
   );
@@ -66,13 +68,14 @@ export function Drawer(
  * answers "can the driver have this device" — a device can be enumerated and still be held by the
  * wrong class driver. So the badges come from the health sweep, which claims for real.
  *
- * Only the wired three. A peripheral whose screen is not built has no handle for this process to
- * claim, so there is nothing here that could be said about it — the rail already lists all eight,
- * and saying "no driver bound" beside one whose driver is written was simply wrong.
+ * Only the wired ones on the rail. A peripheral whose screen is not built has no handle for this
+ * process to claim, so there is nothing here that could be said about it — the rail already lists
+ * it, and saying "no driver bound" beside one whose driver is written was simply wrong.
  */
 function Bus(
-  { snapshot, results, sweeping, testing, onSweep }: {
+  { snapshot, wired, results, sweeping, testing, onSweep }: {
     snapshot: Snapshot;
+    wired: WiredId[];
     results: SweepResults;
     sweeping: boolean;
     testing: DeviceId | null;
@@ -93,12 +96,21 @@ function Bus(
             ? "Every wired device answered"
             : `${failures} of ${Object.keys(results).length} refused`}
         </span>
-        <button className="pill pill--primary" disabled={sweeping} onClick={onSweep}>
+        <button className="pill pill--primary" disabled={sweeping || wired.length === 0} onClick={onSweep}>
           {sweeping ? "Handshaking…" : "Handshake all"}
         </button>
       </div>
 
-      {WIRED.map((id) => {
+      {/* No list of which devices those are: `WIRED` is the one place that is written down, and
+          spelling it out here in English is a copy nothing would catch drifting. */}
+      {wired.length === 0 && (
+        <p className="masknote">
+          Every device on the rail is one this backend holds no handle for, so there is nothing here
+          to claim. Add a wired device in the picker behind the settings gear.
+        </p>
+      )}
+
+      {wired.map((id) => {
         const result = results[id];
         const { tone, text, mode, color } = verdict({
           ready: true,

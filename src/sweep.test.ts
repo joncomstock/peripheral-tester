@@ -20,6 +20,7 @@ const api = await import("./api.ts") as unknown as {
 };
 
 const { handshake, runSweep } = await import("./sweep.ts");
+const { WIRED } = await import("./devices.ts");
 
 /** Only the fields the sweep reads. The rest of a `Snapshot` is irrelevant to it. */
 const snapshotWith = (
@@ -90,6 +91,7 @@ describe("runSweep", () => {
     const order: string[] = [];
     const results: string[] = [];
     await runSweep(
+      WIRED,
       () => snapshotWith(),
       (id) => results.push(id),
       (id) => id && order.push(id),
@@ -100,14 +102,21 @@ describe("runSweep", () => {
 
   it("clears the active device at the end, so nothing is left showing as mid-handshake", async () => {
     const active: (string | null)[] = [];
-    await runSweep(() => snapshotWith(), () => {}, (id) => active.push(id));
+    await runSweep(WIRED, () => snapshotWith(), () => {}, (id) => active.push(id));
     expect(active[active.length - 1]).toBeNull();
+  });
+
+  it("sweeps only the devices it was given, so a rail without the card reader never opens one", async () => {
+    const swept: string[] = [];
+    await runSweep(["lightboard"], () => snapshotWith(), (id) => swept.push(id), () => {});
+    expect(swept).toEqual(["lightboard"]);
+    expect(api.cardreader.connect).not.toHaveBeenCalled();
   });
 
   it("carries on past a device that refused", async () => {
     api.lightboard.connect.mockRejectedValue(new Error("COM14 is held by another process"));
     const passed: boolean[] = [];
-    await runSweep(() => snapshotWith(), (_id, result) => passed.push(result.pass), () => {});
+    await runSweep(WIRED, () => snapshotWith(), (_id, result) => passed.push(result.pass), () => {});
     expect(passed).toEqual([false, true, true]);
   });
 });

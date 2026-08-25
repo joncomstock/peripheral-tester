@@ -2,7 +2,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { LogEntry, Snapshot } from "./api.ts";
 import * as api from "./api.ts";
 import type { DeviceId, WiredId } from "./devices.ts";
-import { DEVICES, deviceEntry, isDeviceId, isWired, statusOf, WIRED } from "./devices.ts";
+import { DEFAULT_DEVICES, DEVICES, deviceEntry, isDeviceId, isWired, kioskOf, statusOf, WIRED } from "./devices.ts";
+import { DevicePicker } from "./DevicePicker.tsx";
 import { useDialog } from "./dialog.ts";
 import { Drawer } from "./Drawer.tsx";
 import { clockTime } from "./format.ts";
@@ -12,7 +13,7 @@ import { Planned } from "./Planned.tsx";
 import { Rail } from "./Rail.tsx";
 import { handshake, runSweep } from "./sweep.ts";
 import type { SweepResult, SweepResults } from "./sweep.ts";
-import { applyTheme, loadTheme, recall, remember } from "./prefs.ts";
+import { applyTheme, loadTheme, recall, recallSet, remember } from "./prefs.ts";
 import type { Theme } from "./prefs.ts";
 import { Toasts, useToasts } from "./Toasts.tsx";
 import { CardReaderPage } from "./CardReaderPage.tsx";
@@ -21,12 +22,26 @@ import { LightBoardPage, phrase as lightboardPhrase } from "./LightBoardPage.tsx
 
 const MAX_LINES = 200;
 
+/**
+ * How far down the rail the number keys reach.
+ *
+ * A keydown carries one key, so there is no two-digit form to support and a rail longer than this
+ * is reachable by key only as far as the ninth row. Named because the handler and the shortcut
+ * sheet both have to say the same number, and two literals agreeing is not the same as one.
+ */
+const KEYED_ROWS = 9;
+
 type RailState = "open" | "collapsed";
 const isRailState = (value: string): value is RailState => value === "open" || value === "collapsed";
 
-/** What each key does, shown by `?` and the single place the handler's behaviour is described. */
-const SHORTCUTS: { keys: string; does: string }[] = [
-  { keys: `1 – ${DEVICES.length}`, does: "Open that device from the rail, in the order it is listed" },
+/**
+ * What each key does, shown by `?` and the single place the handler's behaviour is described.
+ *
+ * `reach` is how far down the rail the number keys get, which is now a property of the *chosen*
+ * rail rather than of the catalogue — and is capped at nine by the keyboard, not by us.
+ */
+const shortcuts = (reach: number): { keys: string; does: string }[] => [
+  { keys: reach === 1 ? "1" : `1 – ${reach}`, does: "Open that device from the rail, in the order it is listed" },
   { keys: "[", does: "Collapse or expand the rail" },
   { keys: "Enter", does: "Fire the open screen's primary action, when it has one" },
   { keys: "Esc", does: "Close whatever is on top — this sheet, then settings, then the drawer" },
@@ -37,14 +52,24 @@ const SHORTCUTS: { keys: string; does: string }[] = [
  * The shell: which device is on screen, and the state every screen shares.
  *
  * One connection to the backend and one event stream serve every device. The rail down the side
- * holds every peripheral a 919 has; a device page renders the controls for its own and nothing
- * else, including the connection strip above them.
+ * holds the peripherals this bench chose to test; a device page renders the controls for its own
+ * and nothing else, including the connection strip above them.
  */
 export function App() {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [unreachable, setUnreachable] = useState<string | null>(null);
   const [log, setLog] = useState<LogEntry[]>([]);
-  const [view, setView] = useState<DeviceId>(() => recall("device", "lightboard", isDeviceId));
+  const [device, setDevice] = useState<DeviceId>(() => recall("device", "lightboard", isDeviceId));
+  const [selected, setSelected] = useState<DeviceId[] | null>(() => recallSet("devices", isDeviceId));
+  /*
+   * Where the device picker was opened from, which is also whether it is open at all.
+   *
+   * Not a boolean plus `selected === null`: read that way the sheet closed itself on the very
+   * first tick, because ticking is what stops `selected` being null. And not a boolean plus a
+   * separate first-run flag, because the two can disagree — this is one fact.
+   */
+  // `selected` is already bound by the time this initialiser runs, so storage is read once.
+  const [picker, setPicker] = useState<"landing" | "settings" | null>(() => selected === null ? "landing" : null);
   const [theme, setTheme] = useState<Theme>(loadTheme);
   const [drawer, setDrawer] = useState<DrawerTab | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -60,9 +85,62 @@ export function App() {
   const latest = useRef<Snapshot | null>(null);
   latest.current = snapshot;
 
+  /**
+   * What the rail carries, and which of it is on screen.
+   *
+   * `view` is derived rather than held, so it cannot name a device the rail is not showing. Held in
+   * state it would need an effect to correct it after every change to the selection, and that
+   * effect renders once with the old value — one frame of a screen for a device that is no longer
+   * there, on the exact press that removed it.
+   *
+   * `chosen` is never empty: `recallSet` reads an empty stored set as "never chosen", the default
+   * has four, and `toggleDevice` refuses to remove the last one.
+   */
+  const chosen = selected ?? DEFAULT_DEVICES;
+  const shown = DEVICES.filter((entry) => chosen.includes(entry.id));
+  const view = shown.some((entry) => entry.id === device) ? device : shown[0].id;
+  const railIds = shown.map((entry) => entry.id);
+  /** The devices on the rail this backend holds a handle for — what the sweep and the Bus tab act on. */
+  const wired = railIds.filter(isWired);
+  const picking = picker !== null;
+
+  /** The rail as it is *now*, for the key handler and the sweep, which both outlive this render. */
+  const rail = useRef<DeviceId[]>([]);
+  rail.current = railIds;
+
   useEffect(() => applyTheme(theme), [theme]);
   useEffect(() => remember("device", view), [view]);
   useEffect(() => remember("rail", railCollapsed ? "collapsed" : "open"), [railCollapsed]);
+  useEffect(() => {
+    if (selected) remember("devices", selected.join(","));
+  }, [selected]);
+
+  /**
+   * A new selection, and the handshakes it invalidates.
+   *
+   * A refusal from a device that has just left the rail would go on being counted in the masthead
+   * and in the gear's dot, about a device nobody can now see, open, or re-test.
+   */
+  const choose = useCallback((ids: DeviceId[]) => {
+    setSelected(ids);
+    setResults((was) => {
+      const kept: SweepResults = {};
+      for (const id of ids) if (isWired(id) && was[id]) kept[id] = was[id];
+      return kept;
+    });
+  }, []);
+
+  /**
+   * Closing the picker, which on a first landing is also what commits the default.
+   *
+   * The sheet has no Cancel — every tick has already applied to the rail behind it — so the only
+   * thing left for a close to mean is "yes, these". On a first landing that is the default set the
+   * rail is already showing, so accepting it by dismissal is what the screen was saying anyway.
+   */
+  const closePicker = useCallback(() => {
+    setSelected((was) => was ?? DEFAULT_DEVICES);
+    setPicker(null);
+  }, []);
 
   /**
    * The keyboard.
@@ -79,6 +157,7 @@ export function App() {
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         if (shortcutsOpen) setShortcutsOpen(false);
+        else if (picking) closePicker();
         else if (settingsOpen) setSettingsOpen(false);
         else setDrawer(null);
         return;
@@ -94,7 +173,7 @@ export function App() {
       const target = event.target instanceof Element ? event.target : null;
       if (target?.closest("input, textarea, select, [contenteditable]")) return;
       if (event.metaKey || event.ctrlKey || event.altKey) return;
-      if (shortcutsOpen || settingsOpen || drawer) return;
+      if (shortcutsOpen || settingsOpen || picking || drawer) return;
 
       if (event.key === "?") {
         setShortcutsOpen(true);
@@ -118,11 +197,13 @@ export function App() {
         return;
       }
       const slot = Number(event.key);
-      if (Number.isInteger(slot) && slot >= 1 && slot <= DEVICES.length) setView(DEVICES[slot - 1].id);
+      if (Number.isInteger(slot) && slot >= 1 && slot <= Math.min(rail.current.length, KEYED_ROWS)) {
+        setDevice(rail.current[slot - 1]);
+      }
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [settingsOpen, drawer, shortcutsOpen]);
+  }, [settingsOpen, drawer, shortcutsOpen, picking, closePicker]);
 
   /**
    * The stream is opened first and reconciled from, not merely appended to.
@@ -217,11 +298,17 @@ export function App() {
   const sweep = useCallback(async () => {
     const held = latest.current;
     if (!held || sweeping) return;
+    // Only what the rail is showing. The sweep claims handles for real, so a bench that took the
+    // card reader off the rail should not have this open it. Both entry points already disable
+    // themselves on an empty list; this is what makes that a fact rather than a rendering.
+    const ids = rail.current.filter(isWired);
+    if (ids.length === 0) return;
     setSettingsOpen(false);
     setSweeping(true);
     setResults({});
     const outcome: SweepResults = {};
     await runSweep(
+      ids,
       () => latest.current ?? held,
       (id, result) => {
         outcome[id] = result;
@@ -344,15 +431,31 @@ export function App() {
         </button>
       </header>
 
-      {shortcutsOpen && <Shortcuts onClose={() => setShortcutsOpen(false)} />}
+      {shortcutsOpen && <Shortcuts reach={Math.min(shown.length, KEYED_ROWS)} onClose={() => setShortcutsOpen(false)} />}
+
+      {picking && (
+        <DevicePicker
+          selected={chosen}
+          firstRun={picker === "landing"}
+          onSelect={choose}
+          onClose={closePicker}
+          toast={toast}
+        />
+      )}
 
       {settingsOpen && (
         <Settings
           theme={theme}
+          chosen={chosen}
+          claimable={wired.length}
           sweeping={sweeping}
           results={results}
           onTheme={setTheme}
           onSweep={sweep}
+          onDevices={() => {
+            setSettingsOpen(false);
+            setPicker("settings");
+          }}
           onClose={() => setSettingsOpen(false)}
         />
       )}
@@ -360,11 +463,12 @@ export function App() {
       <div className="body">
         <Rail
           snapshot={snapshot}
+          devices={shown}
           current={view}
           results={results}
           testing={testing}
           collapsed={railCollapsed}
-          onOpen={setView}
+          onOpen={setDevice}
           onToggle={() => setRailCollapsed((was) => !was)}
         />
 
@@ -397,6 +501,7 @@ export function App() {
         <Drawer
           tab={drawer}
           snapshot={snapshot}
+          wired={wired}
           log={log}
           view={view}
           results={results}
@@ -420,7 +525,7 @@ export function App() {
 }
 
 /** What the keyboard does. Opened with `?`, and the only place a shortcut is discoverable. */
-function Shortcuts({ onClose }: { onClose: () => void }) {
+function Shortcuts({ reach, onClose }: { reach: number; onClose: () => void }) {
   const panel = useDialog<HTMLDivElement>();
   /**
    * What Enter would do right now, read from the screen behind this sheet.
@@ -447,7 +552,7 @@ function Shortcuts({ onClose }: { onClose: () => void }) {
           <button className="icon-button" onClick={onClose} aria-label="Close the shortcut sheet">✕</button>
         </div>
         <div className="fieldlist">
-          {SHORTCUTS.map(({ keys, does }) => (
+          {shortcuts(reach).map(({ keys, does }) => (
             <div className="fieldrow" key={keys}>
               <span className="fieldrow-label"><kbd>{keys}</kbd></span>
               <span className="fieldrow-value">
@@ -472,12 +577,16 @@ function Shortcuts({ onClose }: { onClose: () => void }) {
 
 /** Appearance, and the one action that is about the whole kiosk rather than one device. */
 function Settings(
-  { theme, sweeping, results, onTheme, onSweep, onClose }: {
+  { theme, chosen, claimable, sweeping, results, onTheme, onSweep, onDevices, onClose }: {
     theme: Theme;
+    chosen: DeviceId[];
+    /** How many devices on the rail this backend can open — the sweep has nothing to do at zero. */
+    claimable: number;
     sweeping: boolean;
     results: SweepResults;
     onTheme: (theme: Theme) => void;
     onSweep: () => void;
+    onDevices: () => void;
     onClose: () => void;
   },
 ) {
@@ -486,6 +595,7 @@ function Settings(
   const failures = done.filter((result) => !result.pass).length;
   // The most recent attempt of any of them: a pass from twenty minutes ago is worth distrusting.
   const lastRun = done.map((result) => result.at).sort().pop();
+  const kiosk = kioskOf(chosen);
 
   return (
     <div className="popover-layer">
@@ -495,6 +605,12 @@ function Settings(
           <span className="tab" />
           <h2>Tester settings</h2>
           <button className="icon-button" onClick={onClose} aria-label="Close settings">✕</button>
+        </div>
+
+        <div className="setting">
+          <span className="setting-label">Devices</span>
+          <span className="chip">{kiosk ? kiosk.name : `${chosen.length} of ${DEVICES.length}`}</span>
+          <button className="pill" onClick={onDevices}>Choose…</button>
         </div>
 
         <div className="setting">
@@ -516,15 +632,18 @@ function Settings(
               style={lampStyle(failures ? LAMP.red : LAMP.green, sweeping ? "pulse" : done.length ? "on" : "off", 12)}
             />
             <span className="setting-label">Health sweep</span>
-            <button className="pill pill--primary" disabled={sweeping} onClick={onSweep}>
+            <button className="pill pill--primary" disabled={sweeping || claimable === 0} onClick={onSweep}>
               {sweeping ? "Sweeping…" : done.length ? "Again" : "Run sweep"}
             </button>
           </div>
           <span className="setting-note">
-            {sweeping
+            {claimable === 0
+              ? "Nothing on the rail has a driver bound to this backend, so there is nothing to handshake."
+              : sweeping
               ? "Claiming each wired device in turn."
               : done.length === 0
-              ? "Opens and handshakes every wired device without driving it. A device you already have open is left open."
+              ? `Opens and handshakes ${claimable === 1 ? "the one wired device" : `all ${claimable} wired devices`} ` +
+                "on the rail without driving them. A device you already have open is left open."
               : failures === 0
               ? `All ${done.length} answered at ${lastRun}. The device pane carries the detail.`
               : `${failures} of ${done.length} refused at ${lastRun} — the device pane carries the detail.`}

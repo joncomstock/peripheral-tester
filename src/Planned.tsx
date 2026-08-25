@@ -4,10 +4,13 @@ import { badgeClass } from "./look.ts";
 /**
  * A peripheral this tester cannot drive yet.
  *
- * Shown rather than hidden, and specific about *why*: for four of these the driver is written and
- * only the screen is missing, which is a very different thing from the payment terminal, where no
- * hardware has been chosen. Someone standing at a kiosk asking "can I test this" gets an answer
+ * Shown rather than hidden, and specific about *why*: for nearly all of these the driver is written
+ * and only the screen is missing, which is a very different thing from the payment terminal, where
+ * no hardware has been chosen. Someone standing at a kiosk asking "can I test this" gets an answer
  * either way, and it names the package so the next person knows where the work is.
+ *
+ * Deliberately no count. The catalogue grows whenever `hardware-libs` gains a driver, and a number
+ * written here is wrong from that commit onwards with nothing to catch it.
  */
 export function Planned({ entry }: { entry: DeviceEntry }) {
   return (

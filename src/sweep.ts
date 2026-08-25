@@ -12,7 +12,7 @@
 import * as api from "./api.ts";
 import type { Snapshot } from "./api.ts";
 import type { WiredId } from "./devices.ts";
-import { isLive, WIRED } from "./devices.ts";
+import { isLive } from "./devices.ts";
 import { clockTime } from "./format.ts";
 
 export interface SweepResult {
@@ -82,18 +82,23 @@ export async function handshake(id: WiredId, snapshot: Snapshot): Promise<SweepR
 }
 
 /**
- * Handshake every wired device in turn, reporting each as it lands.
+ * Handshake each of these devices in turn, reporting each as it lands.
  *
- * In turn rather than at once: the three share nothing electrically, but they do share this
- * process's attention, and a sweep whose lamps all flicker together tells an operator nothing about
- * which device is slow.
+ * Given the ids rather than reading `WIRED`, because the sweep claims handles for real: a bench
+ * testing only the light board should not have this open the card reader it deliberately left off
+ * the rail. What it sweeps is what the rail shows.
+ *
+ * In turn rather than at once: they share nothing electrically, but they do share this process's
+ * attention, and a sweep whose lamps all flicker together tells an operator nothing about which
+ * device is slow.
  */
 export async function runSweep(
+  ids: WiredId[],
   snapshot: () => Snapshot,
   onResult: (id: WiredId, result: SweepResult) => void,
   onActive: (id: WiredId | null) => void,
 ): Promise<void> {
-  for (const id of WIRED) {
+  for (const id of ids) {
     onActive(id);
     onResult(id, await handshake(id, snapshot()));
   }

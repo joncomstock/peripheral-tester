@@ -1,10 +1,10 @@
 /**
  * The handful of choices that describe the bench rather than the devices.
  *
- * Which screen you were on, whether the rail is collapsed, and light or dark: three things a bench
- * operator would otherwise re-set every time the page reloads — and on a kiosk it reloads whenever
- * anyone restarts the backend. Nothing about a *device* is kept here; that all lives in the
- * backend, which is the only thing that knows it.
+ * Which devices are on the rail, which screen you were on, whether the rail is collapsed, and
+ * light or dark: four things a bench operator would otherwise re-set every time the page reloads —
+ * and on a kiosk it reloads whenever anyone restarts the backend. Nothing about a *device* is kept
+ * here; that all lives in the backend, which is the only thing that knows it.
  *
  * A kiosk browser with storage disabled throws rather than returning null, so every access is
  * guarded. A tester that will not start because it could not remember a colour is worse than one
@@ -27,6 +27,26 @@ export function recall<T extends string>(key: string, fallback: T, accepts: (val
   }
   catch {
     return fallback;
+  }
+}
+
+/**
+ * A remembered set of ids, or `null` when nothing has ever been chosen — which is what opens the
+ * device picker on a first landing.
+ *
+ * `null` and "an empty set" are deliberately the same answer. A stored list that filters down to
+ * nothing — every id in it renamed by a later build — would otherwise put an empty rail on screen,
+ * which is a state with nothing to select and nothing to render.
+ */
+export function recallSet<T extends string>(key: string, accepts: (value: string) => value is T): T[] | null {
+  try {
+    const saved = localStorage.getItem(PREFIX + key);
+    if (saved === null) return null;
+    const kept = saved.split(",").filter(accepts);
+    return kept.length > 0 ? kept : null;
+  }
+  catch {
+    return null;
   }
 }
 

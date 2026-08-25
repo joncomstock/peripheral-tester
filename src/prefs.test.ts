@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { recall, remember } from "./prefs.ts";
+import { recall, recallSet, remember } from "./prefs.ts";
 
 /**
  * A kiosk browser with site data disabled throws on access rather than returning null, which is
@@ -60,5 +60,50 @@ describe("remembering a preference", () => {
       },
     });
     expect(() => remember("colour", "blue")).not.toThrow();
+  });
+});
+
+/**
+ * The set form, which the device picker depends on for one distinction the single form does not
+ * have to make: "never chosen" — which opens the picker unprompted — against a choice that happens
+ * to be small.
+ */
+describe("remembering a set", () => {
+  it("gives back what was written, in order", () => {
+    remember("devices", "red,blue");
+    expect(recallSet("devices", isColour)).toEqual(["red", "blue"]);
+  });
+
+  it("is null when nothing was ever written, which is what opens the picker", () => {
+    expect(recallSet("devices", isColour)).toBeNull();
+  });
+
+  it("drops ids an older build wrote that are no longer valid", () => {
+    store.set("peripheral-tester:devices", "red,chartreuse,blue");
+    expect(recallSet("devices", isColour)).toEqual(["red", "blue"]);
+  });
+
+  /**
+   * A stored set that filters down to nothing reads as "never chosen" rather than as an empty
+   * rail — a rail with nothing on it has nothing to select and nothing to render.
+   */
+  it("is null when everything stored was rejected", () => {
+    store.set("peripheral-tester:devices", "chartreuse,puce");
+    expect(recallSet("devices", isColour)).toBeNull();
+  });
+
+  it("is null for an empty string, which is what an empty join writes", () => {
+    store.set("peripheral-tester:devices", "");
+    expect(recallSet("devices", isColour)).toBeNull();
+  });
+
+  it("is null rather than throwing when storage refuses to be read", () => {
+    vi.stubGlobal("localStorage", {
+      getItem: () => {
+        throw new Error("The operation is insecure.");
+      },
+      setItem: () => {},
+    });
+    expect(recallSet("devices", isColour)).toBeNull();
   });
 });

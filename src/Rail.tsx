@@ -5,18 +5,24 @@ import { badgeClass, glyph, lampStyle } from "./look.ts";
 import type { SweepResults } from "./sweep.ts";
 
 /**
- * The device rail: every peripheral a 919 has, always on screen.
+ * The device rail: the peripherals this bench is testing, always on screen.
  *
  * It replaces the dashboard the tester used to open on. A dashboard is a place you go back to; a
  * rail is a place you are already in, and someone crouched at a kiosk moving between the card
  * reader and the light board should not have to leave one to reach the other. What was lost with
  * the dashboard — model, bus, connected-or-not — is on each row.
  *
+ * Which devices those are is chosen in the picker, not decided here — `hardware-libs` covers more
+ * peripherals than any one kiosk fits, and a rail carrying all of them would mostly be other
+ * people's hardware. The count says how much of the catalogue is being shown.
+ *
  * Collapsing narrows it to lamps and initials, for a kiosk display that has no width to spare.
  */
 export function Rail(
-  { snapshot, current, results, testing, collapsed, onOpen, onToggle }: {
+  { snapshot, devices, current, results, testing, collapsed, onOpen, onToggle }: {
     snapshot: Snapshot;
+    /** The chosen subset of `DEVICES`, in catalogue order. Never empty. */
+    devices: DeviceEntry[];
     current: DeviceId;
     results: SweepResults;
     /** The device the sweep is handshaking right now, if one is. */
@@ -30,7 +36,9 @@ export function Rail(
     <nav className={collapsed ? "rail rail--collapsed" : "rail"} aria-label="Devices">
       <div className="rail-head">
         <span className="rail-title">Devices</span>
-        <span className="chip">{DEVICES.length} total</span>
+        <span className="chip">
+          {devices.length === DEVICES.length ? `${DEVICES.length} total` : `${devices.length} of ${DEVICES.length}`}
+        </span>
         <button
           className="rail-toggle"
           onClick={onToggle}
@@ -41,7 +49,7 @@ export function Rail(
         </button>
       </div>
       <div className="rail-scroll">
-        {DEVICES.map((entry) => (
+        {devices.map((entry) => (
           <RailRow
             key={entry.id}
             entry={entry}

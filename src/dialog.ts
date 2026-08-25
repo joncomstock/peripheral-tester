@@ -8,8 +8,8 @@ const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), selec
 /**
  * Keep Tab inside an overlay, and put focus back where it came from on close.
  *
- * All three of the tester's overlays — the drawer, the settings popover and the shortcut sheet —
- * declare `aria-modal`, which tells a screen reader the rest of the page is inert. It does not
+ * Every one of the tester's overlays — the drawer, the settings popover, the device picker and the
+ * shortcut sheet — declares `aria-modal`, which tells a screen reader the rest of the page is inert. It does not
  * make it so. Tab was walking straight out of the drawer into the
  * device controls behind it, which on this app means a keyboard user can reach a Connect button
  * they cannot see. Closing then dropped focus onto `<body>`, so the next Tab restarted from the

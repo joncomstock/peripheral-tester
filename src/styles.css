@@ -617,6 +617,102 @@ input:focus:not(:focus-visible) {
   padding: 2px 7px;
 }
 
+/* ------------------------------------------------------------ device picker */
+
+/*
+ * The device picker is the one popover with a list long enough to run off a kiosk display, so it
+ * is capped and its list scrolls rather than the sheet growing past the viewport.
+ */
+.popover--tall {
+  width: min(520px, 94vw);
+  max-height: min(86vh, 720px);
+}
+
+/* Native, deliberately. A custom listbox would have to re-earn keyboard, touch and screen-reader
+   behaviour this already has, and the accent is the only thing about it worth restyling. */
+.select {
+  min-height: var(--touch-small);
+  flex: 1 1 180px;
+  min-width: 0;
+  padding: 0 10px;
+  font: inherit;
+  font-size: var(--font-seg);
+  color: var(--text);
+  background: var(--btn1);
+  border: 1px solid var(--btnline);
+  border-radius: 7px;
+  cursor: pointer;
+}
+
+.choose {
+  overflow: auto;
+  min-height: 0;
+  border-top: 1px solid var(--line3);
+}
+
+.choose-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: var(--touch-small);
+  padding: 9px var(--pad-x);
+  border-top: 1px solid var(--line3);
+  cursor: pointer;
+}
+
+.choose-row:first-child {
+  border-top: 0;
+}
+
+.choose-row:hover,
+.choose-row:focus-within {
+  background: var(--hd2);
+}
+
+.choose-box {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.choose-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.choose-name {
+  font-size: var(--font-label);
+  color: var(--text);
+}
+
+.choose-model {
+  font-size: var(--font-meta);
+  color: var(--text3);
+}
+
+.choose-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-top: 1px solid var(--line3);
+  background: var(--sunk);
+  flex-shrink: 0;
+}
+
+.choose-note {
+  flex: 1 1 140px;
+  font-size: 11px;
+  color: var(--text3);
+  text-wrap: pretty;
+}
+
 /* ---------------------------------------------------------------- rail */
 
 .body {

@@ -2,3 +2,7 @@ node_modules/
 dist/
 *.tsbuildinfo
 deno.lock
+
+# The local import map for the unpublished drivers. See the README: it points at checkouts
+# that exist only on one machine, and committing it breaks the build for everybody else.
+deno.local.jsonc

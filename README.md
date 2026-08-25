@@ -106,6 +106,10 @@ deno task dev:mock     # no hardware
 # → open http://localhost:8777/   (PORT overrides)
 ```
 
+Until the drivers publish, the `deno task` forms cannot resolve them — use the `-c
+deno.local.jsonc` commands in [Before the drivers are published](#before-the-drivers-are-published)
+instead. `npm` is unaffected either way.
+
 One process, because the one holding the COM handle has to be the one serving the page. The board is
 not opened until you press **Connect**, so starting the backend never touches the port.
 
@@ -126,18 +130,65 @@ git worktree add --detach ../wt-ier-driver   origin/feat/ier-lightboard
 git worktree add --detach ../wt-desko-penta  origin/feat/desko-penta
 ```
 
-Then swap the pins in `deno.jsonc` for relative paths — the light board pair at its worktree, the
-passport reader at its own, the card reader pair at whichever checkout holds `feat/omron-v4ku` —
-plus the shared deps those drivers resolve through this map rather than their own workspace:
-`@eai/shared`, `@eai/usb`, `@eai/async`, `@eai/hotplug`, `@std/bytes` and `@std/encoding`.
+Then write a `deno.local.jsonc` beside `deno.jsonc` and pass it with `-c`. **Do not edit
+`deno.jsonc`.** An earlier revision of this section said to swap the pins in place, and
+facepod-tester is what that advice produced: the swap was committed, and a clone without
+`hardware-libs` beside it failed with `TS2307`. `deno.local.jsonc` is gitignored, so the same
+mistake cannot be made twice.
+
+A config passed with `-c` **replaces** `deno.jsonc` rather than merging with it, so this file
+carries the whole map — the published pins as well as the swapped ones. It needs no `tasks`, `fmt`
+or `lint`: the commands below invoke Deno directly, which is the point.
+
+```jsonc
+{
+  "imports": {
+    // The three drivers, at the branches above. Adjust the paths to your layout.
+    "@eai/ier/s33380": "../wt-ier-driver/ier/s33380/mod.ts",
+    "@eai/serial": "../wt-ier-driver/serial/mod.ts",
+    "@eai/omron/v4ku": "../hardware-libs/omron/v4ku/mod.ts",
+    "@eai/hid": "../hardware-libs/hid/mod.ts",
+    "@eai/desko/penta": "../wt-desko-penta/desko/penta/mod.ts",
+    // The deps those drivers resolve through this map rather than their own workspace.
+    "@eai/shared": "../hardware-libs/shared/mod.ts",
+    "@eai/usb": "../hardware-libs/usb/mod.ts",
+    "@eai/hotplug": "../hardware-libs/hotplug/mod.ts",
+    "@eai/async": "jsr:@eai/async@^1.0.0",
+    "@std/bytes": "jsr:@std/bytes@^1",
+    "@std/encoding": "jsr:@std/encoding@^1",
+    // Unchanged from `deno.jsonc`, and required because `-c` replaces it wholesale.
+    "@eai/models": "jsr:@eai/models@^1.3.0",
+    "@eai/logging-ts": "jsr:@eai/logging-ts@^2.6.0",
+    "@std/async": "jsr:@std/async@^1.0.0",
+    "@std/path": "jsr:@std/path@^1.0.0",
+    "@std/http/file-server": "jsr:@std/http@^1/file-server",
+    "@std/log": "jsr:@std/log@^0.224.0",
+    "@std/assert": "jsr:@std/assert@^1.0.14"
+  }
+}
+```
+
+`deno task` reads `deno.jsonc` and will not see this file, so run the four backend commands
+directly while swapped:
+
+```bash
+deno run -c deno.local.jsonc --allow-ffi --allow-net --allow-env --allow-read server/main.ts
+deno run -c deno.local.jsonc --allow-net --allow-env --allow-read server/main.ts --mock
+deno check -c deno.local.jsonc server/main.ts
+deno test  -c deno.local.jsonc --allow-read server/
+```
+
+`deno fmt` and `deno lint` are unaffected — they never resolve an import — so those two stay as
+`deno fmt` and `deno lint` against the committed config.
 
 `@eai/desko` is the cheapest of the three to swap: it pulls in only `@eai/async` beyond what is
 already pinned here, because its native layer is behind an injectable symbol table rather than a
 USB stack.
 
-Miss one and the failure is a single TS2307 followed by a cascade of TS7006 implicit-anys pointing at
-code that is fine — the driver's exports silently became `any`. Read the _first_ error, not the
-loudest ones. Delete any `deno.lock` written while swapped, and **do not commit any of it**.
+Miss an entry and the failure is a single TS2307 followed by a cascade of TS7006 implicit-anys
+pointing at code that is fine — the driver's exports silently became `any`. Read the _first_ error,
+not the loudest ones. Delete any `deno.lock` written while swapped; it pins resolutions that do not
+exist for anybody else.
 
 ## Mock mode
 
@@ -211,4 +262,14 @@ exception, and a section with no name falls back to the driver's identifier so i
 ```bash
 deno task check && deno task test    # backend
 npm test && npm run build            # frontend
+deno fmt --check && deno lint        # both, and unaffected by the driver pins
+```
+
+Read the exit code, not the last line: `deno lint` prints what it found _before_ `Checked N files`,
+so a tail of a failing run looks clean.
+
+Until the drivers publish, the two `deno task` forms cannot resolve them. Swapped, they are:
+
+```bash
+deno check -c deno.local.jsonc server/main.ts && deno test -c deno.local.jsonc --allow-read server/
 ```

@@ -23,13 +23,14 @@ import { LightBoardPage, phrase as lightboardPhrase } from "./LightBoardPage.tsx
 const MAX_LINES = 200;
 
 /**
- * How far down the rail the number keys reach.
+ * How far down a rail of `rows` the number keys reach.
  *
- * A keydown carries one key, so there is no two-digit form to support and a rail longer than this
- * is reachable by key only as far as the ninth row. Named because the handler and the shortcut
- * sheet both have to say the same number, and two literals agreeing is not the same as one.
+ * A keydown carries one key, so there is no two-digit form to support and a longer rail is
+ * reachable by key only as far as its ninth row. A function rather than a constant because the
+ * handler and the shortcut sheet have to agree on the answer, not merely on the nine: two copies
+ * of the same clamp is the same defect one step along.
  */
-const KEYED_ROWS = 9;
+const keyedRows = (rows: number) => Math.min(rows, 9);
 
 type RailState = "open" | "collapsed";
 const isRailState = (value: string): value is RailState => value === "open" || value === "collapsed";
@@ -44,7 +45,7 @@ const shortcuts = (reach: number): { keys: string; does: string }[] => [
   { keys: reach === 1 ? "1" : `1 – ${reach}`, does: "Open that device from the rail, in the order it is listed" },
   { keys: "[", does: "Collapse or expand the rail" },
   { keys: "Enter", does: "Fire the open screen's primary action, when it has one" },
-  { keys: "Esc", does: "Close whatever is on top — this sheet, then settings, then the drawer" },
+  { keys: "Esc", does: "Close whatever is on top — this sheet, then the device picker, then settings, then the drawer" },
   { keys: "?", does: "Show this" },
 ];
 
@@ -93,8 +94,8 @@ export function App() {
    * effect renders once with the old value — one frame of a screen for a device that is no longer
    * there, on the exact press that removed it.
    *
-   * `chosen` is never empty: `recallSet` reads an empty stored set as "never chosen", the default
-   * has four, and `toggleDevice` refuses to remove the last one.
+   * `chosen` is never empty: `recallSet` reads an empty stored set as "never chosen", every kiosk
+   * preset has at least one device, and `toggleDevice` refuses to remove the last one.
    */
   const chosen = selected ?? DEFAULT_DEVICES;
   const shown = DEVICES.filter((entry) => chosen.includes(entry.id));
@@ -197,7 +198,7 @@ export function App() {
         return;
       }
       const slot = Number(event.key);
-      if (Number.isInteger(slot) && slot >= 1 && slot <= Math.min(rail.current.length, KEYED_ROWS)) {
+      if (Number.isInteger(slot) && slot >= 1 && slot <= keyedRows(rail.current.length)) {
         setDevice(rail.current[slot - 1]);
       }
     };
@@ -431,7 +432,7 @@ export function App() {
         </button>
       </header>
 
-      {shortcutsOpen && <Shortcuts reach={Math.min(shown.length, KEYED_ROWS)} onClose={() => setShortcutsOpen(false)} />}
+      {shortcutsOpen && <Shortcuts reach={keyedRows(shown.length)} onClose={() => setShortcutsOpen(false)} />}
 
       {picking && (
         <DevicePicker

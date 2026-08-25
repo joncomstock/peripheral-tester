@@ -33,6 +33,17 @@ describe("the catalogue", () => {
     expect(DEFAULT_DEVICES).not.toBe(KIOSKS[0].devices);
   });
 
+  /**
+   * The field's contract, which drifted once: `pkg` is documented as being for a device whose
+   * screen is not built, and it had been set on the three that have one.
+   */
+  it("carries a driver package on exactly the devices with no screen, bar the unchosen terminal", () => {
+    for (const entry of DEVICES) {
+      if (entry.ready) expect(entry.pkg, entry.name).toBeUndefined();
+      else if (entry.id !== "payment") expect(entry.pkg, entry.name).toBeTruthy();
+    }
+  });
+
   it("opens on a kiosk that carries all three devices with a screen", () => {
     const wired = DEVICES.filter((entry) => entry.ready).map((entry) => entry.id);
     expect(DEFAULT_DEVICES).toEqual(expect.arrayContaining(wired));

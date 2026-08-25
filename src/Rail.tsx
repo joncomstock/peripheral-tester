@@ -37,7 +37,9 @@ export function Rail(
       <div className="rail-head">
         <span className="rail-title">Devices</span>
         <span className="chip">
-          {devices.length === DEVICES.length ? `${DEVICES.length} total` : `${devices.length} of ${DEVICES.length}`}
+          {devices.length === DEVICES.length
+            ? `${DEVICES.length} total`
+            : `${devices.length} of ${DEVICES.length}`}
         </span>
         <button
           className="rail-toggle"

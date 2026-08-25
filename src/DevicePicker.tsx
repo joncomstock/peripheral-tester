@@ -13,8 +13,8 @@ const CUSTOM = "custom";
  *
  * A bench is one kiosk at a time, and `hardware-libs` has drivers for more devices than any single
  * unit fits — so the rail lists what you are actually standing in front of rather than the whole
- * catalogue. Shown unprompted on a first landing, because a rail of fourteen devices is a worse
- * first impression than one question.
+ * catalogue. Shown unprompted on a first landing, because a rail carrying every driver in
+ * `hardware-libs` is a worse first impression than one question.
  *
  * Every tick applies immediately to the rail behind this sheet. There is no OK and no Cancel: a
  * commit step would mean this panel and the rail could disagree for as long as it stayed open, and
@@ -78,8 +78,8 @@ export function DevicePicker(
           {firstRun
             ? "Which kiosk is this bench testing? Pick the model in front of you and its devices are ticked " +
               "for you, or build your own set below."
-            : "Everything hardware-libs has a driver for is listed, whether or not this tester has a screen " +
-              "for it yet. The rail carries the ticked ones."}
+            : "Every device hardware-libs drives is listed, whether or not this tester has a screen for it " +
+              "yet, along with the one still waiting on hardware. The rail carries the ticked ones."}
         </p>
 
         <div className="setting">
@@ -103,9 +103,9 @@ export function DevicePicker(
         </div>
 
         {/*
-          * What this kiosk has that nothing here can open. Without it a V1 preset that ticks one
-          * box out of that unit's four reads as a bug rather than as the honest state of the
-          * driver catalogue.
+          * What this kiosk has that nothing here can open. Without it, a preset that ticks fewer
+          * boxes than the unit in front of you has devices reads as a bug rather than as the
+          * honest state of the driver catalogue.
           */}
         {kiosk?.without && <p className="masknote">{kiosk.without}</p>}
 

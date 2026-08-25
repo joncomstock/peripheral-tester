@@ -7,15 +7,25 @@
  * what is missing so nobody has to guess whether it is the hardware or the tester.
  *
  * The rail shows a *chosen* subset of it, because a bench is one kiosk at a time. `KIOSKS` names
- * the units Elevation AI actually has, so choosing one is a single press rather than fourteen.
+ * the units Elevation AI actually has, so choosing one is a single press rather than a whole
+ * catalogue of ticks.
  *
  * The three wired ones are the only ids the backend knows; the rest are catalogue entries.
  *
- * **Kept by hand, and it has to be.** `hardware-libs` is a separate repo whose packages are all
- * unpublished and spread across unmerged branches — there is nothing this app could import or read
- * at build time that would know the whole set. So a driver that lands there does not appear here
+ * **Kept by hand, and it has to be.** `hardware-libs` is a separate repo, and the drivers are
+ * spread across branches that have not merged — there is nothing this app could import or read at
+ * build time that would know the whole set. So a driver that lands there does not appear here
  * until somebody adds it, and `deviceChoice.test.ts` can only check this file against itself.
  * When you touch a driver in `hardware-libs`, come back here.
+ *
+ * One driver per device, at its newest package name. `hardware-libs` also carries earlier
+ * generations of several of these — `@eai/honeywell-n56xx` before `@eai/honeywell/n56xx`,
+ * `@eai/pa-itk38` before `@eai/itk38`, `@eai/hengstler` before `@eai/xpm`, `@eai/node-usb` before
+ * `@eai/usb` — and those are left out on purpose rather than missed. Left out too are the
+ * libraries that are not a device at all: `@eai/usb`, `@eai/serial` and `@eai/hotplug`, and the
+ * two printer protocol bases — `@eai/aea-printer`, which the Custom 180 builds on, and
+ * `@eai/thermal-printer`, whose only consumers were the superseded generations above. The K8
+ * builds on neither: it carries its own USB layer and adapts to the external `aea-emulator-ts`.
  */
 
 import type { Snapshot, Status } from "./api.ts";
@@ -33,8 +43,12 @@ export type DeviceId =
   | "atr200"
   | "documentreader"
   | "facepod"
+  | "biocamera"
   | "bpprinter"
   | "xpm"
+  | "custom180"
+  | "k8"
+  | "ledboard"
   | "keypad"
   | "speech"
   | "volume"
@@ -79,7 +93,10 @@ export const DEVICES: DeviceEntry[] = [
   },
   {
     id: "atr200",
-    name: "Presentation Scanner",
+    // Not "Barcode Reader": that is the Honeywell's name with one word swapped, and the two would
+    // sit adjacent in the picker telling a bench operator apart only by their model line. TripTick
+    // is Access-IS's boarding-pass line and the validated decodes are boarding-pass PDF417.
+    name: "Boarding Pass Reader",
     model: "Access-IS TripTick ATR200",
     bus: "USB CDC",
     ready: false,
@@ -115,10 +132,22 @@ export const DEVICES: DeviceEntry[] = [
       "Camera context, capture with liveness, image-to-template and 1:1 matching. facepod-tester drives it, so no screen here.",
   },
   {
+    id: "biocamera",
+    name: "Biometric Camera",
+    model: "China Creator ZS-ATMC",
+    bus: "USB FFI",
+    ready: false,
+    pkg: "@eai/china-creator",
+    note:
+      "Lifecycle across USB hotplug, liveness detection and 1:1 face comparison, over two vendor DLLs.",
+  },
+  {
     id: "bpprinter",
     name: "Boarding Pass Printer",
     model: "Practical Automation ITK38",
-    bus: "TCP/IP",
+    // USB, not the TCP/IP this said before the SITA D4 preset started leaning on it. The driver
+    // README is unambiguous: "Communicates over USB using @eai/usb (FFI to libusb-1.0)".
+    bus: "USB bulk",
     ready: false,
     pkg: "@eai/itk38",
     note: "The driver covers status flags, encoding and the print path over the documented protocol. The tester screen is not built yet.",
@@ -132,6 +161,33 @@ export const DEVICES: DeviceEntry[] = [
     pkg: "@eai/xpm",
     note:
       "The driver covers the XPM-80, XPM-200 and XPM-200HR over USB bulk, behind the same interface as @eai/itk38.",
+  },
+  {
+    id: "custom180",
+    name: "BP & Bag Tag Printer",
+    model: "Custom 180 (KPM180-H)",
+    bus: "USB bulk",
+    ready: false,
+    pkg: "@eai/custom-180",
+    note: "The driver prints in both boarding-pass and bag-tag modes over the AEA protocol, with a sub-module for each.",
+  },
+  {
+    id: "k8",
+    name: "ATB Printer",
+    model: "K8 (NCR / Custom ATB)",
+    bus: "USB bulk",
+    ready: false,
+    pkg: "@eai/k8",
+    note: "The driver covers the NCR and Custom ATB thermal series, as a raw USB driver and as an AEAEmulator adapter.",
+  },
+  {
+    id: "ledboard",
+    name: "LED Board",
+    model: "Kiosk Innovations",
+    bus: "RS-232",
+    ready: false,
+    pkg: "@eai/ki-led-board",
+    note: "A second indicator board, unrelated to the 919's S33380. The driver speaks it over a raw serial transport.",
   },
   {
     id: "keypad",
@@ -191,8 +247,9 @@ export function deviceEntry(id: DeviceId): DeviceEntry {
  * A kiosk Elevation AI has, and the devices in it this repo has a driver for.
  *
  * `without` is the rest of that kiosk's bill of materials — the components `hardware-libs` has no
- * driver for. Named rather than omitted, because a V1 preset that ticks one box out of four reads
- * as a bug unless it says why: the kiosk has four devices, and three of them nothing here can open.
+ * driver for. Named rather than omitted, because a preset that ticks fewer boxes than the unit in
+ * front of you has devices reads as a bug unless it says why. A kiosk with nothing uncovered has
+ * no `without` at all, which is how the two cases stay distinguishable.
  *
  * The lists come from the unit surveys in the company KB, not from a datasheet — plus whatever
  * this repo has since driven on the unit itself. The 919's light board is the case in point: the
@@ -211,14 +268,15 @@ export const KIOSKS: KioskModel[] = [
     id: "ier919",
     name: "IER 919",
     devices: ["lightboard", "cardreader", "passportreader", "xpm"],
-    without: "Also fits an IER 400 ATB printer — no driver in hardware-libs.",
+    // `@eai/aea-printer` is a generic AEA base, not an IER 400 driver, so this stays a gap
+    // rather than becoming another tick.
+    without: "Also fits an IER 400 ATB printer — hardware-libs has the AEA base but no IER 400 driver.",
   },
   {
     id: "embrossv1",
     name: "Embross V1",
-    devices: ["documentreader"],
-    without:
-      "Also fits a Datalogic GFS4470 scanner, a Custom KPM180H printer and an ID TECH card reader — no drivers in hardware-libs.",
+    devices: ["documentreader", "custom180"],
+    without: "Also fits a Datalogic GFS4470 scanner and an ID TECH card reader — no drivers in hardware-libs.",
   },
   {
     id: "sitad4",
@@ -229,8 +287,8 @@ export const KIOSKS: KioskModel[] = [
   {
     id: "ncr120",
     name: "NCR Touchport 120",
-    devices: ["barcode"],
-    without: "Also fits a K8 boarding-pass printer — no driver in hardware-libs.",
+    // Both of this unit's components have a driver, so there is nothing for `without` to say.
+    devices: ["barcode", "k8"],
   },
 ];
 
@@ -263,7 +321,7 @@ export function kioskOf(selected: DeviceId[]): KioskModel | null {
  */
 export function toggleDevice(selected: DeviceId[], id: DeviceId): DeviceId[] {
   if (selected.includes(id)) return selected.length === 1 ? selected : selected.filter((each) => each !== id);
-  return DEVICES.filter((device) => device.id === id || selected.includes(device.id)).map((device) => device.id);
+  return DEVICES.filter((entry) => entry.id === id || selected.includes(entry.id)).map((entry) => entry.id);
 }
 
 /** One place the three device slices are addressed by id, so nothing re-derives the mapping. */

@@ -54,7 +54,16 @@ export function Drawer(
 
         {tab === "activity"
           ? <Activity log={log} view={view} phrase={phrase} onClear={onClear} toast={toast} />
-          : <Bus snapshot={snapshot} wired={wired} results={results} sweeping={sweeping} testing={testing} onSweep={onSweep} />}
+          : (
+            <Bus
+              snapshot={snapshot}
+              wired={wired}
+              results={results}
+              sweeping={sweeping}
+              testing={testing}
+              onSweep={onSweep}
+            />
+          )}
       </div>
     </div>
   );
@@ -101,8 +110,8 @@ function Bus(
         </button>
       </div>
 
-      {/* No list of which devices those are: `WIRED` is the one place that is written down, and
-          spelling it out here in English is a copy nothing would catch drifting. */}
+      {/* No list of which devices those are. Which ids are wired is settled once, where the rail is
+          built; spelling it out here in English is a copy nothing would catch drifting. */}
       {wired.length === 0 && (
         <p className="masknote">
           Every device on the rail is one this backend holds no handle for, so there is nothing here

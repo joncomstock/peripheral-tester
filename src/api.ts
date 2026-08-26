@@ -283,12 +283,30 @@ export interface ScanResult {
 
 // ---- snapshot + events ----------------------------------------------------------------------
 
+/**
+ * The devices this backend holds a handle for.
+ *
+ * Declared here rather than in `devices.ts` because it is part of the wire contract — these are the
+ * ids the backend tags its state, its log lines and its absences with. `devices.ts` re-exports it
+ * so the catalogue and the wire cannot drift apart.
+ */
+export type WiredId = "lightboard" | "cardreader" | "passportreader";
+
 export interface Snapshot {
   mock: boolean;
+  /**
+   * Why a device is not on this bench, keyed by device id.
+   *
+   * The drivers live on `hardware-libs` branches that have not merged, so a checkout resolves only
+   * the ones its branch carries. A device whose driver is not there has no state to report — its
+   * slice below is `null` — and this says why, in the driver's own words, so "the branch moved on"
+   * is distinguishable from "the cable is out".
+   */
+  absent: Partial<Record<WiredId, string>>;
   log: LogEntry[];
-  lightboard: LightBoardState;
-  cardreader: CardReaderState;
-  passportreader: PassportReaderState;
+  lightboard: LightBoardState | null;
+  cardreader: CardReaderState | null;
+  passportreader: PassportReaderState | null;
 }
 
 export type Event =

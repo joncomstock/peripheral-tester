@@ -33,8 +33,14 @@ import { usbId } from "./format.ts";
 import { LAMP } from "./look.ts";
 import type { LampMode, Tone } from "./look.ts";
 
-/** A device the backend holds a handle for. Every API call and log line is tagged with one. */
-export type WiredId = "lightboard" | "cardreader" | "passportreader";
+/**
+ * A device the backend holds a handle for. Every API call and log line is tagged with one.
+ *
+ * Imported as well as re-exported: a bare `export ... from` forwards the name without binding it
+ * here, so everything in this file that names `WiredId` would be referring to nothing.
+ */
+import type { WiredId } from "./api.ts";
+export type { WiredId };
 
 export type DeviceId =
   | WiredId
@@ -62,15 +68,21 @@ export interface DeviceEntry {
   bus: string;
   /** True when this tester can actually drive it, which is what puts a screen behind the row. */
   ready: boolean;
-  /** The driver package, for a device whose screen is not built. */
+  /**
+   * The driver package.
+   *
+   * Carried by every device with a driver, not only the ones whose screen is missing: `Planned`
+   * names it to say where the work is, and `Unavailable` names it to say which branch to put the
+   * backend's checkout on. Absent only for hardware nobody has chosen yet.
+   */
   pkg?: string;
   note?: string;
 }
 
 export const DEVICES: DeviceEntry[] = [
-  { id: "lightboard", name: "Light Board", model: "IER S33380", bus: "RS-232", ready: true },
-  { id: "cardreader", name: "Card Reader", model: "Hitachi-Omron V4KU", bus: "USB HID", ready: true },
-  { id: "passportreader", name: "Passport Reader", model: "DESKO PENTA", bus: "USB FFI", ready: true },
+  { id: "lightboard", name: "Light Board", model: "IER S33380", bus: "RS-232", ready: true, pkg: "@eai/ier/s33380" },
+  { id: "cardreader", name: "Card Reader", model: "Hitachi-Omron V4KU", bus: "USB HID", ready: true, pkg: "@eai/omron/v4ku" },
+  { id: "passportreader", name: "Passport Reader", model: "DESKO PENTA", bus: "USB FFI", ready: true, pkg: "@eai/desko/penta" },
   {
     id: "barcode",
     name: "Barcode Scanner",
@@ -324,9 +336,27 @@ export function toggleDevice(selected: DeviceId[], id: DeviceId): DeviceId[] {
   return DEVICES.filter((entry) => entry.id === id || selected.includes(entry.id)).map((entry) => entry.id);
 }
 
-/** One place the three device slices are addressed by id, so nothing re-derives the mapping. */
-export const statusOf = (snapshot: Snapshot, id: WiredId): Status =>
-  id === "lightboard" ? snapshot.lightboard.status : id === "cardreader" ? snapshot.cardreader.status : snapshot.passportreader.status;
+/**
+ * One place the three device slices are addressed by id, so nothing re-derives the mapping.
+ *
+ * `null` when the backend has no driver for this device in its checkout: there is no handle, so
+ * there is no status — which is a different thing from a handle that is closed.
+ */
+export const statusOf = (snapshot: Snapshot, id: WiredId): Status | null =>
+  id === "lightboard"
+    ? snapshot.lightboard?.status ?? null
+    : id === "cardreader"
+    ? snapshot.cardreader?.status ?? null
+    : snapshot.passportreader?.status ?? null;
+
+/**
+ * Why this device's driver is not in the backend's checkout, in the driver's own words.
+ *
+ * The drivers live on `hardware-libs` branches that have not merged, so which of them the backend
+ * can resolve depends on the branch it is on. Undefined means it resolved.
+ */
+export const absenceOf = (snapshot: Snapshot, id: DeviceId): string | undefined =>
+  isWired(id) ? snapshot.absent[id] : undefined;
 
 /** Whether the backend is holding this device's handle right now. */
 export const isLive = (snapshot: Snapshot, id: DeviceId): boolean => isWired(id) && statusOf(snapshot, id) === "open";
@@ -339,8 +369,21 @@ export const isLive = (snapshot: Snapshot, id: DeviceId): boolean => isWired(id)
  * rail showed as "Testing" showed there as "Idle".
  */
 export function verdict(
-  { ready, live, testing, pass }: { ready: boolean; live: boolean; testing: boolean; pass?: boolean },
+  { ready, live, testing, pass, absent }: {
+    ready: boolean;
+    live: boolean;
+    testing: boolean;
+    pass?: boolean;
+    /** True when the backend has no driver for this device in its checkout. */
+    absent?: boolean;
+  },
 ): { tone: Tone; text: string; mode: LampMode; color: string } {
+  /*
+   * Before "Planned", because it is the more specific answer and the two are different problems.
+   * "Planned" means this tester has no screen for a driver that exists; this means the backend's
+   * checkout is on a branch that does not carry the driver at all, which a branch switch fixes.
+   */
+  if (absent) return { tone: "warn", text: "No driver", mode: "off", color: LAMP.amber };
   if (!ready) return { tone: "neutral", text: "Planned", mode: "off", color: LAMP.green };
   if (testing) return { tone: "warn", text: "Testing", mode: "pulse", color: LAMP.amber };
   if (pass === false) return { tone: "bad", text: "Refused", mode: "on", color: LAMP.red };
@@ -357,12 +400,15 @@ export function verdict(
  */
 export function busLine(snapshot: Snapshot, id: DeviceId): string {
   const entry = deviceEntry(id);
-  if (id === "lightboard") return `${entry.bus} · ${snapshot.lightboard.portName}`;
-  if (id === "cardreader") {
+  // No driver, no address. The bus is still worth saying — it is what the device *is*, not what
+  // this backend can currently reach.
+  if (absenceOf(snapshot, id) !== undefined) return `${entry.bus} · driver not in this checkout`;
+  if (id === "lightboard" && snapshot.lightboard) return `${entry.bus} · ${snapshot.lightboard.portName}`;
+  if (id === "cardreader" && snapshot.cardreader) {
     const { vendorId, productId } = snapshot.cardreader.usb;
     return `${entry.bus} · ${usbId(vendorId)}:${usbId(productId)}`;
   }
-  if (id === "passportreader") {
+  if (id === "passportreader" && snapshot.passportreader) {
     const device = snapshot.passportreader.device;
     return device
       ? `${entry.bus} · ${usbId(device.vendorId)}:${usbId(device.productId)}`

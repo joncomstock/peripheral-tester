@@ -134,58 +134,41 @@ reload works while the board stays on the Deno side (`TESTER_PORT` overrides the
 
 ### Before the drivers are published
 
-No driver is on the registry yet, and they live on **three unmerged branches** of `hardware-libs` —
-`@eai/ier` and `@eai/serial` on `feat/ier-lightboard`, `@eai/omron` and `@eai/hid` on
-`feat/omron-v4ku`, `@eai/desko` on `feat/desko-penta`. Until they land on master a clean clone
-cannot build, and pointing at a single checkout is not enough: two of the three branches have to be
-worktrees.
+No driver is on the registry yet, and they live on **unmerged branches** of `hardware-libs` — and
+not on the same one. `@eai/omron` and the HID report transport it needs from `@eai/usb` are on
+`feat/omron-v4ku`; `@eai/desko` is on `feat/desko-penta`; `@eai/ier` is on `feat/ier-lightboard`,
+which has since moved the light board off a COM port onto USB serial and deleted `@eai/serial`
+outright. So a checkout resolves the drivers its branch carries and no others.
+
+**The tester does not need to know which branch you are on.** Point it at your local checkouts and
+generate the import map from what is actually there:
 
 ```bash
-cd hardware-libs
-git worktree add --detach ../wt-ier-driver   origin/feat/ier-lightboard
-git worktree add --detach ../wt-desko-penta  origin/feat/desko-penta
+deno run --allow-read --allow-write scripts/localmap.ts
 ```
 
-Then write a `deno.local.jsonc` beside `deno.jsonc` and pass it with `-c`. **Do not edit
-`deno.jsonc`.** An earlier revision of this section said to swap the pins in place, and
-facepod-tester is what that advice produced: the swap was committed, and a clone without
-`hardware-libs` beside it failed with `TS2307`. `deno.local.jsonc` is gitignored, so the same
-mistake cannot be made twice.
+It searches `../hardware-libs` and the sibling worktrees, takes the first one holding each package,
+and writes `deno.local.jsonc`. It prints what it found and what it did not, per device:
 
-A config passed with `-c` **replaces** `deno.jsonc` rather than merging with it, so this file
-carries the whole map — the published pins as well as the swapped ones. It needs no `tasks`, `fmt`
-or `lint`: the commands below invoke Deno directly, which is the point.
-
-```jsonc
-{
-  "imports": {
-    // The three drivers, at the branches above. Adjust the paths to your layout.
-    "@eai/ier/s33380": "../wt-ier-driver/ier/s33380/mod.ts",
-    "@eai/serial": "../wt-ier-driver/serial/mod.ts",
-    "@eai/omron/v4ku": "../hardware-libs/omron/v4ku/mod.ts",
-    "@eai/hid": "../hardware-libs/hid/mod.ts",
-    "@eai/desko/penta": "../wt-desko-penta/desko/penta/mod.ts",
-    // The deps those drivers resolve through this map rather than their own workspace.
-    "@eai/shared": "../hardware-libs/shared/mod.ts",
-    "@eai/usb": "../hardware-libs/usb/mod.ts",
-    "@eai/hotplug": "../hardware-libs/hotplug/mod.ts",
-    "@eai/async": "jsr:@eai/async@^1.0.0",
-    "@std/bytes": "jsr:@std/bytes@^1",
-    "@std/encoding": "jsr:@std/encoding@^1",
-    // Unchanged from `deno.jsonc`, and required because `-c` replaces it wholesale.
-    "@eai/models": "jsr:@eai/models@^1.3.0",
-    "@eai/logging-ts": "jsr:@eai/logging-ts@^2.6.0",
-    "@std/async": "jsr:@std/async@^1.0.0",
-    "@std/path": "jsr:@std/path@^1.0.0",
-    "@std/http/file-server": "jsr:@std/http@^1/file-server",
-    "@std/log": "jsr:@std/log@^0.224.0",
-    "@std/assert": "jsr:@std/assert@^1.0.14"
-  }
-}
+```text
+wrote deno.local.jsonc — 6 local, 1 not on this branch
+  found    @eai/omron/v4ku   ->  ../hardware-libs/omron/v4ku/mod.ts
+  absent   @eai/serial
 ```
 
-`deno task` reads `deno.jsonc` and will not see this file, so run the four backend commands
-directly while swapped:
+Switch a checkout to another branch, run it again, and the map follows. `deno.jsonc` is never
+touched and `deno.local.jsonc` is gitignored — committing local paths is the mistake facepod-tester
+made, where a clone without `hardware-libs` beside it failed with `TS2307`.
+
+**A device whose driver is not there does not stop the others.** The backend imports each device
+module dynamically, so an unresolvable driver rejects that one import rather than failing to link
+the process. The device is then offered as unavailable — the rail badges it **No driver**, its pane
+quotes the loader's own words and names the package to check out, and its routes answer `503`. The
+card reader and the passport reader work normally while the light board's driver sits on a branch
+whose API the backend has not been ported to yet.
+
+Because `-c` **replaces** `deno.jsonc` rather than merging with it, the generated file carries the
+whole map — the published pins as well as the local paths. Run the backend with it:
 
 ```bash
 deno run -c deno.local.jsonc --allow-ffi --allow-net --allow-env --allow-read server/main.ts
@@ -194,17 +177,15 @@ deno check -c deno.local.jsonc server/main.ts
 deno test  -c deno.local.jsonc --allow-read server/
 ```
 
-`deno fmt` and `deno lint` are unaffected — they never resolve an import — so those two stay as
+`deno check` type-checks every device module, including one whose driver is missing or has moved
+on, so it reports what the branch cannot satisfy. That is a check-time answer, not a run-time one:
+the backend still starts, and still drives every device whose driver did resolve.
+
+`deno fmt` and `deno lint` are unaffected — they never resolve an import — so those stay as
 `deno fmt` and `deno lint` against the committed config.
 
-`@eai/desko` is the cheapest of the three to swap: it pulls in only `@eai/async` beyond what is
-already pinned here, because its native layer is behind an injectable symbol table rather than a
-USB stack.
-
-Miss an entry and the failure is a single TS2307 followed by a cascade of TS7006 implicit-anys
-pointing at code that is fine — the driver's exports silently became `any`. Read the _first_ error,
-not the loudest ones. Delete any `deno.lock` written while swapped; it pins resolutions that do not
-exist for anybody else.
+Delete any `deno.lock` written while swapped; it pins resolutions that do not exist for anybody
+else.
 
 ## Mock mode
 
@@ -255,6 +236,7 @@ backend attaches a log handler so those land in **Activity** instead, quoted ver
 | `src/DevicePicker.tsx`       | Choosing which of the catalogue the rail carries.                 |
 | `src/Rail.tsx`               | The device rail.                                                  |
 | `src/Planned.tsx`            | The pane for a peripheral with a driver but no screen yet.        |
+| `src/Unavailable.tsx`        | The pane for a device whose driver is not in this checkout.       |
 | `src/LightBoardPage.tsx`     | The light board's screen and connection strip.                    |
 | `src/CardReaderPage.tsx`     | The card reader's screen and connection strip.                    |
 | `src/PassportReaderPage.tsx` | The passport reader's screen and connection strip.                |
@@ -269,6 +251,7 @@ backend attaches a log handler so those land in **Activity** instead, quoted ver
 | `src/lightboardControls.ts`  | Vocabulary → controls, and the naming rule the page uses.         |
 | `src/format.ts`              | Display formatting shared by the screens.                         |
 | `src/look.ts`                | Lamps, segmented buttons and the strip preview, computed.         |
+| `scripts/localmap.ts`        | Generates `deno.local.jsonc` from the drivers actually on disk.   |
 | `src/styles.css`             | Everything static, and the light and dark tokens.                 |
 
 The light board's controls are generated from `/api/state`, which the backend builds from the

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { LogEntry, Snapshot } from "./api.ts";
 import * as api from "./api.ts";
 import type { DeviceId, WiredId } from "./devices.ts";
-import { DEFAULT_DEVICES, DEVICES, deviceEntry, isDeviceId, isWired, kioskOf, statusOf, WIRED } from "./devices.ts";
+import { absenceOf, DEFAULT_DEVICES, DEVICES, deviceEntry, isDeviceId, isWired, kioskOf, statusOf, WIRED } from "./devices.ts";
 import { DevicePicker } from "./DevicePicker.tsx";
 import { useDialog } from "./dialog.ts";
 import { Drawer } from "./Drawer.tsx";
@@ -10,6 +10,7 @@ import { clockTime } from "./format.ts";
 import type { DrawerTab } from "./Drawer.tsx";
 import { badgeClass, glyph, LAMP, lampStyle } from "./look.ts";
 import { Planned } from "./Planned.tsx";
+import { Unavailable } from "./Unavailable.tsx";
 import { Rail } from "./Rail.tsx";
 import { handshake, runSweep } from "./sweep.ts";
 import type { SweepResult, SweepResults } from "./sweep.ts";
@@ -233,11 +234,14 @@ export function App() {
         // so it is carried forward rather than clobbered.
         setSnapshot((previous) => {
           if (!previous) return previous;
+          // A device with no driver in this checkout has no slice to update, and never emits one.
+          // Guarded rather than asserted: the stream is the backend talking, not this file.
           // Named per device rather than defaulting: "anything that is not the light board is the
           // card reader" held with two devices and stopped holding at three. A fourth would have
           // been written into `cardreader`, rendering another peripheral's fields on its page.
           // Naming each also lets the discriminated union narrow, so neither cast is needed.
           if (event.device === "lightboard") {
+            if (!previous.lightboard) return previous;
             return { ...previous, lightboard: { ...previous.lightboard, ...event.state } };
           }
           if (event.device === "cardreader") return { ...previous, cardreader: event.state };
@@ -391,6 +395,7 @@ export function App() {
   })();
 
   const entry = deviceEntry(view);
+  const absence = absenceOf(snapshot, view);
   const result = isWired(view) ? results[view] : undefined;
   const failures = Object.values(results).filter((each) => !each.pass).length;
 
@@ -485,13 +490,18 @@ export function App() {
             </div>
           )}
 
-          {view === "lightboard" && (
+          {/*
+            * Absence first: a device whose driver the backend could not load has no state to hand a
+            * screen, so its page cannot render at all — and the reason is worth a pane of its own.
+            */}
+          {absence !== undefined && <Unavailable entry={entry} reason={absence} />}
+          {view === "lightboard" && snapshot.lightboard && (
             <LightBoardPage state={snapshot.lightboard} onFail={fail} toast={toast} progress={progress} />
           )}
-          {view === "cardreader" && (
+          {view === "cardreader" && snapshot.cardreader && (
             <CardReaderPage state={snapshot.cardreader} onFail={fail} toast={toast} progress={progress} />
           )}
-          {view === "passportreader" && (
+          {view === "passportreader" && snapshot.passportreader && (
             <PassportReaderPage state={snapshot.passportreader} onFail={fail} toast={toast} progress={progress} />
           )}
           {!entry.ready && <Planned entry={entry} />}

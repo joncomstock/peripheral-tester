@@ -34,13 +34,14 @@ describe("the catalogue", () => {
   });
 
   /**
-   * The field's contract, which drifted once: `pkg` is documented as being for a device whose
-   * screen is not built, and it had been set on the three that have one.
+   * Every device with a driver names it. The `Unavailable` pane tells you which branch to put the
+   * backend's checkout on, and it can only do that from `pkg` — so a blank one is a dead end at
+   * exactly the moment somebody needs the answer.
    */
-  it("carries a driver package on exactly the devices with no screen, bar the unchosen terminal", () => {
+  it("names a driver package for every device that has one", () => {
     for (const entry of DEVICES) {
-      if (entry.ready) expect(entry.pkg, entry.name).toBeUndefined();
-      else if (entry.id !== "payment") expect(entry.pkg, entry.name).toBeTruthy();
+      if (entry.id === "payment") expect(entry.pkg, entry.name).toBeUndefined();
+      else expect(entry.pkg, entry.name).toBeTruthy();
     }
   });
 

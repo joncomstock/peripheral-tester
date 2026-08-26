@@ -2,7 +2,7 @@ import type { LogEntry, Snapshot } from "./api.ts";
 import { useDialog } from "./dialog.ts";
 import { Activity } from "./Activity.tsx";
 import type { DeviceId, WiredId } from "./devices.ts";
-import { busLine, deviceEntry, isLive, verdict } from "./devices.ts";
+import { absenceOf, busLine, deviceEntry, isLive, verdict } from "./devices.ts";
 import { badgeClass, glyph, lampStyle } from "./look.ts";
 import type { Tone } from "./look.ts";
 import type { SweepResults } from "./sweep.ts";
@@ -121,11 +121,13 @@ function Bus(
 
       {wired.map((id) => {
         const result = results[id];
+        const absence = absenceOf(snapshot, id);
         const { tone, text, mode, color } = verdict({
           ready: true,
           live: isLive(snapshot, id),
           testing: testing === id,
           pass: result?.pass,
+          absent: absence !== undefined,
         });
         return (
           <div className="bus-row" key={id}>
@@ -133,7 +135,8 @@ function Bus(
             <span className="bus-address">{busLine(snapshot, id)}</span>
             <span className="bus-name">{deviceEntry(id).model}</span>
             <span className={badgeClass(tone)}>{glyph(tone)}{text}</span>
-            {result && !result.pass && <span className="bus-detail">{result.detail}</span>}
+            {absence !== undefined && <span className="bus-detail">{absence}</span>}
+            {absence === undefined && result && !result.pass && <span className="bus-detail">{result.detail}</span>}
             {/*
               * The one refusal worth explaining. A V4KU that is plugged in and still will not open
               * is almost always enumerating on the Windows HID class driver, and `OmronV4KU.open()`

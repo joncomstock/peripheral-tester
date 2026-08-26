@@ -24,14 +24,17 @@ const { WIRED } = await import("./devices.ts");
 
 /** Only the fields the sweep reads. The rest of a `Snapshot` is irrelevant to it. */
 const snapshotWith = (
-  { board = "closed", card = "closed", passport = "closed", portName = "COM14" }: {
+  { board = "closed", card = "closed", passport = "closed", portName = "COM14", absent = {} }: {
     board?: string;
     card?: string;
     passport?: string;
     portName?: string;
+    /** Devices the backend has no driver for, keyed as the wire keys them. */
+    absent?: Record<string, string>;
   } = {},
 ) =>
   ({
+    absent,
     lightboard: { status: board, portName },
     cardreader: { status: card },
     passportreader: { status: passport, device: undefined, api: undefined },
@@ -83,6 +86,16 @@ describe("handshake", () => {
     api.passportreader.connect.mockRejectedValue(new Error("PageScanAPI.dll not found"));
     api.passportreader.disconnect.mockRejectedValue(new Error("nothing to release"));
     await expect(handshake("passportreader", snapshotWith())).resolves.toMatchObject({ pass: false });
+  });
+  /**
+   * The sweep claims handles for real, so a device the backend never loaded must be refused before
+   * anything is attempted — otherwise the failure reads as hardware rather than as a branch.
+   */
+  it("refuses a device whose driver is not in the backend's checkout, without calling connect", async () => {
+    const result = await handshake("cardreader", snapshotWith({ absent: { cardreader: "not in import map" } }));
+    expect(result.pass).toBe(false);
+    expect(result.detail).toContain("No driver in this checkout");
+    expect(api.cardreader.connect).not.toHaveBeenCalled();
   });
 });
 

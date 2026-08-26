@@ -10,7 +10,7 @@
  * @module
  */
 
-import type { HidDevice } from "@eai/hid";
+import type { HidDevice } from "@eai/usb";
 import { ALL_TRACKS, LED_COLOR_DIGIT, LED_OFF, LED_ON_PREFIX, OmronV4KU, SHUTTER_COMMANDS, V4KU_PID, V4KU_VID } from "@eai/omron/v4ku";
 import type { CardData, LedColor, MonitorOutcome, TransactionSetting } from "@eai/omron/v4ku";
 import { announce, record } from "./activity.ts";

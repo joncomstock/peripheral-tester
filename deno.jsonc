@@ -35,6 +35,9 @@
     "dev": "deno run --allow-ffi --allow-net --allow-env --allow-read server/main.ts",
     // No hardware and no FFI permission: fake transports driven through the real drivers.
     "dev:mock": "deno run --allow-net --allow-env --allow-read server/main.ts --mock",
+    // Rewrites deno.local.jsonc from the drivers actually on disk. Run it after switching a
+    // hardware-libs checkout to another branch; see README.md.
+    "localmap": "deno run --allow-read --allow-write scripts/localmap.ts",
     "test": "deno test server/",
     "check": "deno check server/main.ts"
   },

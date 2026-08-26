@@ -25,7 +25,7 @@ export interface SweepResult {
 export type SweepResults = Partial<Record<WiredId, SweepResult>>;
 
 const CONNECT: Record<WiredId, (snapshot: Snapshot) => Promise<unknown>> = {
-  lightboard: (snapshot) => api.lightboard.connect(snapshot.lightboard.portName),
+  lightboard: (snapshot) => api.lightboard.connect(snapshot.lightboard?.portName ?? ""),
   cardreader: () => api.cardreader.connect(),
   passportreader: () => api.passportreader.connect(),
 };
@@ -43,12 +43,12 @@ const DISCONNECT: Record<WiredId, () => Promise<unknown>> = {
  * and adding a fourth device means adding a row to each rather than finding three cascades.
  */
 const DETAIL: Record<WiredId, (snapshot: Snapshot) => string> = {
-  lightboard: (snapshot) => `Handshake acknowledged on ${snapshot.lightboard.portName}`,
+  lightboard: (snapshot) => `Handshake acknowledged on ${snapshot.lightboard?.portName ?? "—"}`,
   cardreader: () => "Interface claimed, reader answered",
   passportreader: (snapshot) => {
-    const device = snapshot.passportreader.device;
+    const device = snapshot.passportreader?.device;
     return device
-      ? `Reported ${device.deviceType}, firmware ${device.firmware}, API ${snapshot.passportreader.api?.dllVersion ?? "—"}`
+      ? `Reported ${device.deviceType}, firmware ${device.firmware}, API ${snapshot.passportreader?.api?.dllVersion ?? "—"}`
       : "Library loaded and the device answered";
   },
 };
@@ -60,9 +60,14 @@ const DETAIL: Record<WiredId, (snapshot: Snapshot) => string> = {
  * broken device would tell you least about the kiosk you most need to know about.
  */
 export async function handshake(id: WiredId, snapshot: Snapshot): Promise<SweepResult> {
+  // Refused before it is attempted: the backend has no driver for this device in its checkout, so
+  // there is nothing to claim and the reason is a branch, not the hardware.
+  const absent = snapshot.absent[id];
+  if (absent !== undefined) return { pass: false, detail: `No driver in this checkout — ${absent}`, at: clockTime() };
+
   if (isLive(snapshot, id)) return { pass: true, detail: `${DETAIL[id](snapshot)} — already open, left open`, at: clockTime() };
 
-  if (id === "lightboard" && snapshot.lightboard.portName.trim() === "") {
+  if (id === "lightboard" && (snapshot.lightboard?.portName ?? "").trim() === "") {
     return { pass: false, detail: "No port set", at: clockTime() };
   }
 

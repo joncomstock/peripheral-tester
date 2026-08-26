@@ -1,6 +1,6 @@
 import type { Snapshot } from "./api.ts";
 import type { DeviceEntry, DeviceId } from "./devices.ts";
-import { busLine, DEVICES, isLive, isWired, verdict } from "./devices.ts";
+import { absenceOf, busLine, DEVICES, isLive, isWired, verdict } from "./devices.ts";
 import { badgeClass, glyph, lampStyle } from "./look.ts";
 import type { SweepResults } from "./sweep.ts";
 
@@ -81,10 +81,25 @@ function RailRow(
   },
 ) {
   const live = isLive(snapshot, entry.id);
-  const { tone, text, mode, color } = verdict({ ready: entry.ready, live, testing, pass: result?.pass });
+  const absence = absenceOf(snapshot, entry.id);
+  const { tone, text, mode, color } = verdict({
+    ready: entry.ready,
+    live,
+    testing,
+    pass: result?.pass,
+    absent: absence !== undefined,
+  });
   const initials = entry.name.split(" ").map((word) => word[0]).join("").slice(0, 2).toUpperCase();
   // A sweep's own words when it has some, because "Fail" alone does not say what refused.
-  const sub = result ? result.detail : testing ? "Handshaking…" : busLine(snapshot, entry.id);
+  // Absence outranks a stale sweep result: a device the backend cannot load did not just fail a
+  // handshake, it was never offered one.
+  const sub = absence !== undefined
+    ? "Driver not in this checkout"
+    : result
+    ? result.detail
+    : testing
+    ? "Handshaking…"
+    : busLine(snapshot, entry.id);
 
   return (
     <button

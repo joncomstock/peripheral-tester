@@ -13,16 +13,21 @@ It is intentionally minimal — no auth, no database, no cloud.
 
 > [!IMPORTANT]
 > **This revision does not build from a clean clone.** None of the five packages it needs —
-> `@eai/ier`, `@eai/serial`, `@eai/omron`, `@eai/hid`, `@eai/desko` — is published, and they sit on
-> three unmerged `hardware-libs` branches. Building, testing or running the backend today needs the
-> local import substitutions in [Before the drivers are published](#before-the-drivers-are-published).
-> The frontend (`npm test`, `npm run build`) is unaffected and builds as cloned.
+> `@eai/ier`, `@eai/serial`, `@eai/omron`, `@eai/usb`, `@eai/desko` — is on the registry at the
+> version pinned here, and they sit on unmerged `hardware-libs` branches. Building, testing or
+> running the backend today needs `deno task localmap`, described in
+> [Before the drivers are published](#before-the-drivers-are-published). The frontend (`npm test`,
+> `npm run build`) is unaffected and builds as cloned.
 >
-> What removes the caveat, in order: land `feat/hid-facepod` (PR #55), land `feat/omron-v4ku`,
-> `feat/ier-lightboard` and `feat/desko-penta` — none has a PR yet — then publish `@eai/hid` and
-> `@eai/serial` before `@eai/omron` and `@eai/ier`, which depend on them. `@eai/desko` depends on
-> neither and can go at any point. The pins here already name the versions that release should
-> produce, so nothing in this repo changes when it happens.
+> A device whose driver the checkout cannot resolve no longer stops the backend — it reports itself
+> unavailable and the others still work, so a partial checkout is a usable bench rather than a dead
+> one.
+>
+> What removes the caveat, in order: land `feat/omron-v4ku`, `feat/ier-lightboard` and
+> `feat/desko-penta` — none has a PR yet — then publish `@eai/usb` and `@eai/serial` before
+> `@eai/omron` and `@eai/ier`, which depend on them. `@eai/desko` depends on neither and can go at
+> any point. The pins here already name the versions that release should produce, so nothing in this
+> repo changes when it happens.
 
 > The browser **never** talks to hardware. A COM handle and a USB HID handle are held by the backend,
 > and only the process holding them can drive the devices.

@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import type { CardData, CardReaderState, NextOutcome, ReadDirection, ReadResult } from "./api.ts";
+import { useCallback, useEffect, useState } from "react";
+import type { CardData, CardReaderState, LedControlMode, NextOutcome, ReadDirection, ReadResult } from "./api.ts";
 import * as api from "./api.ts";
 import { usbId } from "./format.ts";
 import { useCommands } from "./pending.ts";
@@ -54,14 +54,6 @@ export function maskStripe(raw: string, pans: readonly (string | undefined)[]): 
   return out;
 }
 
-/**
- * Shortest gap between listen cycles.
- *
- * On a real reader the monitor parks for up to 99 seconds, so this never comes into play. A mock
- * answers at once, and without a floor the loop becomes a request storm that fills the activity
- * log and pegs the backend — which is exactly the mode most of this is exercised in.
- */
-const CYCLE_FLOOR_MS = 250;
 
 export function CardReaderPage(
   { state, onFail, toast, progress }: {
@@ -76,9 +68,24 @@ export function CardReaderPage(
   const [outcome, setOutcome] = useState<ReadResult["kind"] | null>(null);
   const [reveal, setReveal] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [listening, setListening] = useState(false);
-  /** Read inside the loop, which outlives the render that started it. */
-  const listen = useRef(false);
+  /**
+   * Whether the next colour is sent as a blink.
+   *
+   * An arming choice rather than a device state: the reader is told "green, blinking" in one
+   * command, so there is nothing to toggle on a device that is already lit. `state.ledBlinking` is
+   * what it actually ended up doing, and the button reads back from that once a colour has gone.
+   */
+  const [blinkLed, setBlinkLed] = useState(false);
+
+  /**
+   * Listening is the *device's* state, not this page's.
+   *
+   * An earlier revision looped the one-shot read from here and tracked a local flag. That reported
+   * a session this page had started, which is not the same fact — a second tab, or a reload
+   * mid-cycle, saw "not listening" while the reader was. The driver has a real `listen()`, and the
+   * backend already streams its state, so the answer comes from there.
+   */
+  const listening = state.listening;
 
   const open = state.status === "open";
   const opening = state.status === "opening";
@@ -88,14 +95,36 @@ export function CardReaderPage(
   // `busy` is already this page's read-in-flight flag, so the helper takes the other name.
   const { send, seg, busy: waiting } = useCommands(open, onFail);
 
-  // A closed reader is not listening, and nothing it read is still on the device.
+  // A closed reader has nothing it read still on the device. Its listening state is the backend's
+  // to clear, and it does.
   useEffect(() => {
     if (open) return;
-    listen.current = false;
-    setListening(false);
     setCard(null);
     setOutcome(null);
   }, [open]);
+
+  /**
+   * Collect a card a listening session left server-side.
+   *
+   * A session flags that a card is there rather than pushing it: the event stream carries no
+   * cardholder data by design, so the card leaves only in the reply to a request that asked for
+   * it. That fetch is single-shot, so nothing accumulates on either side.
+   */
+  useEffect(() => {
+    if (!state.cardWaiting) return;
+    let live = true;
+    api.cardreader.takeCard()
+      .then((result) => {
+        if (!live || !result.card) return;
+        setReveal(false);
+        setOutcome("card");
+        setCard(result.card);
+      })
+      .catch((err: Error) => onFail(err.message));
+    return () => {
+      live = false;
+    };
+  }, [state.cardWaiting, onFail]);
 
   /**
    * One monitor cycle.
@@ -134,42 +163,27 @@ export function CardReaderPage(
   /**
    * Stop reading, whatever started it.
    *
-   * The listen flag has to be cleared before the cancel lands, or the loop simply re-arms and the
-   * button reads as inert — which is what the device bar's Cancel did until it called this.
+   * Ends a listening session as well as cancelling a single cycle, because the device bar's Cancel
+   * is the one control an operator reaches for when the reader will not let go, and it must not
+   * matter which of the two started it.
    */
-  const stop = () => {
-    listen.current = false;
-    setListening(false);
-    return send("cancel", api.cardreader.cancel());
+  const stop = async () => {
+    if (listening) await send("listen", api.cardreader.stopListening());
+    return await send("cancel", api.cardreader.cancel());
   };
 
   /**
    * Read cycle after cycle until stopped.
    *
-   * A loop over the same one-shot read the button beside it uses, rather than the driver's own
-   * `listen()`. That call delivers each card through an event, and the only channel this backend
-   * has for pushing to the page is the shared SSE stream that also carries the activity log —
-   * which by design never carries a PAN. Keeping every card in the reply to the read that asked
-   * for it keeps that guarantee structural instead of a rule someone has to remember.
+   * The driver's own `listen()`, run on the backend, rather than a loop over the one-shot read
+   * from here. A session outlives this page — a reload, or a second tab — and only the backend can
+   * say whether one is running. Each card is left server-side and collected by the effect above,
+   * so no cardholder data reaches the shared event stream.
    */
-  const toggleListen = async () => {
-    if (listen.current) {
-      await stop();
-      return;
-    }
+  const toggleListen = () => {
+    if (listening) return send("listen", api.cardreader.stopListening());
     if (busy) return;
-    listen.current = true;
-    setListening(true);
-    setBusy(true);
-    while (listen.current) {
-      const started = Date.now();
-      if (!await cycle()) break;
-      const rest = CYCLE_FLOOR_MS - (Date.now() - started);
-      if (rest > 0) await new Promise((resume) => setTimeout(resume, rest));
-    }
-    listen.current = false;
-    setListening(false);
-    setBusy(false);
+    return send("listen", api.cardreader.listen());
   };
 
   const toggle = () => {
@@ -404,7 +418,10 @@ export function CardReaderPage(
         <div className="col col-narrow">
           <Card title="Bezel LED" aside={<code>{state.literals.led}</code>} quiet>
             <div className="lamprow">
-              <span data-lamp="" style={lampStyle(lampColor(state.led), state.led === "off" ? "off" : "on", 30)} />
+              <span
+                data-lamp=""
+                style={lampStyle(lampColor(state.led), state.led === "off" ? "off" : state.ledBlinking ? "blink" : "on", 30)}
+              />
               <div {...seg("led")}>
                 {state.vocabulary.ledColors.map((color) => (
                   <button
@@ -412,7 +429,7 @@ export function CardReaderPage(
                     className="chooser"
                     style={segStyle({ active: state.led === color, enabled: open, tint: lampColor(color) })}
                     disabled={!open}
-                    onClick={() => send("led", api.cardreader.led(color))}
+                    onClick={() => send("led", api.cardreader.led(color, blinkLed))}
                   >
                     {color[0].toUpperCase() + color.slice(1)}
                   </button>
@@ -425,18 +442,61 @@ export function CardReaderPage(
                 >
                   Off
                 </button>
+                <button
+                  className="chooser"
+                  style={segStyle({ active: blinkLed, enabled: open })}
+                  disabled={!open}
+                  aria-pressed={blinkLed}
+                  title="Send the next colour as a 1 Hz blink"
+                  onClick={() => setBlinkLed((was) => !was)}
+                >
+                  Blink
+                </button>
               </div>
             </div>
+
+            <Row label="LED control" chip={state.ledMode === "automatic" ? "reader" : "tester"}>
+              <div {...seg("ledMode")}>
+                {(["manual", "automatic"] as LedControlMode[]).map((mode) => (
+                  <button
+                    key={mode}
+                    className="chooser"
+                    style={segStyle({ active: state.ledMode === mode, enabled: open })}
+                    disabled={!open}
+                    onClick={() => send("ledMode", api.cardreader.ledMode(mode))}
+                  >
+                    {mode === "manual" ? "Manual" : "Automatic"}
+                  </button>
+                ))}
+              </div>
+            </Row>
+            <p className="masknote">
+              In automatic the reader drives its own indicator from the transaction. Setting a colour
+              here takes control back, which is why the buttons above do not read as inert while it
+              is on.
+            </p>
           </Card>
 
           <Card title="Shutter" aside={<code>{state.literals.lock} / {state.literals.unlock}</code>} quiet>
             <div className="actions">
               {/* On the pair, not each button — both drive the one shutter. */}
               <span className="run" {...waiting("shutter")}>
-                <button className="button" disabled={!open} onClick={() => send("shutter", api.cardreader.shutter(true))}>
+                {/*
+                  Neither button is ever disabled on the shutter's believed state. The tester only
+                  knows what it last sent; if that belief is wrong, the way out still has to work.
+                */}
+                <button
+                  className={state.shutter === "locked" ? "button button--strong" : "button"}
+                  disabled={!open}
+                  onClick={() => send("shutter", api.cardreader.shutter("locked"))}
+                >
                   Lock
                 </button>
-                <button className="button" disabled={!open} onClick={() => send("shutter", api.cardreader.shutter(false))}>
+                <button
+                  className="button"
+                  disabled={!open}
+                  onClick={() => send("shutter", api.cardreader.shutter("unlocked"))}
+                >
                   Unlock
                 </button>
               </span>
@@ -447,9 +507,130 @@ export function CardReaderPage(
               guess had them the wrong way round, which made Lock open the shutter.
             </p>
           </Card>
+
+          <Identity state={state} onFail={onFail} />
+          <Probe state={state} onFail={onFail} />
         </div>
       </main>
     </>
+  );
+}
+
+/**
+ * What the reader says it is, and the one command that puts its IC contacts down.
+ *
+ * Read on demand rather than on connect: it is three commands to a device an operator may be
+ * mid-transaction with, and nothing else on this page needs the answer.
+ */
+function Identity({ state, onFail }: { state: CardReaderState; onFail: (message: string) => void }) {
+  const [about, setAbout] = useState<{ version: string; serialNumber: string; status: string } | null>(null);
+  const open = state.status === "open";
+  const { send, busy: waiting } = useCommands(open, onFail);
+
+  return (
+    <Card title="Device" aside={about ? undefined : "Not read"} quiet>
+      <div className="actions">
+        <button
+          className="button"
+          {...waiting("identity")}
+          disabled={!open}
+          onClick={() =>
+            send(
+              "identity",
+              api.cardreader.identity().then(({ version, serialNumber, status }) => setAbout({ version, serialNumber, status })),
+            )}
+        >
+          Read identity
+        </button>
+        <button
+          className="button"
+          {...waiting("icc")}
+          disabled={!open}
+          onClick={() => send("icc", api.cardreader.deactivateIcc())}
+        >
+          IC contacts down
+        </button>
+      </div>
+      {about && (
+        <div className="fieldlist">
+          {[
+            { label: "Version", value: about.version },
+            { label: "Serial", value: about.serialNumber },
+            { label: "Status", value: about.status },
+          ].map(({ label, value }) => (
+            <div className="fieldrow" key={label}>
+              <span className="fieldrow-label">{label}</span>
+              {/* `||`, not `??`: the mock answers in empty strings, which are present but say
+                  nothing — an em dash is the honest rendering of both. */}
+              <span className="fieldrow-value mono">{value || "—"}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </Card>
+  );
+}
+
+/**
+ * Try an unidentified command and see whether the device accepts it.
+ *
+ * A picker over the driver's own candidate list, never free text: the device's command space also
+ * holds firmware download, tamper and rear-destroy, and the driver excludes those families from the
+ * list for that reason. Acceptance is all this can report — what a command *did* is on the hardware,
+ * which is why the note tells you to watch it.
+ */
+function Probe({ state, onFail }: { state: CardReaderState; onFail: (message: string) => void }) {
+  const [literal, setLiteral] = useState("");
+  const [results, setResults] = useState<{ literal: string; token: string; accepted: boolean }[]>([]);
+  const open = state.status === "open";
+  const { send, busy: waiting } = useCommands(open, onFail);
+
+  return (
+    <Card title="Probe" aside="Unidentified literals" quiet>
+      <div className="actions">
+        <select
+          className="select"
+          value={literal}
+          onChange={(event) => setLiteral(event.target.value)}
+          disabled={!open}
+          aria-label="Literal to try"
+        >
+          <option value="">choose a literal</option>
+          {state.candidates.map((candidate) => <option key={candidate} value={candidate}>{candidate}</option>)}
+        </select>
+        <button
+          className="button"
+          {...waiting("probe")}
+          disabled={!open || literal === ""}
+          onClick={() =>
+            send(
+              "probe",
+              api.cardreader.probe(literal).then(({ literal: sent, token, accepted }) =>
+                // Newest first, and capped: this is a scratchpad, not a log — the activity drawer
+                // is where the whole run is kept.
+                setResults((previous) => [{ literal: sent, token, accepted }, ...previous].slice(0, 8))
+              ),
+            )}
+        >
+          Send
+        </button>
+      </div>
+      <p className="masknote">
+        Watch the device. This reports only whether the command was accepted, never what it did.
+      </p>
+      {results.length > 0 && (
+        <div className="fieldlist">
+          {results.map((result, index) => (
+            <div className="fieldrow" key={`${result.literal}-${index}`}>
+              <span className="fieldrow-label mono">{result.literal}</span>
+              <span className={result.accepted ? "fieldrow-value tone-warn" : "fieldrow-value tone-muted"}>
+                {result.token} {result.accepted ? "accepted" : "refused"}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </Card>
   );
 }
 

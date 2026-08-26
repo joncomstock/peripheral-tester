@@ -1399,6 +1399,11 @@ input:focus:not(:focus-visible) {
   border-left: 1px solid var(--line2);
 }
 
+/* A disabled group dims its dividers too, or they stay at full strength inside a greyed control. */
+.seg[data-enabled="false"] > :not(:first-child) {
+  border-left-color: var(--disline);
+}
+
 .seg button:disabled {
   cursor: not-allowed;
 }

@@ -80,6 +80,18 @@ export type LedColor = "green" | "red" | "orange";
 export type ReadPhase = "idle" | "waiting" | "reading";
 /** What the mock reader will do next. Offered only when mocking. */
 export type NextOutcome = "card" | "timeout" | "unreadable";
+/**
+ * Whether the shutter is holding a card.
+ *
+ * The device does not report this, so it is what was last commanded — on real hardware the card in
+ * the slot is the authority.
+ */
+export type Shutter = "locked" | "unlocked";
+/**
+ * Who drives the bezel LED. In `automatic` the reader lights it from its own state, and asking for a
+ * colour competes with that — which reads as an indicator that does not work.
+ */
+export type LedControlMode = "manual" | "automatic";
 
 export interface TransactionSetting {
   direction: ReadDirection;
@@ -98,6 +110,14 @@ export interface CardReaderState {
   phase: ReadPhase;
   mock: boolean;
   led: LedColor | "off";
+  ledBlinking: boolean;
+  ledMode: LedControlMode;
+  shutter: Shutter;
+  listening: boolean;
+  /** A listened-for card is held server-side until collected. The stream never carries the card. */
+  cardWaiting: boolean;
+  /** Unidentified literals the driver considers safe to try. Probing is limited to these. */
+  candidates: readonly string[];
   seconds: number;
   transaction: TransactionSetting;
   /** What these settings put on the wire, so the page can show what it is sending. */
@@ -355,11 +375,18 @@ export const cardreader = {
   reset: () => post("/api/cardreader/reset"),
   clear: () => post("/api/cardreader/clear"),
   settings: (next: Partial<TransactionSetting> & { seconds?: number }) => post("/api/cardreader/settings", next),
-  led: (color: LedColor | "off") => post("/api/cardreader/led", { color }),
+  led: (color: LedColor | "off", blink?: boolean) => post("/api/cardreader/led", { color, blink }),
   read: () => post<ReadResult>("/api/cardreader/read"),
   cancel: () => post("/api/cardreader/cancel"),
   /** Drive the shutter now, as opposed to the transaction's locks, which arm the next read. */
-  shutter: (locked: boolean) => post("/api/cardreader/shutter", { locked }),
+  shutter: (shutter: Shutter) => post("/api/cardreader/shutter", { shutter }),
+  ledMode: (mode: LedControlMode) => post("/api/cardreader/led-mode", { mode }),
+  listen: () => post("/api/cardreader/listen"),
+  stopListening: () => post("/api/cardreader/stop"),
+  takeCard: () => post<{ ok: boolean; card: CardData | null }>("/api/cardreader/take-card"),
+  identity: () => post<{ ok: boolean; version: string; serialNumber: string; status: string }>("/api/cardreader/identity"),
+  deactivateIcc: () => post("/api/cardreader/deactivate-icc"),
+  probe: (literal: string) => post<{ ok: boolean; literal: string; token: string; accepted: boolean }>("/api/cardreader/probe", { literal }),
   arm: (outcome: NextOutcome) => post("/api/cardreader/arm", { outcome }),
 };
 

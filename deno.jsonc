@@ -12,7 +12,10 @@
     "@eai/ier/s33380": "jsr:@eai/ier@^1.0.0/s33380",
     "@eai/omron/v4ku": "jsr:@eai/omron@^1.0.0/v4ku",
     "@eai/desko/penta": "jsr:@eai/desko@^1.0.0/penta",
-    "@eai/hid": "jsr:@eai/hid@^1.0.0",
+    // The card reader's HID report transport. hardware-libs folded the short-lived @eai/hid
+    // into @eai/usb, which is on the registry at 1.2.0 without it — 1.3.0 is the release that
+    // carries it, and that is what this names.
+    "@eai/usb": "jsr:@eai/usb@^1.3.0",
     // The driver's Transport contract — the mock board implements it. Pin matches
     // hardware-libs/deno.jsonc so we resolve the same version.
     "@eai/models": "jsr:@eai/models@^1.3.0",

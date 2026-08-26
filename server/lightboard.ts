@@ -13,7 +13,6 @@ import { attachHandler } from "@eai/logging-ts";
 import type { Transport } from "@eai/models";
 import {
   ACTIONS,
-  DEFAULT_PORT,
   IER_S33380_DEFAULTS,
   IERS33380,
   INDICATOR_SECTIONS,
@@ -90,19 +89,39 @@ export type Status = "closed" | "opening" | "open";
 let board: IERS33380 | null = null;
 let mockBoard: MockBoard | null = null;
 let status: Status = "closed";
-let portName: string;
 let mock = false;
+
+/**
+ * Which USB serial adapter the board is behind.
+ *
+ * The board used to be addressed by COM port name. It is reached over USB serial now, so the
+ * address is a USB identity, and there is deliberately no default: `@eai/ier` says "No default
+ * exists until the deployed adapter is captured", and inventing a VID/PID here would mean opening
+ * whatever else happened to match. Absent an identity the board reports itself unconfigured rather
+ * than guessing.
+ */
+export interface Usb {
+  vendorId: number;
+  productId: number;
+  adapter: "cdc-acm" | "ftdi";
+  serialNumber?: string;
+}
+
+let usb: Usb | null = null;
 
 const doors: Record<"upper" | "lower", string> = { upper: "closed", lower: "closed" };
 
-export function configure(options: { mock: boolean; portName?: string }): void {
+export function configure(options: { mock: boolean; usb?: Usb | null }): void {
   mock = options.mock;
-  portName = mock ? "mock" : (options.portName ?? DEFAULT_PORT);
+  usb = options.usb ?? null;
 }
 
-export const state = () => ({ status, portName, mock, doors: { ...doors } });
+export const state = () => ({ status, usb, mock, doors: { ...doors } });
 
 const tell = () => announce("lightboard", state());
+
+/** `04d8:000a`, the way the card reader's address is written, so both devices read alike. */
+const address = () => usb ? `${usb.vendorId.toString(16).padStart(4, "0")}:${usb.productId.toString(16).padStart(4, "0")}` : "unset";
 
 /**
  * Logger names already carrying our handler.
@@ -153,21 +172,28 @@ function wire(opened: IERS33380): void {
   });
 }
 
-export async function connect(requested?: string): Promise<void> {
+export async function connect(requested?: Usb): Promise<void> {
   if (status !== "closed") return;
-  portName = mock ? "mock" : (requested ?? portName).trim().toUpperCase() || DEFAULT_PORT;
+  if (requested) usb = requested;
+  // Refused rather than attempted: without an identity there is nothing to open, and saying so is
+  // more use at a bench than a libusb error about a device that was never named.
+  if (!mock && !usb) {
+    const message = "No USB identity for the light board — pass <hex-vid> <hex-pid> <cdc-acm|ftdi> or set IER_LIGHTBOARD_USB";
+    log("error", message);
+    throw new Error(message);
+  }
   status = "opening";
   tell();
-  log("info", `Opening ${portName} at 9600 8N1`);
+  log("info", mock ? "Opening the mock board" : `Opening ${address()} as ${usb!.adapter} at 9600 8N1`);
 
-  const name = `IERS33380:${portName}`;
+  const name = `IERS33380:${mock ? "mock" : address()}`;
   try {
     if (mock) {
       mockBoard = new MockBoard();
       board = await IERS33380.openWithTransport(mockBoard, undefined, name);
     }
     else {
-      board = await IERS33380.open({ portName });
+      board = await IERS33380.open({ ...usb! });
     }
   }
   catch (err) {
@@ -199,7 +225,7 @@ export async function disconnect(): Promise<void> {
   catch { /* a board that is already unreachable cannot be darkened */ }
   await open.close();
   tell();
-  log("info", `${portName} released`);
+  log("info", `${mock ? "mock board" : address()} released`);
 }
 
 /**

@@ -1,6 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Snapshot } from "./api.ts";
 
+/** A stand-in FTDI adapter. The deployed one is not captured yet, so no real pair exists. */
+const LB_USB = { vendorId: 0x0403, productId: 0x6001, adapter: "ftdi" as const };
+
 /**
  * The API client is replaced wholesale, because the point of these tests is what the sweep *does*
  * to the devices — which calls it makes and in what order — not what a backend answers.
@@ -24,18 +27,18 @@ const { WIRED } = await import("./devices.ts");
 
 /** Only the fields the sweep reads. The rest of a `Snapshot` is irrelevant to it. */
 const snapshotWith = (
-  { board = "closed", card = "closed", passport = "closed", portName = "COM14", absent = {} }: {
+  { board = "closed", card = "closed", passport = "closed", usb = LB_USB, absent = {} }: {
     board?: string;
     card?: string;
     passport?: string;
-    portName?: string;
+    usb?: { vendorId: number; productId: number; adapter: "cdc-acm" | "ftdi" } | null;
     /** Devices the backend has no driver for, keyed as the wire keys them. */
     absent?: Record<string, string>;
   } = {},
 ) =>
   ({
     absent,
-    lightboard: { status: board, portName },
+    lightboard: { status: board, usb, mock: false },
     cardreader: { status: card },
     passportreader: { status: passport, device: undefined, api: undefined },
   }) as unknown as Snapshot;
@@ -67,9 +70,9 @@ describe("handshake", () => {
   });
 
   it("fails the light board without opening anything when no port is set", async () => {
-    const result = await handshake("lightboard", snapshotWith({ portName: "   " }));
+    const result = await handshake("lightboard", snapshotWith({ usb: null }));
     expect(result.pass).toBe(false);
-    expect(result.detail).toBe("No port set");
+    expect(result.detail).toBe("No USB adapter set");
     expect(api.lightboard.connect).not.toHaveBeenCalled();
   });
 

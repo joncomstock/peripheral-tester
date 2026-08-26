@@ -5,6 +5,7 @@ import type { Commanded, Control } from "./lightboardControls.ts";
 import { controlsFor, fullName, modeOf, requestFor, towerMode } from "./lightboardControls.ts";
 import { badgeClass, LAMP, lampColor, lampStyle, segStyle, stripPreviewStyle } from "./look.ts";
 import type { Tone } from "./look.ts";
+import { usbId } from "./format.ts";
 import { useCommands } from "./pending.ts";
 import { Card, DeviceBar } from "./ui.tsx";
 
@@ -25,7 +26,7 @@ export function LightBoardPage(
   },
 ) {
   const [commanded, setCommanded] = useState<Commanded>({});
-  const [portName, setPortName] = useState(state.portName);
+
   const open = state.status === "open";
   const opening = state.status === "opening";
   const wasOpen = useRef(open);
@@ -36,7 +37,7 @@ export function LightBoardPage(
     wasOpen.current = open;
   }, [open]);
 
-  useEffect(() => setPortName(state.portName), [state.portName]);
+
 
   const controls = useMemo(() => controlsFor(state.vocabulary), [state.vocabulary]);
   /**
@@ -69,7 +70,7 @@ export function LightBoardPage(
   const toggle = () => {
     if (open) api.lightboard.disconnect().catch((err: Error) => onFail(err.message));
     // A refused connection is already explained in the activity log by the backend.
-    else if (!opening) api.lightboard.connect(portName).catch(() => {});
+    else if (!opening) api.lightboard.connect().catch(() => {});
   };
 
   const allOff = () =>
@@ -84,19 +85,15 @@ export function LightBoardPage(
   return (
     <>
       <DeviceBar
-        label="RS-232"
+        label="USB serial"
         address={
-          <input
-            className="addressbox-input"
-            id="port"
-            aria-label="COM port"
-            value={state.mock ? "mock" : portName}
-            onChange={(event) => setPortName(event.target.value.toUpperCase())}
-            disabled={open || opening || state.mock}
-            spellCheck={false}
-          />
+          /* Read-only: the adapter's identity comes from how the backend was started, not from
+             the bench. There is no default to fall back on, so an unset one says so. */
+          <span className="addressbox-value mono">
+            {state.mock ? "mock" : state.usb ? `${usbId(state.usb.vendorId)}:${usbId(state.usb.productId)}` : "no adapter set"}
+          </span>
         }
-        meta="9600 8N1"
+        meta={state.usb ? `${state.usb.adapter} · 9600 8N1` : "9600 8N1"}
         status={state.status}
         open="Connected · handshake OK"
         opening="Opening port"

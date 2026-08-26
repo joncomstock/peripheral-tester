@@ -13,7 +13,7 @@ import * as api from "./api.ts";
 import type { Snapshot } from "./api.ts";
 import type { WiredId } from "./devices.ts";
 import { isLive } from "./devices.ts";
-import { clockTime } from "./format.ts";
+import { clockTime, usbId } from "./format.ts";
 
 export interface SweepResult {
   pass: boolean;
@@ -25,7 +25,7 @@ export interface SweepResult {
 export type SweepResults = Partial<Record<WiredId, SweepResult>>;
 
 const CONNECT: Record<WiredId, (snapshot: Snapshot) => Promise<unknown>> = {
-  lightboard: (snapshot) => api.lightboard.connect(snapshot.lightboard?.portName ?? ""),
+  lightboard: (snapshot) => api.lightboard.connect(snapshot.lightboard?.usb ?? undefined),
   cardreader: () => api.cardreader.connect(),
   passportreader: () => api.passportreader.connect(),
 };
@@ -43,7 +43,10 @@ const DISCONNECT: Record<WiredId, () => Promise<unknown>> = {
  * and adding a fourth device means adding a row to each rather than finding three cascades.
  */
 const DETAIL: Record<WiredId, (snapshot: Snapshot) => string> = {
-  lightboard: (snapshot) => `Handshake acknowledged on ${snapshot.lightboard?.portName ?? "—"}`,
+  lightboard: (snapshot) => {
+    const usb = snapshot.lightboard?.usb;
+    return usb ? `Handshake acknowledged on ${usbId(usb.vendorId)}:${usbId(usb.productId)}` : "Handshake acknowledged";
+  },
   cardreader: () => "Interface claimed, reader answered",
   passportreader: (snapshot) => {
     const device = snapshot.passportreader?.device;
@@ -67,8 +70,8 @@ export async function handshake(id: WiredId, snapshot: Snapshot): Promise<SweepR
 
   if (isLive(snapshot, id)) return { pass: true, detail: `${DETAIL[id](snapshot)} — already open, left open`, at: clockTime() };
 
-  if (id === "lightboard" && (snapshot.lightboard?.portName ?? "").trim() === "") {
-    return { pass: false, detail: "No port set", at: clockTime() };
+  if (id === "lightboard" && !snapshot.lightboard?.mock && !snapshot.lightboard?.usb) {
+    return { pass: false, detail: "No USB adapter set", at: clockTime() };
   }
 
   try {

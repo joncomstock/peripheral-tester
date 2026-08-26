@@ -38,6 +38,7 @@ import * as activity from "./activity.ts";
 // Type-only, so nothing here loads a driver. The modules themselves are imported below, at runtime,
 // and these name the two outcome unions the arm routes take. The light board has no such union, so
 // it needs no type import of its own.
+import type * as lightboardModule from "./lightboard.ts";
 import type * as CardReaderModule from "./cardreader.ts";
 import type * as PassportReaderModule from "./passportreader.ts";
 
@@ -93,7 +94,29 @@ const lightboard = await load("lightboard", import("./lightboard.ts"));
 const cardreader = await load("cardreader", import("./cardreader.ts"));
 const passportreader = await load("passportreader", import("./passportreader.ts"));
 
-lightboard?.configure({ mock, portName: args[0] });
+/**
+ * The light board's USB serial adapter, from the command line or the environment.
+ *
+ * `<hex-vid> <hex-pid> <cdc-acm|ftdi> [serial]` positionally, the same words and the same order as
+ * `@eai/ier`'s own examples take, or `IER_LIGHTBOARD_USB` as one comma-separated string for a
+ * service that has no argv to spare. Nothing is defaulted: the driver has no default adapter until
+ * the deployed one is captured, so an absent identity means the board says it is unconfigured
+ * rather than opening whatever else matches.
+ */
+function lightboardUsb(): lightboardModule.Usb | null {
+  const fromEnv = Deno.env.get("IER_LIGHTBOARD_USB")?.split(",").map((part) => part.trim());
+  const [vidText, pidText, adapterText, serialNumber] = fromEnv?.length ? fromEnv : args;
+  if (!vidText || !pidText) return null;
+  if (adapterText !== "cdc-acm" && adapterText !== "ftdi") return null;
+  const vendorId = Number.parseInt(vidText, 16);
+  const productId = Number.parseInt(pidText, 16);
+  // `parseInt` answers NaN rather than throwing, and NaN would reach libusb as a device nobody
+  // asked for. A malformed pair is no identity at all.
+  if (!Number.isInteger(vendorId) || !Number.isInteger(productId)) return null;
+  return { vendorId, productId, adapter: adapterText, serialNumber: serialNumber || undefined };
+}
+
+lightboard?.configure({ mock, usb: lightboardUsb() });
 cardreader?.configure({ mock });
 passportreader?.configure({ mock, dllPath: Deno.env.get("DESKO_PAGESCAN_DLL_PATH") });
 
@@ -173,8 +196,10 @@ async function handle(request: Request): Promise<Response> {
     if (!lightboard) return unavailable("lightboard");
 
     if (post && pathname === "/api/lightboard/connect") {
-      const { portName } = await body<{ portName: string }>();
-      return await attempt(() => lightboard.connect(portName));
+      // An identity from the page overrides the one this process started with; omitted, the board
+      // reconnects to whatever it was configured for.
+      const { usb } = await body<{ usb?: lightboardModule.Usb }>();
+      return await attempt(() => lightboard.connect(usb));
     }
     if (post && pathname === "/api/lightboard/disconnect") return await attempt(() => lightboard.disconnect());
     if (post && pathname === "/api/lightboard/led") {

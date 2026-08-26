@@ -65,9 +65,17 @@ export interface Vocabulary {
   collisions: Collision[];
 }
 
+/** The USB serial adapter the board is behind. `null` until one is supplied — there is no default. */
+export interface LightBoardUsb {
+  vendorId: number;
+  productId: number;
+  adapter: "cdc-acm" | "ftdi";
+  serialNumber?: string;
+}
+
 export interface LightBoardState {
   status: Status;
-  portName: string;
+  usb: LightBoardUsb | null;
   mock: boolean;
   doors: Record<Door, string>;
   vocabulary: Vocabulary;
@@ -362,7 +370,7 @@ async function post<T = { ok: boolean }>(path: string, body?: unknown): Promise<
 }
 
 export const lightboard = {
-  connect: (portName: string) => post("/api/lightboard/connect", { portName }),
+  connect: (usb?: LightBoardUsb) => post("/api/lightboard/connect", { usb }),
   disconnect: () => post("/api/lightboard/disconnect"),
   led: (request: LedRequest) => post("/api/lightboard/led", request),
   allOff: () => post("/api/lightboard/all-off"),

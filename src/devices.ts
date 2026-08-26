@@ -403,7 +403,10 @@ export function busLine(snapshot: Snapshot, id: DeviceId): string {
   // No driver, no address. The bus is still worth saying — it is what the device *is*, not what
   // this backend can currently reach.
   if (absenceOf(snapshot, id) !== undefined) return `${entry.bus} · driver not in this checkout`;
-  if (id === "lightboard" && snapshot.lightboard) return `${entry.bus} · ${snapshot.lightboard.portName}`;
+  if (id === "lightboard" && snapshot.lightboard) {
+    const { usb } = snapshot.lightboard;
+    return usb ? `${entry.bus} · ${usbId(usb.vendorId)}:${usbId(usb.productId)}` : `${entry.bus} · no adapter set`;
+  }
   if (id === "cardreader" && snapshot.cardreader) {
     const { vendorId, productId } = snapshot.cardreader.usb;
     return `${entry.bus} · ${usbId(vendorId)}:${usbId(productId)}`;

@@ -148,15 +148,31 @@ async function handle(request: Request): Promise<Response> {
     });
   }
   if (post && pathname === "/api/cardreader/led") {
-    const { color } = await body<{ color: LedColor | "off" }>();
-    return await attempt(() => cardreader.setLed(color ?? "off"));
+    const { color, blink } = await body<{ color: LedColor | "off"; blink: boolean }>();
+    return await attempt(() => cardreader.setLed(color ?? "off", blink));
   }
   // The one response carrying cardholder data. It is answered to the caller and never recorded.
   if (post && pathname === "/api/cardreader/read") return await attempt(() => cardreader.read());
   if (post && pathname === "/api/cardreader/cancel") return await attempt(() => cardreader.cancel());
+  if (post && pathname === "/api/cardreader/listen") return await attempt(() => cardreader.startListening());
+  if (post && pathname === "/api/cardreader/stop") return await attempt(() => cardreader.stopListening());
+  // Single-shot: the card leaves once, to whoever asked. It is never put on the shared event stream.
+  if (post && pathname === "/api/cardreader/take-card") {
+    return await attempt(() => ({ card: cardreader.takeCard() }));
+  }
+  if (post && pathname === "/api/cardreader/identity") return await attempt(() => cardreader.identity());
+  if (post && pathname === "/api/cardreader/deactivate-icc") return await attempt(() => cardreader.deactivateIcc());
+  if (post && pathname === "/api/cardreader/probe") {
+    const { literal } = await body<{ literal: string }>();
+    return await attempt(() => cardreader.probe(literal ?? ""));
+  }
+  if (post && pathname === "/api/cardreader/led-mode") {
+    const { mode } = await body<{ mode: "manual" | "automatic" }>();
+    return await attempt(() => cardreader.setLedMode(mode === "automatic" ? "automatic" : "manual"));
+  }
   if (post && pathname === "/api/cardreader/shutter") {
-    const { locked } = await body<{ locked: boolean }>();
-    return await attempt(() => cardreader.shutter(locked === true));
+    const { shutter } = await body<{ shutter: cardreader.Shutter }>();
+    return await attempt(() => cardreader.setShutter(shutter === "locked" ? "locked" : "unlocked"));
   }
   if (post && pathname === "/api/cardreader/arm") {
     const { outcome } = await body<{ outcome: cardreader.NextOutcome }>();

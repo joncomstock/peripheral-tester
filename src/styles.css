@@ -1780,6 +1780,13 @@ input:focus:not(:focus-visible) {
   text-wrap: pretty;
 }
 
+/* A configuration that cannot read. Both tone triples are defined for light and dark alike. */
+.masknote--warn {
+  color: var(--warn);
+  background: var(--warnbg);
+  border-top-color: var(--warnline);
+}
+
 /* ---------------------------------------------------------------- passport */
 
 .arrival {

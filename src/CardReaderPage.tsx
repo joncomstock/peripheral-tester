@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { CardData, CardReaderState, NextOutcome, ReadDirection, ReadResult } from "./api.ts";
+import type { CardData, CardReaderState, NextOutcome, ReadDirection, ReadResult, TransactionSetting } from "./api.ts";
 import * as api from "./api.ts";
+import type { CardScenario } from "./cardScenarios.ts";
+import { CARD_SCENARIOS, incoherence } from "./cardScenarios.ts";
 import { usbId } from "./format.ts";
 import { useCommands } from "./pending.ts";
 import { LAMP, lampColor, lampStyle, segStyle } from "./look.ts";
@@ -77,6 +79,13 @@ export function CardReaderPage(
   const [reveal, setReveal] = useState(false);
   const [busy, setBusy] = useState(false);
   const [listening, setListening] = useState(false);
+  /**
+   * The scenario whose read has just finished, when it was one that leaves the card held.
+   *
+   * Kept so the release is offered where the operator is already looking. Cleared by the next read
+   * of any kind, because it describes the card currently in the slot and nothing else.
+   */
+  const [held, setHeld] = useState<CardScenario | null>(null);
   /** Read inside the loop, which outlives the render that started it. */
   const listen = useRef(false);
 
@@ -95,6 +104,7 @@ export function CardReaderPage(
     setListening(false);
     setCard(null);
     setOutcome(null);
+    setHeld(null);
   }, [open]);
 
   /**
@@ -127,9 +137,43 @@ export function CardReaderPage(
   const readOnce = async () => {
     if (busy) return;
     setBusy(true);
+    setHeld(null);
     await cycle();
     setBusy(false);
   };
+
+  /**
+   * Apply a scenario's whole configuration, then read under it.
+   *
+   * One `settings` call rather than four: the four fields are a single coherent choice, and posting
+   * them separately would put three configurations that nobody chose on the wire on the way to the
+   * one that was. The controls below re-render from the state that comes back, so what the scenario
+   * picked stays visible and adjustable — it configures the manual panel rather than bypassing it.
+   */
+  const runScenario = async (scenario: CardScenario) => {
+    if (busy) return;
+    setBusy(true);
+    setHeld(null);
+    try {
+      await api.cardreader.settings(scenario.setting);
+      const read = await cycle();
+      // Only when the read actually happened: a scenario whose request failed has not put a card
+      // anywhere, and offering to release one would be a lie.
+      if (read && scenario.retains) setHeld(scenario);
+    }
+    catch (err) {
+      onFail((err as Error).message);
+    }
+    setBusy(false);
+  };
+
+  const sameSetting = (a: TransactionSetting, b: TransactionSetting) =>
+    a.direction === b.direction && a.tracks === b.tracks &&
+    a.insertionLock === b.insertionLock && a.pullOutLock === b.pullOutLock;
+  /** Which scenario the panel is currently configured as, if any — hand-tuning simply matches none. */
+  const activeScenario = CARD_SCENARIOS.find((scenario) => sameSetting(scenario.setting, transaction)) ?? null;
+  /** Why the current manual configuration cannot read, if it cannot. */
+  const configFault = incoherence(transaction);
 
   /**
    * Stop reading, whatever started it.
@@ -332,7 +376,59 @@ export function CardReaderPage(
             {card ? <CardPanel card={card} reveal={reveal} /> : <Empty outcome={outcome} open={open} busy={busy} />}
           </Card>
 
+          <Card title="Scenarios" quiet>
+            <p className="masknote">
+              Each sets the whole transaction — direction, tracks and both locks — to a combination
+              that can actually read, then runs one read under it. The controls below move to match,
+              so a scenario is a starting point you can adjust rather than a mode you are put into.
+            </p>
+            <div className="actions">
+              {CARD_SCENARIOS.map((scenario) => (
+                <button
+                  key={scenario.id}
+                  className={activeScenario?.id === scenario.id ? "button button--strong" : "button"}
+                  onClick={() => runScenario(scenario)}
+                  disabled={!open || busy}
+                  title={scenario.hint}
+                >
+                  {scenario.label}
+                </button>
+              ))}
+            </div>
+            {activeScenario && <p className="masknote">{activeScenario.hint}</p>}
+            {/*
+              * The release is offered here rather than left to the Shutter card below.
+              *
+              * A retain scenario ends with the card still in the reader, which is the scenario
+              * working — but the control that frees it was two cards away under a different
+              * heading, so the first person to run one went looking for it with a card stuck in
+              * the slot. Nothing releases on its own: this is still a deliberate click.
+              */}
+            {held && (
+              <div className="simrow">
+                <span className="simrow-label">Card is held by the reader</span>
+                <button
+                  className="button button--primary"
+                  {...waiting("shutter")}
+                  onClick={() => {
+                    setHeld(null);
+                    return send("shutter", api.cardreader.shutter(false));
+                  }}
+                  disabled={!open}
+                >
+                  Release card
+                </button>
+              </div>
+            )}
+          </Card>
+
           <Card title="Transaction settings" aside={<code>{state.literals.prepare}</code>} quiet>
+            {/*
+              * The manual controls can still be set to a combination that cannot read — four
+              * independent toggles do not say which pairings are contradictory. Saying so beats
+              * letting it reach the card as `card present but unreadable`.
+              */}
+            {configFault && <p className="masknote masknote--warn" role="status">{configFault}</p>}
             <Row label="Read direction">
               <div {...seg("direction")}>
                 {DIRECTIONS.map(({ value, label }) => (

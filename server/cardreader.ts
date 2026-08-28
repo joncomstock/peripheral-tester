@@ -11,20 +11,71 @@
  */
 
 import type { HidDevice } from "@eai/hid";
-import { ALL_TRACKS, LED_COLOR_DIGIT, LED_OFF, LED_ON_PREFIX, OmronV4KU, SHUTTER_COMMANDS, V4KU_PID, V4KU_VID } from "@eai/omron/v4ku";
-import type { CardData, LedColor, MonitorOutcome, TransactionSetting } from "@eai/omron/v4ku";
+import { OmronV4KU, TRACK_1, TRACK_2, TRACK_3, V4KU_PID, V4KU_VID } from "@eai/omron/v4ku";
+import type { CardData, LedColor, MonitorOutcome, ReadDirection, TransactionSetting } from "@eai/omron/v4ku";
 import { announce, record } from "./activity.ts";
 
 const log = (kind: string, text: string) => record("cardreader", kind, text);
 
 /**
- * What the driver accepts, read from the driver rather than listed here.
+ * What the driver accepts.
  *
- * The light board and the passport reader both do this, and the README says why: nothing in this
- * repo keeps its own list, so it cannot disagree with the driver about what the device has. A
- * colour added to `LED_COLOR_DIGIT` reaches the page without either side being edited.
+ * This used to read the keys off the driver's own colour-to-digit map, the way the light board and
+ * the passport reader still read theirs. `@eai/omron` has since narrowed to a capability surface —
+ * the wire prefixes and digit maps are deliberately internal, so that a protocol correction is not
+ * a breaking change — and there is no map left to read.
+ *
+ * So the colours are written out, but as `Record<LedColor, true>` rather than an array: a colour
+ * added to the driver's `LedColor` fails to compile here instead of quietly going missing from the
+ * page. `main.ts` guards its own vocabularies the same way and for the same reason.
  */
-export const vocabulary = () => ({ ledColors: Object.keys(LED_COLOR_DIGIT) as LedColor[] });
+const LED_COLORS: Record<LedColor, true> = { green: true, red: true, orange: true };
+
+export const vocabulary = () => ({ ledColors: Object.keys(LED_COLORS) as LedColor[] });
+
+/**
+ * Wire literals, mirrored from the driver for display only.
+ *
+ * Nothing here is ever sent: the driver builds every command itself, and these exist so the page
+ * can show what a setting will put on the wire. They were imported until the driver stopped
+ * publishing them. A driver-side correction now leaves this copy stale, which shows the page a
+ * wrong label rather than sending a wrong command — the shutter pair is the one to watch. `CC0`
+ * locks and `CC1` releases, measured off the vendor DLL after being the wrong way round for as
+ * long as they were a guess.
+ */
+const WIRE = {
+  ledOn: "CP7",
+  ledOff: "CP6",
+  ledDigit: { green: "1", red: "2", orange: "3" } as Record<LedColor, string>,
+  lock: "CC0",
+  unlock: "CC1",
+  direction: { none: "0", insertion: "1", back: "2" } as Record<ReadDirection, string>,
+  /**
+   * Track bitmask to the digit the wire takes. **These are not the same number.**
+   *
+   * Mirrored from `@eai/omron`'s own `TRACK_WIRE_DIGIT`, which is internal to the driver by
+   * design — the package keeps its digit maps unpublished so a protocol correction is not a
+   * breaking change. The API side is a bitmask (1/2/4); the wire side enumerates the seven usable
+   * combinations 1..7 in order, three singles then three pairs then all three. They coincide only
+   * for track 1 alone and for all three, which is exactly why building the chip from the bitmask
+   * looked correct: the default asked for all three, one of the two values that agree.
+   *
+   * Display only, like everything else here — the driver builds the real command. A driver-side
+   * correction leaves this stale, which shows a wrong label rather than sending a wrong command.
+   */
+  trackDigit: {
+    [TRACK_1]: "1",
+    [TRACK_2]: "2",
+    [TRACK_3]: "3",
+    [TRACK_1 | TRACK_2]: "4",
+    [TRACK_1 | TRACK_3]: "5",
+    [TRACK_2 | TRACK_3]: "6",
+    [TRACK_1 | TRACK_2 | TRACK_3]: "7",
+  } as Readonly<Record<number, string>>,
+} as const;
+
+/** The wire digit for a mask, or `?` for one the device has no digit for — never a wrong digit. */
+const trackDigit = (tracks: number): string => WIRE.trackDigit[tracks] ?? "?";
 
 /**
  * The interface the driver claims, from the driver.
@@ -152,9 +203,17 @@ let mock = false;
 let led: LedColor | "off" = "off";
 let seconds = 60;
 
+/**
+ * The driver's own `DEFAULT_TRANSACTION`, restated because the driver does not publish it.
+ *
+ * Tracks 1 and 2 rather than all three, for the reason `@eai/omron`'s defaults give: a payment card
+ * generally carries no track 3, and asking for a track the card does not have fails the whole read.
+ * This shipped as `ALL_TRACKS`, so a fresh connect started in a configuration that cannot read an
+ * ordinary card — it reported `card present but unreadable` with every track answering status 49.
+ */
 let transaction: TransactionSetting = {
   direction: "back",
-  tracks: ALL_TRACKS,
+  tracks: TRACK_1 | TRACK_2,
   insertionLock: false,
   pullOutLock: false,
 };
@@ -174,17 +233,15 @@ export const state = () => ({
   transaction: { ...transaction },
   /** The literals these settings will put on the wire, so the page can show what it is sending. */
   literals: {
-    prepare: `C:6${transaction.direction === "none" ? 0 : transaction.direction === "insertion" ? 1 : 2}` +
-      `${transaction.tracks}${transaction.insertionLock ? 1 : 0}${transaction.pullOutLock ? 1 : 0}`,
+    prepare: `C:6${WIRE.direction[transaction.direction]}${trackDigit(transaction.tracks)}` +
+      `${transaction.insertionLock ? 1 : 0}${transaction.pullOutLock ? 1 : 0}`,
     monitor: `C92${String(seconds).padStart(2, "0")}`,
-    read: `C6a${transaction.tracks}`,
-    // Measured against the vendor DLL rather than inferred — see `SHUTTER_COMMANDS`, which had
-    // them the wrong way round when they were a guess.
-    lock: SHUTTER_COMMANDS.lock.body,
-    unlock: SHUTTER_COMMANDS.unlock.body,
-    // Built from the driver's own prefix and digit map rather than spelled out: the page was
-    // showing a bare `CP7`, which is not a command — the colour digit is the whole parameter.
-    led: led === "off" ? LED_OFF.body : LED_ON_PREFIX + LED_COLOR_DIGIT[led],
+    read: `C6a${trackDigit(transaction.tracks)}`,
+    lock: WIRE.lock,
+    unlock: WIRE.unlock,
+    // The colour digit is the whole parameter: the page was showing a bare `CP7`, which is not a
+    // command.
+    led: led === "off" ? WIRE.ledOff : WIRE.ledOn + WIRE.ledDigit[led],
   },
 });
 
@@ -241,15 +298,27 @@ function held(): OmronV4KU {
   return reader;
 }
 
-export async function reset(): Promise<void> {
-  await held().initialReset();
-  log("sent", "C00 — initial reset");
+/**
+ * Send one identified literal and log the device's own verdict.
+ *
+ * `initialReset()` and `clearReadData()` were methods on the driver and are now internal: the
+ * reader issues both itself, as part of opening and of each read cycle, and no longer offers them
+ * as operations. `sendRaw` is the published escape hatch, and both literals are ones the driver's
+ * own `IDENTIFIED_LITERALS` names, so neither is a guess.
+ *
+ * `sendRaw` returns a refusal rather than throwing — "the device rejected this" is an answer, not
+ * a failure — so a negative is logged as an error here rather than vanishing into a resolved
+ * promise.
+ */
+async function raw(body: string, what: string): Promise<void> {
+  const reply = await held().sendRaw(body);
+  const ok = reply.outcome === "positive";
+  log(ok ? "sent" : "error", `${body} — ${what}${ok ? "" : ` refused (${reply.token})`}`);
 }
 
-export async function clearRead(): Promise<void> {
-  await held().clearReadData();
-  log("sent", "C6s — read buffer cleared");
-}
+export const reset = (): Promise<void> => raw("C00", "initial reset");
+
+export const clearRead = (): Promise<void> => raw("C6s", "read buffer cleared");
 
 export function settings(next: Partial<TransactionSetting>): void {
   transaction = { ...transaction, ...next };
@@ -282,7 +351,7 @@ export async function shutter(locked: boolean): Promise<void> {
   const open = held();
   if (locked) await open.lock();
   else await open.unlock();
-  log("sent", `${locked ? SHUTTER_COMMANDS.lock.body : SHUTTER_COMMANDS.unlock.body} — shutter ${locked ? "locked" : "unlocked"}`);
+  log("sent", `${locked ? WIRE.lock : WIRE.unlock} — shutter ${locked ? "locked" : "unlocked"}`);
 }
 
 /**

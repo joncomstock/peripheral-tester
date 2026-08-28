@@ -12,6 +12,11 @@
     "@eai/ier/s33380": "jsr:@eai/ier@^1.0.0/s33380",
     "@eai/omron/v4ku": "jsr:@eai/omron@^1.0.0/v4ku",
     "@eai/desko/penta": "jsr:@eai/desko@^1.0.0/penta",
+    // `scan`, `readMrz`, `readBarcode` and `image` one at a time, plus the mock symbol table.
+    // They are only interpretable against the DLL's process-global "last scan", so the driver
+    // keeps them off the device class and behind this subpath; driving them a step at a time is
+    // what this tester is for.
+    "@eai/desko/penta/bench": "jsr:@eai/desko@^1.0.0/penta/bench",
     "@eai/hid": "jsr:@eai/hid@^1.0.0",
     // The driver's Transport contract — the mock board implements it. Pin matches
     // hardware-libs/deno.jsonc so we resolve the same version.
@@ -33,9 +38,13 @@
     // --allow-read serves the built UI from ./dist, --allow-env reads PORT and
     // DESKO_PAGESCAN_DLL_PATH.
     "dev": "deno run --allow-ffi --allow-net --allow-env --allow-read server/main.ts",
-    // No hardware and no FFI permission: fake transports driven through the real drivers.
-    "dev:mock": "deno run --allow-net --allow-env --allow-read server/main.ts --mock",
-    "test": "deno test server/",
+    // No hardware: fake transports driven through the real drivers. --allow-ffi is still needed,
+    // and not to reach a device: `@eai/hotplug` dlopens kernel32 and user32 at module scope, so
+    // importing `@eai/omron/v4ku` — which reaches it through `@eai/shared` — asks for FFI before
+    // anything is opened. Without it the process dies at import rather than serving a mock.
+    "dev:mock": "deno run --allow-ffi --allow-net --allow-env --allow-read server/main.ts --mock",
+    // --allow-ffi for the same import-time reason as `dev:mock`, not because a test opens a device.
+    "test": "deno test --allow-ffi server/",
     "check": "deno check server/main.ts"
   },
   // Matches hardware-libs so the ported backend stays formatted the way the driver is.

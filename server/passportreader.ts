@@ -11,7 +11,7 @@
  * @module
  */
 
-import { createMockPageScanLib, DeskoPenta, LedColor, LightSource, Resolution } from "@eai/desko/penta";
+import { LedColor, LightSource, Resolution } from "@eai/desko/penta";
 import type {
   BarcodeRead,
   DocumentImage,
@@ -20,11 +20,24 @@ import type {
   LedColorName,
   LedUsageName,
   LightSourceName,
-  MockPageScan,
   MrzRead,
   ReadMrzOptions,
   ResolutionName,
 } from "@eai/desko/penta";
+/**
+ * The bench subpath, not the device one.
+ *
+ * `@eai/desko/penta` carries the scanner a kiosk should hold: connect, the settings, the LED, the
+ * buzzer, and `readDocument`, which takes the scan and both recognitions under one driver lock.
+ * `scan`, `readMrz`, `readBarcode` and `image` are on `DeskoPentaBench` instead, because each reads
+ * the DLL's *process-global* "last scan" and a workflow that composes them can pair one document's
+ * MRZ with another's photograph. This tester wants them anyway, and for the reason the split names:
+ * someone standing at the machine needs to know which step failed, so `Read document` is the safe
+ * sequence and the other three are the same calls one at a time. The public raw-symbol constructor
+ * and the mock live on the same subpath.
+ */
+import { createMockPageScanLib, DeskoPentaBench } from "@eai/desko/penta/bench";
+import type { MockPageScan } from "@eai/desko/penta/bench";
 import { announce, record } from "./activity.ts";
 
 const log = (kind: string, text: string) => record("passportreader", kind, text);
@@ -106,7 +119,7 @@ export type Phase = "idle" | "scanning";
 /** How often the device is asked whether a document is on the glass, while connected. */
 const PRESENCE_POLL_MS = 400;
 
-let penta: DeskoPenta | null = null;
+let penta: DeskoPentaBench | null = null;
 let mockLib: MockPageScan | null = null;
 let status: Status = "closed";
 let phase: Phase = "idle";
@@ -206,6 +219,15 @@ function mockState(): MockPageScan["state"] {
   return mockLib.state;
 }
 
+/**
+ * The mock symbol table the driver ships, rather than a second imitation of the device.
+ *
+ * `@eai/desko` exports the fake `PageScanAPI.dll` its own tests run against, so `--mock` exercises
+ * the real struct packing and the real MRZ and barcode decoding. A mock written here would drift
+ * the moment the driver was corrected.
+ */
+const mockPageScanLib = (): MockPageScan => createMockPageScanLib({ mrzLines: DEMO_MRZ, imageBytes: syntheticScan("visible") });
+
 export async function connect(): Promise<void> {
   if (status !== "closed") return;
   status = "opening";
@@ -214,11 +236,11 @@ export async function connect(): Promise<void> {
 
   try {
     if (mock) {
-      mockLib = createMockPageScanLib({ mrzLines: DEMO_MRZ, imageBytes: syntheticScan("visible") });
-      penta = new DeskoPenta(mockLib.symbols, { scanSettings: scanSettings() });
+      mockLib = mockPageScanLib();
+      penta = new DeskoPentaBench(mockLib.symbols, { scanSettings: scanSettings() });
     }
     else {
-      penta = DeskoPenta.open({ dllPath, scanSettings: scanSettings() });
+      penta = DeskoPentaBench.open({ dllPath, scanSettings: scanSettings() });
     }
     await penta.connect();
 
@@ -266,7 +288,7 @@ export async function disconnect(): Promise<void> {
   log("info", "Scanner released");
 }
 
-function held(): DeskoPenta {
+function held(): DeskoPentaBench {
   if (!penta) throw new Error("Not connected");
   return penta;
 }

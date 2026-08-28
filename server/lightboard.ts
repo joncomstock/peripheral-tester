@@ -13,7 +13,6 @@ import { attachHandler } from "@eai/logging-ts";
 import type { Transport } from "@eai/models";
 import {
   ACTIONS,
-  DEFAULT_PORT,
   IER_S33380_DEFAULTS,
   IERS33380,
   INDICATOR_SECTIONS,
@@ -27,6 +26,16 @@ import { aiCollisions } from "./collisions.ts";
 import { announce, record } from "./activity.ts";
 
 const log = (kind: string, text: string) => record("lightboard", kind, text);
+
+/**
+ * The port to offer when nobody has picked one.
+ *
+ * `@eai/ier` exported this until the board gained a USB-serial transport alongside the COM one, at
+ * which point a single default port stopped meaning anything to the driver. It still means
+ * something to this page, which asks a person for a port name: COM14 is where the board sits on the
+ * 919 the channel map was walked on, and it is a prefill, not a pin.
+ */
+const DEFAULT_PORT = "COM14";
 
 // ---------------------------------------------------------------------------------------------
 // A fake board, for driving the page without a kiosk.
@@ -167,7 +176,9 @@ export async function connect(requested?: string): Promise<void> {
       board = await IERS33380.openWithTransport(mockBoard, undefined, name);
     }
     else {
-      board = await IERS33380.open({ portName });
+      // `open()` is now the USB-serial door and wants a vendor/product pair; `openPort()` is the
+      // one that takes a COM port, which is what IER's own bus driver presents on a 919.
+      board = await IERS33380.openPort({ port: portName });
     }
   }
   catch (err) {
@@ -206,10 +217,15 @@ export async function disconnect(): Promise<void> {
  * The board's vocabulary and channel map.
  *
  * Built from the driver's own exported arrays, so the page cannot offer a section the driver does
- * not have. Before a connection there is no live config, so the shipped defaults stand in.
+ * not have.
+ *
+ * The channel map is the shipped default rather than the open board's live one: the driver keeps
+ * its config private now, and nothing here ever passes an override, so the two cannot differ. Give
+ * this page a way to send a custom `LightboardConfig` and that stops being true — read it back off
+ * whatever this sends rather than asking the board.
  */
 export function vocabulary() {
-  const config = board?.config ?? IER_S33380_DEFAULTS;
+  const config = IER_S33380_DEFAULTS;
   return {
     actions: ACTIONS,
     indicators: INDICATOR_SECTIONS.map((section) => ({ section, channel: config.indicators[section] })),

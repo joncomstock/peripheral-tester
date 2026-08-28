@@ -135,8 +135,10 @@ reload works while the board stays on the Deno side (`TESTER_PORT` overrides the
 ### Before the drivers are published
 
 No driver is on the registry yet, and they live on **three unmerged branches** of `hardware-libs` —
-`@eai/ier` and `@eai/serial` on `feat/ier-lightboard`, `@eai/omron` and `@eai/hid` on
-`feat/omron-v4ku`, `@eai/desko` on `feat/desko-penta`. Until they land on master a clean clone
+`@eai/ier` and `@eai/serial` on `feat/ier-lightboard`, `@eai/omron` on `feat/omron-v4ku`,
+`@eai/desko` on `feat/desko-penta`. `@eai/hid` is on none of them — it is `feat/hid-facepod`'s, and
+until that lands the HID contract this app imports as `@eai/hid` is `@eai/usb`'s, which is why the
+map below points both names at the same module. Until they land on master a clean clone
 cannot build, and pointing at a single checkout is not enough: two of the three branches have to be
 worktrees.
 
@@ -163,8 +165,13 @@ or `lint`: the commands below invoke Deno directly, which is the point.
     "@eai/ier/s33380": "../wt-ier-driver/ier/s33380/mod.ts",
     "@eai/serial": "../wt-ier-driver/serial/mod.ts",
     "@eai/omron/v4ku": "../hardware-libs/omron/v4ku/mod.ts",
-    "@eai/hid": "../hardware-libs/hid/mod.ts",
+    // Not a typo and not `hid/`: there is no such package on `feat/omron-v4ku`, and `@eai/omron`
+    // resolves the same contract as `@eai/usb`. Pointing this at `../hardware-libs/hid/mod.ts`
+    // is the TS2307 the note below is about.
+    "@eai/hid": "../hardware-libs/usb/mod.ts",
     "@eai/desko/penta": "../wt-desko-penta/desko/penta/mod.ts",
+    // `scan`, `readMrz`, `readBarcode` and `image` one at a time, and the mock symbol table.
+    "@eai/desko/penta/bench": "../wt-desko-penta/desko/penta/bench.ts",
     // The deps those drivers resolve through this map rather than their own workspace.
     "@eai/shared": "../hardware-libs/shared/mod.ts",
     "@eai/usb": "../hardware-libs/usb/mod.ts",
@@ -189,9 +196,9 @@ directly while swapped:
 
 ```bash
 deno run -c deno.local.jsonc --allow-ffi --allow-net --allow-env --allow-read server/main.ts
-deno run -c deno.local.jsonc --allow-net --allow-env --allow-read server/main.ts --mock
+deno run -c deno.local.jsonc --allow-ffi --allow-net --allow-env --allow-read server/main.ts --mock
 deno check -c deno.local.jsonc server/main.ts
-deno test  -c deno.local.jsonc --allow-read server/
+deno test  -c deno.local.jsonc --allow-ffi --allow-read server/
 ```
 
 `deno fmt` and `deno lint` are unaffected — they never resolve an import — so those two stay as
@@ -212,6 +219,12 @@ exist for anybody else.
 construction, framing and ack matching being exercised are the shipped ones. It answers every
 command and echoes the parameters back on every third reply (`AI;3=O@` rather than `AI;3@`) — a shape
 the driver accepts and warns about, so that path is exercised before anyone is standing at a kiosk.
+
+It still runs with `--allow-ffi`, which looks wrong for a mode that opens nothing. The permission is
+not for a device: `@eai/hotplug` picks its notifier at module scope, and the Windows one `dlopen`s
+`kernel32` and `user32` as it loads. `@eai/omron/v4ku` reaches it through `@eai/shared`, so the
+import alone asks for FFI, and without the flag the process dies before it serves the page rather
+than at the first `connect`. Nothing in mock mode calls a symbol through it.
 
 The card reader's mock speaks the V4KU's own report protocol — `C00`, `C6s`, `C:6`, `C92`, `C6a` and
 their `P`/`N` replies — so the driver's framing, echo matching and track parsing are the ones under

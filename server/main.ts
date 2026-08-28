@@ -154,6 +154,9 @@ async function handle(request: Request): Promise<Response> {
   // The one response carrying cardholder data. It is answered to the caller and never recorded.
   if (post && pathname === "/api/cardreader/read") return await attempt(() => cardreader.read());
   if (post && pathname === "/api/cardreader/cancel") return await attempt(() => cardreader.cancel());
+  // A bench diagnostic: the same cycle as `read`, reported as the device's own replies. It carries
+  // no cardholder data — see `describeTrackReply`, which is what decides that.
+  if (post && pathname === "/api/cardreader/diagnose") return await attempt(() => cardreader.diagnosticRead());
   if (post && pathname === "/api/cardreader/shutter") {
     const { locked } = await body<{ locked: boolean }>();
     return await attempt(() => cardreader.shutter(locked === true));

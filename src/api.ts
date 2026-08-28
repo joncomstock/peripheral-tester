@@ -340,6 +340,8 @@ export const cardreader = {
   led: (color: LedColor | "off") => post("/api/cardreader/led", { color }),
   read: () => post<ReadResult>("/api/cardreader/read"),
   cancel: () => post("/api/cardreader/cancel"),
+  /** One read cycle reported as the device's raw replies, into the activity log. */
+  diagnose: () => post("/api/cardreader/diagnose"),
   /** Drive the shutter now, as opposed to the transaction's locks, which arm the next read. */
   shutter: (locked: boolean) => post("/api/cardreader/shutter", { locked }),
   arm: (outcome: NextOutcome) => post("/api/cardreader/arm", { outcome }),

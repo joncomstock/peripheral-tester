@@ -11,6 +11,9 @@
  */
 
 import type { HidDevice } from "@eai/hid";
+import { attachHandler } from "@eai/logging-ts";
+import { BaseHandler } from "@std/log";
+import type { LogRecord } from "@std/log";
 import { OmronV4KU, TRACK_1, TRACK_2, TRACK_3, V4KU_PID, V4KU_VID } from "@eai/omron/v4ku";
 import type { CardData, LedColor, MonitorOutcome, ReadDirection, TransactionSetting } from "@eai/omron/v4ku";
 import { announce, record } from "./activity.ts";
@@ -76,6 +79,53 @@ const WIRE = {
 
 /** The wire digit for a mask, or `?` for one the device has no digit for — never a wrong digit. */
 const trackDigit = (tracks: number): string => WIRE.trackDigit[tracks] ?? "?";
+
+/** How many ISO tracks a mask asks for. */
+const trackCount = (tracks: number): number => [TRACK_1, TRACK_2, TRACK_3].filter((bit) => (tracks & bit) !== 0).length;
+
+/**
+ * A track-read reply, in a form the activity log may carry.
+ *
+ * The reply is a five-character token, then a fixed header — the echoed mask, a two-digit status
+ * per track and a three-digit length per track — then the tracks themselves. The header is device
+ * metadata and says whether a stripe was decoded at all, which is the whole question a failed read
+ * raises. Everything after it is cardholder data and never leaves this function.
+ *
+ * **Leading digits are not proof of a header.** The wire digit for tracks 1 and 2 is `4` and a Visa
+ * PAN starts with `4`, so a reply that carried track 2 with no header at all would clear a
+ * digits-only test and put the first eleven digits of a card number on the page. Two further checks
+ * stand in the way, and the second is the one that does the work:
+ *
+ * - the mask must echo what was asked for, which is `@eai/omron`'s own guard in
+ *   `parseTrackReadHeader` — "byte 0 is knowable in advance";
+ * - the lengths the header declares must fit in the payload that follows it. A stripe read as a
+ *   header declares lengths in the hundreds and carries tens of bytes, so it fails this and is
+ *   reported as a length alone.
+ */
+export function describeTrackReply(token: string, data: string, tracksRequested: number): string {
+  const size = `${token} — ${data.length} bytes`;
+  if (data.length === 0) return `${size}, no payload`;
+
+  const count = trackCount(tracksRequested);
+  const width = 1 + count * 5;
+  const header = data.slice(0, width);
+  const shaped = data.length >= width &&
+    new RegExp(`^\\d{${width}}$`).test(header) &&
+    header[0] === trackDigit(tracksRequested);
+  if (!shaped) return `${size}, payload not in header shape`;
+
+  const statuses: string[] = [];
+  const lengths: string[] = [];
+  for (let slot = 0; slot < count; slot++) {
+    statuses.push(header.slice(1 + slot * 2, 3 + slot * 2));
+    lengths.push(header.slice(1 + count * 2 + slot * 3, 4 + count * 2 + slot * 3));
+  }
+  // The declared tracks have to fit in what came after the header, or this is not a header.
+  const declared = lengths.reduce((total, length) => total + Number(length), 0);
+  if (declared + width > data.length) return `${size}, payload not in header shape`;
+
+  return `${size}, mask ${header[0]}, status ${statuses.join("/")}, length ${lengths.join("/")}`;
+}
 
 /**
  * The interface the driver claims, from the driver.
@@ -261,6 +311,7 @@ export async function connect(): Promise<void> {
     else {
       reader = await OmronV4KU.open({ transaction });
     }
+    listenForWarnings();
   }
   catch (err) {
     status = "closed";
@@ -296,6 +347,105 @@ export async function disconnect(): Promise<void> {
 function held(): OmronV4KU {
   if (!reader) throw new Error("Not connected");
   return reader;
+}
+
+/**
+ * Logger names already carrying our handler, so reconnecting does not attach a second copy and
+ * report every driver warning twice. The light board keeps the same guard for the same reason.
+ */
+const attached = new Set<string>();
+
+/**
+ * The driver's own warnings, onto the page.
+ *
+ * The light board has had this since it was written; the card reader never did, so `@eai/omron`'s
+ * warnings went to this process's stdout — where an operator standing at the reader has no reason
+ * to be looking. They are the only place the *reply token* appears: the page could say a read
+ * failed with status `10`, while `Track read answered P6a10` — which says the device answered
+ * positively — was visible nowhere. That is the difference between a device that refused and a
+ * device whose answer this driver declined to use.
+ */
+class WarningsToPage extends BaseHandler {
+  override handle(entry: LogRecord): void {
+    if (entry.levelName === "WARN") log("warned", entry.msg);
+  }
+
+  /** Abstract on the base class, and unreachable here: `handle` never enters the formatting path. */
+  override log(): void {
+    throw new Error("unreachable");
+  }
+}
+
+/** The name `@eai/omron` logs under — `OmronV4KU:` and the identity, hex, four digits each. */
+function listenForWarnings(): void {
+  const name = `OmronV4KU:${V4KU_VID.toString(16).padStart(4, "0")}:${V4KU_PID.toString(16).padStart(4, "0")}`;
+  if (attached.has(name)) return;
+  attachHandler(name, new WarningsToPage("WARN"));
+  attached.add(name);
+}
+
+/**
+ * One read cycle driven as three raw commands, reporting the device's replies rather than a verdict.
+ *
+ * `readOnce` answers "did a card read", which is the right answer for a kiosk and the wrong one at
+ * a bench: a reply the driver declines to use and a reply the device refused both arrive as
+ * `readFailed`, and the reply itself is gone. This issues the same three literals through the
+ * published escape hatch and reports what came back, so a failing read can be attributed to the
+ * device or to the driver's reading of it.
+ *
+ * It is not a substitute for `Read once`. The driver holds one lock across monitor and track read
+ * so nothing can disturb the buffered card between them; three `sendRaw` calls take that lock three
+ * times. With one person at a bench that is safe, and it is the only way to see the reply.
+ */
+export async function diagnosticRead(): Promise<void> {
+  const open = held();
+  const { prepare, read } = state().literals;
+  // Comfortably inside the driver's 30s acknowledgement budget, which `sendRaw` waits for — the
+  // configured monitor window can be 60s and would time the command out rather than the card wait.
+  const wait = 25;
+  const monitor = `C92${String(wait).padStart(2, "0")}`;
+
+  log("info", `Diagnostic read — C6s, ${prepare}, ${monitor}, ${read}`);
+  /*
+   * `readOnce` runs `#prepareForRead` first — cancel and drain, clear the read buffer, apply the
+   * transaction — and this ran only the third. The same literals read a card here and failed with
+   * status 49 there, so the preamble is what stands between them.
+   *
+   * Only the clear is replicated. The cancel is not, and cannot honestly be: `#cancelAndDrain`
+   * cancels *and consumes the reply the cancel produces*, holding the lock across both, while the
+   * public `cancel()` deliberately does neither — it exists to interrupt a parked monitor, which
+   * consumes the reply for it. Calling the public one here with nothing in flight left that reply
+   * in the pipe and the next command matched nothing for thirty seconds. So this isolates the one
+   * step it can: if the read now fails, `C6s` is what costs it; if it survives, the cancel is.
+   */
+  const cleared = await open.sendRaw("C6s");
+  log(cleared.outcome === "positive" ? "sent" : "error", `C6s → ${cleared.token}`);
+  // The allowance the driver makes after clearing, so this is not faster than the real path.
+  await new Promise((resume) => setTimeout(resume, 200));
+
+  const prepared = await open.sendRaw(prepare);
+  log(prepared.outcome === "positive" ? "sent" : "error", `${prepare} → ${prepared.token}`);
+  if (prepared.outcome !== "positive") return;
+
+  // The same phase a real read reports. Without it the diagnostic waited fifteen seconds behind a
+  // lamp that still said Idle, which reads as a dead button — and gets clicked again.
+  phase = "waiting";
+  tell();
+  log("info", `Insert the card now — waiting ${wait}s`);
+  const monitored = await open.sendRaw(monitor);
+  phase = "idle";
+  tell();
+  log(monitored.outcome === "positive" ? "sent" : "info", `${monitor} → ${monitored.token}`);
+  if (monitored.outcome !== "positive") return;
+
+  // The same allowance `readOnce` makes before collecting the tracks. Without it this diagnostic
+  // could fail where the ordinary read succeeds, which would send us after the wrong fault.
+  await new Promise((resume) => setTimeout(resume, 500));
+  const collected = await open.sendRaw(read);
+  log(
+    collected.outcome === "positive" && collected.status === "00" ? "ok" : "warned",
+    describeTrackReply(collected.token, collected.data, transaction.tracks),
+  );
 }
 
 /**
@@ -373,7 +523,12 @@ export async function read(): Promise<ReadResult> {
   log("sent", `${state().literals.prepare} · ${state().literals.monitor}`);
 
   try {
-    await open.prepareTransaction(transaction);
+    // Adopt, do not apply. `readOnce` applies the transaction as part of every cycle, so sending
+    // it here too put `C:6…` on the wire twice — and the device answered the monitor `P9200`
+    // rather than `P9202`, detecting the card without reading it, with the track read then
+    // returning status 49 on both tracks and zero length. That was every failed read on this
+    // bench; the identical sequence with one `C:6…` reads the card.
+    open.adopt(transaction);
     const outcome = await open.readOnce(seconds);
 
     if (outcome.kind === "card") {

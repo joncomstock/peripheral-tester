@@ -143,6 +143,25 @@ export function CardReaderPage(
   };
 
   /**
+   * The raw diagnostic, run through the same busy flag as a read.
+   *
+   * It reports into Activity rather than onto the card panel, so without this the page showed
+   * nothing at all for the fifteen seconds it waits — an Idle lamp and a live button, which reads
+   * as a dead control and gets pressed again. Three overlapping cycles is not a diagnostic.
+   */
+  const diagnose = async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await api.cardreader.diagnose();
+    }
+    catch (err) {
+      onFail((err as Error).message);
+    }
+    setBusy(false);
+  };
+
+  /**
    * Apply a scenario's whole configuration, then read under it.
    *
    * One `settings` call rather than four: the four fields are a single coherent choice, and posting
@@ -325,6 +344,21 @@ export function CardReaderPage(
                 disabled={!open || busy}
               >
                 Initial reset
+              </button>
+              {/*
+                * Reports the device's own replies rather than a verdict, into Activity.
+                *
+                * `Read once` can only say a read failed; this says what the device answered, which
+                * is what separates a device that refused from a reply this driver declined to use.
+                */}
+              <button
+                className="button"
+                {...waiting("diagnose")}
+                onClick={diagnose}
+                disabled={!open || busy}
+                title="Runs one cycle and reports the raw replies in Activity. Waits 15s for a card."
+              >
+                Diagnostic read
               </button>
             </div>
 

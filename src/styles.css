@@ -1701,6 +1701,29 @@ input:focus:not(:focus-visible) {
   min-height: 160px;
 }
 
+/*
+ * A read that answered something worth noticing. Both triples are defined for light and dark alike.
+ * The tint is on the panel rather than the words: it has to read as a state at a glance, from
+ * arm's length, by someone whose hands are holding a card.
+ */
+.empty--warn {
+  background: var(--warnbg);
+  box-shadow: inset 0 0 0 1px var(--warnline);
+}
+
+.empty--bad {
+  background: var(--badbg);
+  box-shadow: inset 0 0 0 1px var(--badline);
+}
+
+.empty--warn .empty-title {
+  color: var(--warn);
+}
+
+.empty--bad .empty-title {
+  color: var(--bad);
+}
+
 .empty-title {
   font-size: var(--font-label);
   color: var(--text3);

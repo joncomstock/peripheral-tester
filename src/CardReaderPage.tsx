@@ -86,6 +86,14 @@ export function CardReaderPage(
    * of any kind, because it describes the card currently in the slot and nothing else.
    */
   const [held, setHeld] = useState<CardScenario | null>(null);
+  /**
+   * Why the last read threw, if it did.
+   *
+   * A request that fails reaches a toast, which is gone in a few seconds and takes the only account
+   * of what happened with it. The panel is where someone looks after the fact, so it keeps the
+   * sentence too. Cleared with the rest of the results when the next read starts.
+   */
+  const [failure, setFailure] = useState<string | null>(null);
   /** Read inside the loop, which outlives the render that started it. */
   const listen = useRef(false);
 
@@ -108,12 +116,31 @@ export function CardReaderPage(
   }, [open]);
 
   /**
+   * Empty the results panel, so nothing on screen belongs to the card before this one.
+   *
+   * Called as a read starts rather than when one ends. A panel that still shows the last card while
+   * the reader waits for the next is the one thing at a bench nobody can afford to misread: the
+   * operator is holding a second card and looking at the first one's number.
+   *
+   * The cost is deliberate. The last card used to survive a cycle that produced nothing, so it
+   * could be compared against the card in hand; now a timeout leaves the panel empty. Within a
+   * listen loop it still survives — the clear happens once, when listening starts, because clearing
+   * per cycle would blink the panel on every pass.
+   */
+  const clearResults = () => {
+    setCard(null);
+    setOutcome(null);
+    setFailure(null);
+    // Revealing is deliberate and resets on the next read; a cleared panel must not come back unmasked.
+    setReveal(false);
+  };
+
+  /**
    * One monitor cycle.
    *
-   * A previous card stays on screen through a cycle that produced nothing, because "the last card
-   * read" is what an operator is comparing against the card in their hand. A cycle that found a
-   * card replaces it, and one that found a card it could not decode clears it — showing the last
-   * card beside "stripe would not decode" would read as though that card had failed.
+   * A cycle that found a card replaces what is shown, and one that found a card it could not decode
+   * clears it — showing the last card beside "stripe would not decode" would read as though that
+   * card had failed.
    */
   const cycle = useCallback(async (): Promise<boolean> => {
     try {
@@ -129,7 +156,9 @@ export function CardReaderPage(
       return true;
     }
     catch (err) {
-      onFail((err as Error).message);
+      const message = (err as Error).message;
+      setFailure(message);
+      onFail(message);
       return false;
     }
   }, [onFail]);
@@ -138,6 +167,7 @@ export function CardReaderPage(
     if (busy) return;
     setBusy(true);
     setHeld(null);
+    clearResults();
     await cycle();
     setBusy(false);
   };
@@ -152,6 +182,7 @@ export function CardReaderPage(
   const diagnose = async () => {
     if (busy) return;
     setBusy(true);
+    clearResults();
     try {
       await api.cardreader.diagnose();
     }
@@ -173,6 +204,7 @@ export function CardReaderPage(
     if (busy) return;
     setBusy(true);
     setHeld(null);
+    clearResults();
     try {
       await api.cardreader.settings(scenario.setting);
       const read = await cycle();
@@ -181,7 +213,9 @@ export function CardReaderPage(
       if (read && scenario.retains) setHeld(scenario);
     }
     catch (err) {
-      onFail((err as Error).message);
+      const message = (err as Error).message;
+      setFailure(message);
+      onFail(message);
     }
     setBusy(false);
   };
@@ -224,6 +258,7 @@ export function CardReaderPage(
     listen.current = true;
     setListening(true);
     setBusy(true);
+    clearResults();
     while (listen.current) {
       const started = Date.now();
       if (!await cycle()) break;
@@ -257,7 +292,7 @@ export function CardReaderPage(
     ? `Card read — ${
       [card.track1 && "track 1", card.track2 && "track 2"].filter(Boolean).join(" and ") || "no track decoded"
     }`
-    : verdictFor(outcome, open, busy).title;
+    : verdictFor(outcome, open, busy, failure).title;
   /*
    * A card that was present and would not decode interrupts; everything else waits its turn.
    *
@@ -292,7 +327,15 @@ export function CardReaderPage(
 
       <main className="pane">
         <div className="col col-wide">
-          <Card title="Read control" aside={<code>{state.literals.monitor}</code>} quiet>
+          <Card title="Scenarios" quiet>
+            {/*
+              * The cycle's status, at the top of the panel that starts one.
+              *
+              * It lived in `Read control`, which was the first card until the scenarios took that
+              * place. Left there it sat below the fold of the route most people take, saying "Idle"
+              * where nobody was looking. `.phase` is styled to head a card, so it needs no new
+              * dressing to sit here.
+              */}
             <div className={monitoring ? "phase phase--active" : "phase"}>
               <span
                 data-lamp=""
@@ -319,6 +362,82 @@ export function CardReaderPage(
                   : ""}
               </span>
             </div>
+            <p className="masknote">
+              Each sets the whole transaction — direction, tracks and both locks — to a combination
+              that can actually read, then runs one read under it. The controls below move to match,
+              so a scenario is a starting point you can adjust rather than a mode you are put into.
+            </p>
+            <div className="actions">
+              {CARD_SCENARIOS.map((scenario) => (
+                <button
+                  key={scenario.id}
+                  className={activeScenario?.id === scenario.id ? "button button--strong" : "button"}
+                  onClick={() => runScenario(scenario)}
+                  disabled={!open || busy}
+                  title={scenario.hint}
+                >
+                  {scenario.label}
+                </button>
+              ))}
+            </div>
+            {activeScenario && <p className="masknote">{activeScenario.hint}</p>}
+            {/*
+              * The release is offered here rather than left to the Shutter card below.
+              *
+              * A retain scenario ends with the card still in the reader, which is the scenario
+              * working — but the control that frees it was two cards away under a different
+              * heading, so the first person to run one went looking for it with a card stuck in
+              * the slot. Nothing releases on its own: this is still a deliberate click.
+              */}
+            {held && (
+              <div className="simrow">
+                <span className="simrow-label">Card is held by the reader</span>
+                <button
+                  className="button button--primary"
+                  {...waiting("shutter")}
+                  onClick={() => {
+                    setHeld(null);
+                    return send("shutter", api.cardreader.shutter(false));
+                  }}
+                  disabled={!open}
+                >
+                  Release card
+                </button>
+              </div>
+            )}
+          </Card>
+
+          <Card
+            title="Card data"
+            grow={1}
+            aside={card ? undefined : "Nothing read yet"}
+            action={card
+              ? (
+                <button className="pill card-head-action" onClick={() => setReveal((was) => !was)}>
+                  {reveal ? "Mask PAN" : "Reveal PAN"}
+                </button>
+              )
+              : undefined}
+          >
+            {/*
+              * The *outcome* is announced, not the panel.
+              *
+              * A live region around the card data spoke the PAN aloud the moment Reveal was
+              * pressed — on a kiosk, in a terminal, for a reason that is usually "show it to the
+              * person next to me". What a screen reader needs is that a read landed and how it
+              * decoded; the number itself is there to be navigated to, deliberately, like the
+              * button that unmasked it.
+              */}
+            <p className="visually-hidden" role="status">{failed ? "" : announcement}</p>
+            {/* Two nodes, not one with a switched `aria-live`: politeness is read when the region
+                is created, so flipping it on an existing one is not reliably honoured. */}
+            <p className="visually-hidden" role="alert">{failed ? announcement : ""}</p>
+            {card
+              ? <CardPanel card={card} reveal={reveal} />
+              : <Empty outcome={outcome} open={open} busy={busy} failure={failure} />}
+          </Card>
+
+          <Card title="Read control" aside={<code>{state.literals.monitor}</code>} quiet>
 
             <div className="actions">
               <button className="button button--primary" onClick={readOnce} disabled={!open || busy}>Read once</button>
@@ -378,80 +497,6 @@ export function CardReaderPage(
                     </button>
                   ))}
                 </span>
-              </div>
-            )}
-          </Card>
-
-          <Card
-            title="Card data"
-            grow={1}
-            aside={card ? undefined : "Nothing read yet"}
-            action={card
-              ? (
-                <button className="pill card-head-action" onClick={() => setReveal((was) => !was)}>
-                  {reveal ? "Mask PAN" : "Reveal PAN"}
-                </button>
-              )
-              : undefined}
-          >
-            {/*
-              * The *outcome* is announced, not the panel.
-              *
-              * A live region around the card data spoke the PAN aloud the moment Reveal was
-              * pressed — on a kiosk, in a terminal, for a reason that is usually "show it to the
-              * person next to me". What a screen reader needs is that a read landed and how it
-              * decoded; the number itself is there to be navigated to, deliberately, like the
-              * button that unmasked it.
-              */}
-            <p className="visually-hidden" role="status">{failed ? "" : announcement}</p>
-            {/* Two nodes, not one with a switched `aria-live`: politeness is read when the region
-                is created, so flipping it on an existing one is not reliably honoured. */}
-            <p className="visually-hidden" role="alert">{failed ? announcement : ""}</p>
-            {card ? <CardPanel card={card} reveal={reveal} /> : <Empty outcome={outcome} open={open} busy={busy} />}
-          </Card>
-
-          <Card title="Scenarios" quiet>
-            <p className="masknote">
-              Each sets the whole transaction — direction, tracks and both locks — to a combination
-              that can actually read, then runs one read under it. The controls below move to match,
-              so a scenario is a starting point you can adjust rather than a mode you are put into.
-            </p>
-            <div className="actions">
-              {CARD_SCENARIOS.map((scenario) => (
-                <button
-                  key={scenario.id}
-                  className={activeScenario?.id === scenario.id ? "button button--strong" : "button"}
-                  onClick={() => runScenario(scenario)}
-                  disabled={!open || busy}
-                  title={scenario.hint}
-                >
-                  {scenario.label}
-                </button>
-              ))}
-            </div>
-            {activeScenario && <p className="masknote">{activeScenario.hint}</p>}
-            {/*
-              * The release is offered here rather than left to the Shutter card below.
-              *
-              * A retain scenario ends with the card still in the reader, which is the scenario
-              * working — but the control that frees it was two cards away under a different
-              * heading, so the first person to run one went looking for it with a card stuck in
-              * the slot. Nothing releases on its own: this is still a deliberate click.
-              */}
-            {held && (
-              <div className="simrow">
-                <span className="simrow-label">Card is held by the reader</span>
-                <button
-                  className="button button--primary"
-                  {...waiting("shutter")}
-                  onClick={() => {
-                    setHeld(null);
-                    return send("shutter", api.cardreader.shutter(false));
-                  }}
-                  disabled={!open}
-                >
-                  Release card
-                </button>
               </div>
             )}
           </Card>
@@ -589,28 +634,62 @@ export function CardReaderPage(
  * Split from the rendering so the same words can be spoken: the empty state and the announcement
  * were two descriptions of one outcome, and they would have drifted.
  */
-function verdictFor(outcome: ReadResult["kind"] | null, open: boolean, busy: boolean): { title: string; note: string } {
-  const [title, note] = !open
-    ? ["Reader not claimed", "Connect the reader, start a cycle, then insert a card."]
+/**
+ * What the panel says when it is not showing a card.
+ *
+ * Every one of these is an answer, so each gets its own sentence and its own weight rather than a
+ * single grey "nothing here". A request that threw is the newest of them: it used to reach a toast
+ * and nothing else, so the account of what went wrong expired a few seconds after it appeared.
+ *
+ * The tone separates "no card arrived", which is a thing that happens on an idle kiosk, from "a
+ * card was there and something went wrong", which is what someone at a bench is hunting.
+ */
+function verdictFor(
+  outcome: ReadResult["kind"] | null,
+  open: boolean,
+  busy: boolean,
+  failure?: string | null,
+): { title: string; note: string; tone: "quiet" | "warn" | "bad" } {
+  if (failure) {
+    return {
+      title: "The read could not be sent",
+      note: `${failure}. The device was not asked, so nothing was read — this is the app or the driver, not the card.`,
+      tone: "bad",
+    };
+  }
+  const [title, note, tone] = !open
+    ? ["Reader not claimed", "Connect the reader, start a cycle, then insert a card.", "quiet"] as const
     : busy
-    ? ["Waiting for a card", "Insert a card. The device is watching for one."]
+    ? ["Waiting for a card", "Insert a card. The device is watching for one.", "quiet"] as const
     : outcome === "timeout"
-    ? ["Cycle timed out", "The device's own timeout elapsed with no card inserted."]
+    ? [
+      "Cycle timed out",
+      "The device's own timeout elapsed with no card inserted. Nothing is wrong with the reader — start another cycle.",
+      "quiet",
+    ] as const
     : outcome === "cancelled"
-    ? ["Read cancelled", "The monitor was interrupted before a card arrived."]
+    ? ["Read cancelled", "The monitor was interrupted before a card arrived.", "quiet"] as const
     : outcome === "readFailed"
     ? [
       "Stripe would not decode",
-      "A card was present but no rule in the driver's track parser accepted a PAN, so nothing is handed up. Retry the read.",
-    ]
-    : ["No card read yet", "Claim the reader, start a cycle, then insert a card."];
-  return { title, note };
+      "A card was present but no rule in the driver's track parser accepted a PAN, so nothing is handed up. Retry the read, and use Diagnostic read to see what the device actually replied.",
+      "warn",
+    ] as const
+    : ["No card read yet", "Claim the reader, start a cycle, then insert a card.", "quiet"] as const;
+  return { title, note, tone };
 }
 
-function Empty({ outcome, open, busy }: { outcome: ReadResult["kind"] | null; open: boolean; busy: boolean }) {
-  const { title, note } = verdictFor(outcome, open, busy);
+function Empty(
+  { outcome, open, busy, failure }: {
+    outcome: ReadResult["kind"] | null;
+    open: boolean;
+    busy: boolean;
+    failure?: string | null;
+  },
+) {
+  const { title, note, tone } = verdictFor(outcome, open, busy, failure);
   return (
-    <div className="empty">
+    <div className={tone === "quiet" ? "empty" : `empty empty--${tone}`}>
       <span className="empty-title">{title}</span>
       <span className="empty-note">{note}</span>
     </div>

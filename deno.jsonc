@@ -44,7 +44,9 @@
     // anything is opened. Without it the process dies at import rather than serving a mock.
     "dev:mock": "deno run --allow-ffi --allow-net --allow-env --allow-read server/main.ts --mock",
     // --allow-ffi for the same import-time reason as `dev:mock`, not because a test opens a device.
-    "test": "deno test --allow-ffi server/",
+    // --allow-read as well: one test reads this repo's own source to prove the shipped default and
+    // the driver's have not drifted apart, which is a file read like any other.
+    "test": "deno test --allow-ffi --allow-read server/",
     "check": "deno check server/main.ts"
   },
   // Matches hardware-libs so the ported backend stays formatted the way the driver is.

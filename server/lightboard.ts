@@ -7,9 +7,7 @@
  * @module
  */
 
-import { BaseHandler } from "@std/log";
-import type { LogRecord } from "@std/log";
-import { attachHandler } from "@eai/logging-ts";
+import { listenForWarnings } from "./driverWarnings.ts";
 import type { Transport } from "@eai/models";
 import {
   ACTIONS,
@@ -55,7 +53,9 @@ class MockBoard implements Transport {
 
   /** Push an input report for a door channel, as the real board would when a switch moves. */
   reportDoor(channel: number, open: boolean): void {
-    this.#inbound.push(this.#enc.encode(`\x02/L;${channel}=${open ? "A" : "I"}\x03`));
+    this.#inbound.push(
+      this.#enc.encode(`\x02/L;${channel}=${open ? "A" : "I"}\x03`),
+    );
   }
 
   write(data: Uint8Array): Promise<void> {
@@ -102,7 +102,10 @@ let status: Status = "closed";
 let portName: string;
 let mock = false;
 
-const doors: Record<"upper" | "lower", string> = { upper: "closed", lower: "closed" };
+const doors: Record<"upper" | "lower", string> = {
+  upper: "closed",
+  lower: "closed",
+};
 
 export function configure(options: { mock: boolean; portName?: string }): void {
   mock = options.mock;
@@ -113,42 +116,13 @@ export const state = () => ({ status, portName, mock, doors: { ...doors } });
 
 const tell = () => announce("lightboard", state());
 
-/**
- * Logger names already carrying our handler.
- *
- * `attachHandler` pushes onto the logger's handler list, so reconnecting to the same port would
- * attach a second copy and every driver warning would arrive twice.
- */
-const attached = new Set<string>();
-
-/**
- * The driver's own warnings, onto the page.
- *
- * A mismatched acknowledgement is reported through the driver's logger, which means this process's
- * stdout — where an operator looking at the board and the page has no reason to be watching.
- */
-class WarningsToPage extends BaseHandler {
-  /** Warnings only: the driver's `error` calls already reach the page through its `error` event. */
-  override handle(entry: LogRecord): void {
-    if (entry.levelName === "WARN") log("warned", entry.msg);
-  }
-
-  /** Abstract on the base class, and unreachable here: `handle` never enters the formatting path. */
-  override log(): void {
-    throw new Error("unreachable");
-  }
-}
-
-function listen(name: string): void {
-  if (attached.has(name)) return;
-  attachHandler(name, new WarningsToPage("WARN"));
-  attached.add(name);
-}
-
 function wire(opened: IERS33380): void {
   opened.on("door", (event: { door: "upper" | "lower"; state: string }) => {
     doors[event.door] = event.state;
-    log("door", `${event.door[0].toUpperCase()}${event.door.slice(1)} door ${event.state}`);
+    log(
+      "door",
+      `${event.door[0].toUpperCase()}${event.door.slice(1)} door ${event.state}`,
+    );
     tell();
   });
   opened.on("data", (text: string) => log("data", text));
@@ -190,7 +164,7 @@ export async function connect(requested?: string): Promise<void> {
     throw err;
   }
 
-  listen(name);
+  listenForWarnings("lightboard", name);
   wire(board);
   status = "open";
   tell();
@@ -228,7 +202,10 @@ export function vocabulary() {
   const config = IER_S33380_DEFAULTS;
   return {
     actions: ACTIONS,
-    indicators: INDICATOR_SECTIONS.map((section) => ({ section, channel: config.indicators[section] })),
+    indicators: INDICATOR_SECTIONS.map((section) => ({
+      section,
+      channel: config.indicators[section],
+    })),
     sides: SIDES.map((side) => ({ side, channel: config.bagTag[side] })),
     // A strip colour is one or more primaries lit together — the channels mix additively in the
     // strip itself, so cyan is green and blue rather than wiring of its own.
@@ -237,8 +214,14 @@ export function vocabulary() {
       primaries: STRIP_MIX[color],
       channels: STRIP_MIX[color].map((primary) => config.strip[primary]),
     })),
-    semaphoreColors: SEMAPHORE_COLORS.map((color) => ({ color, channels: config.semaphore[color] })),
-    doorChannels: Object.entries(config.doors).map(([channel, door]) => ({ channel: Number(channel), door })),
+    semaphoreColors: SEMAPHORE_COLORS.map((color) => ({
+      color,
+      channels: config.semaphore[color],
+    })),
+    doorChannels: Object.entries(config.doors).map(([channel, door]) => ({
+      channel: Number(channel),
+      door,
+    })),
     collisions: aiCollisions(config),
   };
 }
@@ -286,7 +269,9 @@ export async function allOff(): Promise<void> {
  * be able to move it instead, or the reporting path is never seen.
  */
 export function simulateDoor(door: "upper" | "lower"): void {
-  if (!mock || !mockBoard) throw new Error("Only a mock board has simulated doors");
+  if (!mock || !mockBoard) {
+    throw new Error("Only a mock board has simulated doors");
+  }
   const entry = vocabulary().doorChannels.find((candidate) => candidate.door === door);
   if (!entry) throw new Error(`No input channel maps to the ${door} door`);
   mockBoard.reportDoor(entry.channel, doors[door] !== "open");

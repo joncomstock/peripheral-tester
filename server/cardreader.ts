@@ -11,9 +11,7 @@
  */
 
 import type { HidDevice } from "@eai/hid";
-import { attachHandler } from "@eai/logging-ts";
-import { BaseHandler } from "@std/log";
-import type { LogRecord } from "@std/log";
+import { listenForWarnings } from "./driverWarnings.ts";
 import { OmronV4KU, TRACK_1, TRACK_2, TRACK_3, V4KU_PID, V4KU_VID } from "@eai/omron/v4ku";
 import type { CardData, LedColor, MonitorOutcome, ReadDirection, TransactionSetting } from "@eai/omron/v4ku";
 import { announce, record } from "./activity.ts";
@@ -37,6 +35,33 @@ const LED_COLORS: Record<LedColor, true> = { green: true, red: true, orange: tru
 export const vocabulary = () => ({ ledColors: Object.keys(LED_COLORS) as LedColor[] });
 
 /**
+ * Track bitmask to the digit the wire takes. **These are not the same number.**
+ *
+ * Mirrored from `@eai/omron`'s own `TRACK_WIRE_DIGIT`, which is internal to the driver by design —
+ * the package keeps its digit maps unpublished so a protocol correction is not a breaking change.
+ * The API side is a bitmask (1/2/4); the wire side enumerates the seven usable combinations 1..7 in
+ * order, three singles then three pairs then all three. They coincide only for track 1 alone and
+ * for all three, which is exactly why building the chip from the bitmask looked correct: the
+ * default asked for all three, one of the two values that agree.
+ *
+ * Display only, like everything else in {@link WIRE} — the driver builds the real command. A
+ * driver-side correction leaves this stale, which shows a wrong label rather than sending a wrong
+ * command.
+ *
+ * Its keys are computed bitmask values, so it takes an annotation where the maps in {@link WIRE}
+ * take `satisfies`. Both are checked; neither is an assertion.
+ */
+const TRACK_WIRE_DIGIT: Readonly<Record<number, string>> = {
+  [TRACK_1]: "1",
+  [TRACK_2]: "2",
+  [TRACK_3]: "3",
+  [TRACK_1 | TRACK_2]: "4",
+  [TRACK_1 | TRACK_3]: "5",
+  [TRACK_2 | TRACK_3]: "6",
+  [TRACK_1 | TRACK_2 | TRACK_3]: "7",
+};
+
+/**
  * Wire literals, mirrored from the driver for display only.
  *
  * Nothing here is ever sent: the driver builds every command itself, and these exist so the page
@@ -49,33 +74,24 @@ export const vocabulary = () => ({ ledColors: Object.keys(LED_COLORS) as LedColo
 const WIRE = {
   ledOn: "CP7",
   ledOff: "CP6",
-  ledDigit: { green: "1", red: "2", orange: "3" } as Record<LedColor, string>,
+  ledDigit: { green: "1", red: "2", orange: "3" } satisfies Record<
+    LedColor,
+    string
+  >,
   lock: "CC0",
   unlock: "CC1",
-  direction: { none: "0", insertion: "1", back: "2" } as Record<ReadDirection, string>,
-  /**
-   * Track bitmask to the digit the wire takes. **These are not the same number.**
-   *
-   * Mirrored from `@eai/omron`'s own `TRACK_WIRE_DIGIT`, which is internal to the driver by
-   * design — the package keeps its digit maps unpublished so a protocol correction is not a
-   * breaking change. The API side is a bitmask (1/2/4); the wire side enumerates the seven usable
-   * combinations 1..7 in order, three singles then three pairs then all three. They coincide only
-   * for track 1 alone and for all three, which is exactly why building the chip from the bitmask
-   * looked correct: the default asked for all three, one of the two values that agree.
-   *
-   * Display only, like everything else here — the driver builds the real command. A driver-side
-   * correction leaves this stale, which shows a wrong label rather than sending a wrong command.
-   */
-  trackDigit: {
-    [TRACK_1]: "1",
-    [TRACK_2]: "2",
-    [TRACK_3]: "3",
-    [TRACK_1 | TRACK_2]: "4",
-    [TRACK_1 | TRACK_3]: "5",
-    [TRACK_2 | TRACK_3]: "6",
-    [TRACK_1 | TRACK_2 | TRACK_3]: "7",
-  } as Readonly<Record<number, string>>,
+  direction: { none: "0", insertion: "1", back: "2" } satisfies Record<
+    ReadDirection,
+    string
+  >,
+  /** See {@link TRACK_WIRE_DIGIT} — the bitmask and the wire digit are not the same number. */
+  trackDigit: TRACK_WIRE_DIGIT,
 } as const;
+
+// Reply-header literals, mirrored from `@eai/omron`'s `track.ts` for the same reason as `WIRE`.
+
+/** A track's two-digit status in the reply header. Zero is a clean read; anything else is a failure. */
+const TRACK_STATUS_OK = 0;
 
 /** The wire digit for a mask, or `?` for one the device has no digit for — never a wrong digit. */
 const trackDigit = (tracks: number): string => WIRE.trackDigit[tracks] ?? "?";
@@ -93,38 +109,91 @@ const trackCount = (tracks: number): number => [TRACK_1, TRACK_2, TRACK_3].filte
  *
  * **Leading digits are not proof of a header.** The wire digit for tracks 1 and 2 is `4` and a Visa
  * PAN starts with `4`, so a reply that carried track 2 with no header at all would clear a
- * digits-only test and put the first eleven digits of a card number on the page. Two further checks
- * stand in the way, and the second is the one that does the work:
+ * digits-only test and put the first eleven digits of a card number on the page. Three further
+ * checks stand in the way, each mirrored from `@eai/omron`'s own `classifyReply`:
  *
- * - the mask must echo what was asked for, which is `@eai/omron`'s own guard in
- *   `parseTrackReadHeader` — "byte 0 is knowable in advance";
- * - the lengths the header declares must fit in the payload that follows it. A stripe read as a
- *   header declares lengths in the hundreds and carries tens of bytes, so it fails this and is
- *   reported as a length alone.
+ * - the mask must echo what was asked for — the driver's "byte 0 is knowable in advance";
+ * - the lengths must account for the payload **exactly**. At most is not enough, and this is the
+ *   check that was wrong: `4000000000000002=29092010000259` read as a header declares `000/000`
+ *   out of its own digits and leaves twenty bytes unaccounted for. An at-most test waves that
+ *   through and prints `mask 4, status 00/00, length 000/000` — the card's first eleven digits,
+ *   in order, in the activity log. The driver carries the same rule and a regression test for it:
+ *   "bytes unaccounted for mean the field widths are not what we think";
+ * - a track's status and its length must agree: one that failed to read carried no bytes, and a
+ *   header declaring nothing at all cannot have a body;
+ * - a declared track 1 holding track 2's separator is not a track 1. This is what catches a
+ *   zero-heavy Visa BIN that *does* add up exactly — `4000002000012345=…` declares `020/000`, fits
+ *   the payload, and is caught here instead.
+ *
+ * **No ISO length floor, deliberately.** The driver refuses to *slice* a track shorter than its own
+ * mandatory fields, and mirroring that rule here looked right. It is wrong for a function whose job
+ * is to report: a partially-read stripe declares exactly such a length — `length 008/000` against
+ * status `00/49` — and that reading is the entire diagnostic an intermittently-failing reader is
+ * being debugged with. A floor hides the evidence at the one moment it is wanted. It is also not
+ * what closes the leak: 400,000 synthetic track-2 stripes were checked without it, and none was
+ * believed.
+ *
+ * These are a copy, with the usual ceiling: a driver-side correction leaves them stale. Stale here
+ * fails closed — an unbelieved header is reported as a byte count and nothing else.
  */
-export function describeTrackReply(token: string, data: string, tracksRequested: number): string {
+export function describeTrackReply(
+  token: string,
+  data: string,
+  tracksRequested: number,
+): string {
   const size = `${token} — ${data.length} bytes`;
   if (data.length === 0) return `${size}, no payload`;
 
   const count = trackCount(tracksRequested);
   const width = 1 + count * 5;
   const header = data.slice(0, width);
-  const shaped = data.length >= width &&
-    new RegExp(`^\\d{${width}}$`).test(header) &&
+  // The slice is short when the payload is, so the anchored test covers both.
+  const shaped = new RegExp(`^\\d{${width}}$`).test(header) &&
     header[0] === trackDigit(tracksRequested);
   if (!shaped) return `${size}, payload not in header shape`;
 
-  const statuses: string[] = [];
-  const lengths: string[] = [];
-  for (let slot = 0; slot < count; slot++) {
-    statuses.push(header.slice(1 + slot * 2, 3 + slot * 2));
-    lengths.push(header.slice(1 + count * 2 + slot * 3, 4 + count * 2 + slot * 3));
+  // Unpacked onto the track each field belongs to, not the slot it arrived in: under a
+  // `TRACK_2 | TRACK_3` request slot 0 is track 2, and a floor applied by slot would be track 1's.
+  const fields: { track: number; status: string; length: string }[] = [];
+  let slot = 0;
+  for (const track of [TRACK_1, TRACK_2, TRACK_3]) {
+    if ((tracksRequested & track) === 0) continue;
+    fields.push({
+      track,
+      status: header.slice(1 + slot * 2, 3 + slot * 2),
+      length: header.slice(1 + count * 2 + slot * 3, 4 + count * 2 + slot * 3),
+    });
+    slot++;
   }
-  // The declared tracks have to fit in what came after the header, or this is not a header.
-  const declared = lengths.reduce((total, length) => total + Number(length), 0);
-  if (declared + width > data.length) return `${size}, payload not in header shape`;
 
-  return `${size}, mask ${header[0]}, status ${statuses.join("/")}, length ${lengths.join("/")}`;
+  const declared = fields.reduce(
+    (total, field) => total + Number(field.length),
+    0,
+  );
+  const body = data.length - width;
+
+  // A track that failed to read has no bytes, and a header declaring nothing cannot have a body.
+  const contradictsItself = fields.some((field) => Number(field.status) !== TRACK_STATUS_OK && Number(field.length) > 0) ||
+    (declared === 0 && body > 0);
+  // Neither readable track read: a header and nothing else, which is the reply this whole function
+  // exists to report. It is believed without a length budget because there is no body to budget.
+  const readable = fields.filter((field) => field.track !== TRACK_3);
+  const noReadableTrackRead = readable.length > 0 &&
+    readable.every((field) => Number(field.status) !== TRACK_STATUS_OK);
+  // A declared track 1 holding track 2's separator is not a track 1. The zero-heavy `40000x` Visa
+  // BINs need this: they read as a header that adds up exactly, and the length it carries then
+  // carves the card in two. The slice is cardholder data and, like everything here, stays inside.
+  const trackOne = fields.find((field) => field.track === TRACK_1);
+  const declaredTrackOneIsOne = trackOne === undefined ||
+    Number(trackOne.length) === 0 ||
+    !data.slice(width, width + Number(trackOne.length)).includes("=");
+
+  const believable = !contradictsItself && declaredTrackOneIsOne &&
+    (noReadableTrackRead || (declared > 0 && declared === body));
+  if (!believable) return `${size}, payload not in header shape`;
+
+  const joined = (pick: (field: typeof fields[number]) => string) => fields.map(pick).join("/");
+  return `${size}, mask ${header[0]}, status ${joined((f) => f.status)}, length ${joined((f) => f.length)}`;
 }
 
 /**
@@ -144,10 +213,47 @@ export const usb = { vendorId: V4KU_VID, productId: V4KU_PID };
 export type NextOutcome = "card" | "timeout" | "unreadable";
 
 /**
- * A fabricated stripe: track 1 running straight into track 2, which is how the device delivers
- * them. The PAN is the standard 4111… test number, so nothing here resembles a real card.
+ * A fabricated card: track 1 running straight into track 2, which is how the device delivers them.
+ * The PAN is the standard 4111… test number, so nothing here resembles a real card.
+ *
+ * Kept as two tracks rather than one blob because the reply's header declares a length per track,
+ * and a mock that cannot say how long each one is cannot build a header the driver would believe.
  */
-const DEMO_STRIPE = "B4111111111111111^SANDOVAL/MARIA            ^29092010000002590000004111111111111111=29092010000259";
+const DEMO_TRACKS: Readonly<Record<number, string>> = {
+  [TRACK_1]: "B4111111111111111^SANDOVAL/MARIA            ^2909201000000259000000",
+  [TRACK_2]: "4111111111111111=29092010000259",
+  [TRACK_3]: "",
+};
+
+/** Which ISO tracks a wire digit asks for — the mock's half of {@link WIRE.trackDigit}. */
+const WIRE_DIGIT_TRACKS: Readonly<Record<string, readonly number[]>> = {
+  "1": [TRACK_1],
+  "2": [TRACK_2],
+  "3": [TRACK_3],
+  "4": [TRACK_1, TRACK_2],
+  "5": [TRACK_1, TRACK_3],
+  "6": [TRACK_2, TRACK_3],
+  "7": [TRACK_1, TRACK_2, TRACK_3],
+};
+
+/**
+ * A track-read reply in the shape the device sends one: the token, then the echoed mask, a
+ * two-digit status per track and a three-digit length per track, then the tracks themselves.
+ *
+ * The header is not decoration. It is what the driver's parser and {@link describeTrackReply} check
+ * a reply against, so a mock that omits it drives only the unframed fallback and never the path a
+ * real device takes — which is how the header could be got wrong here and still look right in mock.
+ */
+function trackReadReply(
+  token: string,
+  wireDigit: string,
+  tracks: readonly string[],
+): string {
+  const status = tracks.map((track) => (track === "" ? "49" : "00")).join("");
+  const lengths = tracks.map((track) => String(track.length).padStart(3, "0"))
+    .join("");
+  return token + wireDigit + status + lengths + tracks.join("");
+}
 
 const REPORT_IN = 0x42;
 const HEADER = 3;
@@ -207,9 +313,20 @@ class MockReader implements HidDevice {
       case "92":
         this.#reply(this.#next === "timeout" ? "N9261" : "P9202");
         break;
-      case "6a":
-        this.#reply(this.#next === "unreadable" ? "N6a49" : `P6a00${DEMO_STRIPE}`);
+      case "6a": {
+        // The device echoes the mask it was asked for, so the reply is built from what arrived
+        // rather than from the shipped default: a page that narrows the tracks narrows the header.
+        const wireDigit = payload.slice(3, 4);
+        const asked = WIRE_DIGIT_TRACKS[wireDigit] ?? [TRACK_1, TRACK_2];
+        const unreadable = this.#next === "unreadable";
+        const tracks = asked.map((
+          track,
+        ) => (unreadable ? "" : DEMO_TRACKS[track] ?? ""));
+        this.#reply(
+          trackReadReply(unreadable ? "N6a49" : "P6a00", wireDigit, tracks),
+        );
         break;
+      }
       // The indicator: `CP7<digit>` lights a colour, `CP6` puts it out.
       case "P7":
       case "P6":
@@ -311,7 +428,7 @@ export async function connect(): Promise<void> {
     else {
       reader = await OmronV4KU.open({ transaction });
     }
-    listenForWarnings();
+    listenForWarnings("cardreader", loggerName());
   }
   catch (err) {
     status = "closed";
@@ -349,40 +466,8 @@ function held(): OmronV4KU {
   return reader;
 }
 
-/**
- * Logger names already carrying our handler, so reconnecting does not attach a second copy and
- * report every driver warning twice. The light board keeps the same guard for the same reason.
- */
-const attached = new Set<string>();
-
-/**
- * The driver's own warnings, onto the page.
- *
- * The light board has had this since it was written; the card reader never did, so `@eai/omron`'s
- * warnings went to this process's stdout — where an operator standing at the reader has no reason
- * to be looking. They are the only place the *reply token* appears: the page could say a read
- * failed with status `10`, while `Track read answered P6a10` — which says the device answered
- * positively — was visible nowhere. That is the difference between a device that refused and a
- * device whose answer this driver declined to use.
- */
-class WarningsToPage extends BaseHandler {
-  override handle(entry: LogRecord): void {
-    if (entry.levelName === "WARN") log("warned", entry.msg);
-  }
-
-  /** Abstract on the base class, and unreachable here: `handle` never enters the formatting path. */
-  override log(): void {
-    throw new Error("unreachable");
-  }
-}
-
 /** The name `@eai/omron` logs under — `OmronV4KU:` and the identity, hex, four digits each. */
-function listenForWarnings(): void {
-  const name = `OmronV4KU:${V4KU_VID.toString(16).padStart(4, "0")}:${V4KU_PID.toString(16).padStart(4, "0")}`;
-  if (attached.has(name)) return;
-  attachHandler(name, new WarningsToPage("WARN"));
-  attached.add(name);
-}
+const loggerName = () => `OmronV4KU:${V4KU_VID.toString(16).padStart(4, "0")}:${V4KU_PID.toString(16).padStart(4, "0")}`;
 
 /**
  * One read cycle driven as three raw commands, reporting the device's replies rather than a verdict.
@@ -419,12 +504,18 @@ export async function diagnosticRead(): Promise<void> {
    * step it can: if the read now fails, `C6s` is what costs it; if it survives, the cancel is.
    */
   const cleared = await open.sendRaw("C6s");
-  log(cleared.outcome === "positive" ? "sent" : "error", `C6s → ${cleared.token}`);
+  log(
+    cleared.outcome === "positive" ? "sent" : "error",
+    `C6s → ${cleared.token}`,
+  );
   // The allowance the driver makes after clearing, so this is not faster than the real path.
   await new Promise((resume) => setTimeout(resume, 200));
 
   const prepared = await open.sendRaw(prepare);
-  log(prepared.outcome === "positive" ? "sent" : "error", `${prepare} → ${prepared.token}`);
+  log(
+    prepared.outcome === "positive" ? "sent" : "error",
+    `${prepare} → ${prepared.token}`,
+  );
   if (prepared.outcome !== "positive") return;
 
   // The same phase a real read reports. Without it the diagnostic waited fifteen seconds behind a
@@ -435,7 +526,10 @@ export async function diagnosticRead(): Promise<void> {
   const monitored = await open.sendRaw(monitor);
   phase = "idle";
   tell();
-  log(monitored.outcome === "positive" ? "sent" : "info", `${monitor} → ${monitored.token}`);
+  log(
+    monitored.outcome === "positive" ? "sent" : "info",
+    `${monitor} → ${monitored.token}`,
+  );
   if (monitored.outcome !== "positive") return;
 
   // The same allowance `readOnce` makes before collecting the tracks. Without it this diagnostic
@@ -463,7 +557,10 @@ export async function diagnosticRead(): Promise<void> {
 async function raw(body: string, what: string): Promise<void> {
   const reply = await held().sendRaw(body);
   const ok = reply.outcome === "positive";
-  log(ok ? "sent" : "error", `${body} — ${what}${ok ? "" : ` refused (${reply.token})`}`);
+  log(
+    ok ? "sent" : "error",
+    `${body} — ${what}${ok ? "" : ` refused (${reply.token})`}`,
+  );
 }
 
 export const reset = (): Promise<void> => raw("C00", "initial reset");
@@ -501,7 +598,10 @@ export async function shutter(locked: boolean): Promise<void> {
   const open = held();
   if (locked) await open.lock();
   else await open.unlock();
-  log("sent", `${locked ? WIRE.lock : WIRE.unlock} — shutter ${locked ? "locked" : "unlocked"}`);
+  log(
+    "sent",
+    `${locked ? WIRE.lock : WIRE.unlock} — shutter ${locked ? "locked" : "unlocked"}`,
+  );
 }
 
 /**
@@ -546,7 +646,10 @@ export async function read(): Promise<ReadResult> {
     if (outcome.kind === "timeout") log("info", `No card within ${seconds}s`);
     else if (outcome.kind === "cancelled") log("info", "Read cancelled");
     else log("error", `Card present but unreadable (${outcome.status})`);
-    return { kind: outcome.kind, status: outcome.kind === "readFailed" ? outcome.status : undefined };
+    return {
+      kind: outcome.kind,
+      status: outcome.kind === "readFailed" ? outcome.status : undefined,
+    };
   }
   catch (err) {
     phase = "idle";

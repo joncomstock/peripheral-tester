@@ -106,6 +106,11 @@ export function CardReaderPage(
   const { send, seg, busy: waiting } = useCommands(open, onFail);
 
   // A closed reader is not listening, and nothing it read is still on the device.
+  //
+  // This clears what `clearResults` clears, for the same reason: a disconnect is a panel-emptying
+  // event like a read starting. `reveal` resets so a panel cannot come back unmasked on the path
+  // that skipped it, and `failure` resets because `verdictFor` reads it before `open` — a reader
+  // that has since been disconnected was otherwise still shown the red "could not be sent".
   useEffect(() => {
     if (open) return;
     listen.current = false;
@@ -113,6 +118,8 @@ export function CardReaderPage(
     setCard(null);
     setOutcome(null);
     setHeld(null);
+    setFailure(null);
+    setReveal(false);
   }, [open]);
 
   /**

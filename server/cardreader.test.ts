@@ -1,5 +1,6 @@
 import { assertEquals } from "@std/assert";
-import { describeTrackReply, settings, state } from "./cardreader.ts";
+import { configure, connect, describeTrackReply, diagnosticRead, disconnect, settings, state } from "./cardreader.ts";
+import { history } from "./activity.ts";
 import { ALL_TRACKS, TRACK_1, TRACK_2, TRACK_3 } from "@eai/omron/v4ku";
 
 /**
@@ -64,8 +65,12 @@ Deno.test("the shipped default asks for tracks 1 and 2, as the driver's own defa
  * specific: the wire digit for tracks 1 and 2 is `4`, and a Visa PAN starts with `4`. A reply that
  * carried track 2 straight up, with no header, would pass that test and put the first eleven
  * digits of a card number in the log. So the guard is the driver's own — the mask must echo what
- * was asked for — plus a consistency check the stripe cannot satisfy: the lengths the header
- * declares have to fit inside the payload that follows it.
+ * was asked for — plus the consistency checks a stripe cannot satisfy: the declared lengths have to
+ * account for the payload **exactly**, a track that failed to read cannot carry bytes, and a
+ * declared track 1 cannot contain track 2's separator.
+ *
+ * The exactness is the part that was wrong, and the tests below are why it is written down: real
+ * card numbers, each of which cleared an at-most test and printed its own first eleven digits.
  */
 Deno.test("a header-shaped reply is described by its header", () => {
   // mask 4, statuses 00 and 00, lengths 005 and 005, then the ten bytes those lengths promise.
@@ -117,4 +122,80 @@ Deno.test("the failure this diagnostic exists for is described in full", () => {
 
 Deno.test("the header width follows how many tracks were asked for", () => {
   assertEquals(describeTrackReply("P6a00", "100003" + "xxx", TRACK_1), "P6a00 — 9 bytes, mask 1, status 00, length 003");
+});
+
+/**
+ * Three real Visa numbers that an at-most length test reported as headers.
+ *
+ * Each is a bare track 2 — no header at all — whose own digits fall into header shape. Concatenate
+ * the mask, statuses and lengths such a reply is described with and the card's first eleven digits
+ * come back in order, five past the six a BIN may show. The first two leave bytes unaccounted for,
+ * which only an exact test rejects; the third adds up exactly and is caught by the separator
+ * sitting inside the track 1 it claims.
+ */
+Deno.test("a bare track 2 whose digits add up is still not a header", () => {
+  for (const stripe of ["4000000000000002=29092010000259", "4147200001000000=29092010000259", "4000002000012345=29092010000259"]) {
+    const described = describeTrackReply("P6a00", stripe, TRACK_1 | TRACK_2);
+    assertEquals(described, `P6a00 — ${stripe.length} bytes, payload not in header shape`, stripe);
+    assertEquals(described.includes(stripe.slice(0, 7)), false, `${stripe} leaked its own digits`);
+  }
+});
+
+Deno.test("a track that failed to read cannot also have carried bytes", () => {
+  // Status 14 and 72 on the two tracks, yet track 2 declares ten bytes. A device does not say both.
+  assertEquals(
+    describeTrackReply("P6a00", "41472000010" + "x".repeat(10), TRACK_1 | TRACK_2),
+    "P6a00 — 21 bytes, payload not in header shape",
+  );
+});
+
+/**
+ * A partial read is the diagnostic, not noise to be filtered out.
+ *
+ * An intermittently-failing reader answers with short declared lengths against a mixed status, and
+ * that reading is what says the head got some of the stripe rather than none of it. An earlier
+ * version of this guard mirrored the driver's ISO length floors — the driver applies those to
+ * decide whether to *slice*, a different question from whether to report — and suppressed all three
+ * of these behind `payload not in header shape`, at exactly the bench session they exist for.
+ * Dropping the floors costs nothing: 400,000 synthetic track-2 stripes were checked without them
+ * and none was believed.
+ */
+Deno.test("a partial read reports its short lengths rather than being suppressed", () => {
+  const partial: [string, string][] = [
+    ["4" + "0049" + "008" + "000" + "x".repeat(8), "mask 4, status 00/49, length 008/000"],
+    ["4" + "4900" + "000" + "009" + "x".repeat(9), "mask 4, status 49/00, length 000/009"],
+    ["4" + "0000" + "006" + "004" + "x".repeat(10), "mask 4, status 00/00, length 006/004"],
+  ];
+  for (const [reply, expected] of partial) {
+    assertEquals(describeTrackReply("P6a00", reply, TRACK_1 | TRACK_2), `P6a00 — ${reply.length} bytes, ${expected}`, reply);
+  }
+});
+
+/**
+ * The mock and the guard, checked against each other rather than each against its own idea.
+ *
+ * These are two halves of one wire format and nothing else lines them up. When the mock answered
+ * with no header at all, every mock diagnostic read printed the guard's reject path and the path a
+ * real device takes was never exercised outside the unit tests above. Both halves looked right on
+ * their own, which is the failure a lockstep test catches and a fixture assertion does not.
+ */
+Deno.test("a mock read is described by its header, not rejected as shapeless", async () => {
+  configure({ mock: true });
+  settings({ tracks: TRACK_1 | TRACK_2 });
+  await connect();
+  try {
+    const before = history().length;
+    await diagnosticRead();
+    const replies = history().slice(before).map((entry) => entry.text).filter((text) => text.includes("bytes"));
+
+    const track = replies.find((text) => text.startsWith("P6a00"));
+    assertEquals(track !== undefined, true, `no track-read reply in ${JSON.stringify(replies)}`);
+    assertEquals(track!.includes("mask 4, status 00/00, length 067/031"), true, track);
+    // The whole point of the header: the stripe it describes is not in what got recorded.
+    assertEquals(replies.some((text) => text.includes("4111")), false, JSON.stringify(replies));
+    assertEquals(replies.some((text) => text.includes("SANDOVAL")), false, JSON.stringify(replies));
+  }
+  finally {
+    await disconnect();
+  }
 });

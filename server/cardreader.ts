@@ -12,7 +12,16 @@
 
 import type { HidDevice } from "@eai/hid";
 import { listenForWarnings } from "./driverWarnings.ts";
-import { DEFAULT_CLEAR_READ_DELAY_MS, DEFAULT_TRACK_READ_DELAY_MS, OmronV4KU, TRACK_1, TRACK_2, TRACK_3, V4KU_PID, V4KU_VID } from "@eai/omron/v4ku";
+import {
+  DEFAULT_CLEAR_READ_DELAY_MS,
+  DEFAULT_TRACK_READ_DELAY_MS,
+  OmronV4KU,
+  TRACK_1,
+  TRACK_2,
+  TRACK_3,
+  V4KU_PID,
+  V4KU_VID,
+} from "@eai/omron/v4ku";
 import type { CardData, LedColor, MonitorOutcome, ReadDirection, TransactionSetting } from "@eai/omron/v4ku";
 import { announce, record } from "./activity.ts";
 

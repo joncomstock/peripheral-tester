@@ -1,0 +1,10 @@
+# Line endings are LF in the repository and LF in the working tree, on every platform.
+#
+# Git for Windows ships `core.autocrlf=true` in its system config, which hands out CRLF on checkout.
+# `deno fmt` rejects CRLF outright — identical, correctly formatted content fails `--check` purely
+# for its line endings — so without this every file on a Windows checkout reads as unformatted and
+# `deno fmt --check` is useless as a gate. `eol=lf` overrides the system setting for this repo, so
+# the check means the same thing on every machine and in CI.
+#
+# `text=auto` still lets Git detect binary files and leave them alone.
+* text=auto eol=lf

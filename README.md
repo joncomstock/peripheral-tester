@@ -67,7 +67,7 @@ The two carried-over **read delays** are here too, and they behave differently f
 on the screen. `trackReadDelayMs` and `clearReadDelayMs` are worth about 700ms a transaction between
 them, are timing allowances on the known-good path rather than measured requirements, and have never
 been tested away. They are `readonly` on the driver and fixed when the reader is constructed — so
-changing them decides what the *next* open uses, and **Apply** reopens the reader to get there.
+changing them decides what the _next_ open uses, and **Apply** reopens the reader to get there.
 `Both to 0` and `Shipped` are the two ends of that experiment; the shipped values come from
 `@eai/omron`, not from a number written down here. Apply is a separate press on purpose: closing the
 reader does not release the shutter, so reopening behind a retained card would strand it.

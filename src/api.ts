@@ -188,6 +188,14 @@ export interface PassportReaderState {
    * nothing held reads whatever was there before. This is what lets the page say which it is.
    */
   scanned: boolean;
+  /**
+   * Whether a read left its page held.
+   *
+   * A read encodes its image inside the driver's lock, and those are the bytes {@link imageUrl}
+   * serves. While this is true the frame is showing that read's own page rather than a re-encode of
+   * whatever the device has scanned since.
+   */
+  imageHeld: boolean;
   /** `null` when the device has not been asked, or cannot answer — not the same as "no document". */
   documentPresent: boolean | null;
   settings: {
@@ -276,6 +284,14 @@ export interface ScanResult {
   ok: boolean;
   mrz?: MrzRead;
   barcode?: WireBarcode;
+  /**
+   * The page this read encoded, described rather than carried.
+   *
+   * Its presence is what lets the frame fill in without a Retrieve: the bytes come from
+   * {@link imageUrl}, which serves this read's own page rather than encoding the device's newest
+   * scan. Absent when the read produced no image.
+   */
+  image?: { light: LightSource; region: ImageRegion; format: string; byteLength: number };
   /** How long the driver took, measured around the call by the backend rather than round-trip. */
   ms: number;
   error?: string;

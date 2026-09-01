@@ -236,6 +236,15 @@ export function PassportReaderPage(
       setMrz(result.mrz ?? null);
       setBarcode(result.barcode ?? null);
       stamp(result.ms);
+      // The read encoded its page inside the driver's lock, so the frame can show it now. Adopt the
+      // light and region it actually used — the backend picks the light from what the scan exposed,
+      // and asking for a different one would send `image()` back to the device for a fresh encode,
+      // which is the pairing this avoids.
+      if (result.image) {
+        setImageLight(result.image.light);
+        setImageRegion(result.image.region);
+        setImageNonce((n) => n + 1);
+      }
     });
 
   /**

@@ -136,6 +136,15 @@ let buzzerMs = 300;
  * Tracking it lets the page say which of those it is instead of showing an empty result.
  */
 let scanned = false;
+
+/**
+ * The page a read encoded, kept so `image()` can hand back that read's own bytes.
+ *
+ * Dropped the moment anything replaces the DLL's "last scan", because from then on it is a page
+ * from one presentation and the device is holding another. Never written to disk — it is the
+ * printed page of somebody's passport, portrait included, and it lives only until the next scan.
+ */
+let heldImage: { light: LightSourceName; region: ImageRegion; image: DocumentImage } | null = null;
 let presenceTimer: ReturnType<typeof setInterval> | undefined;
 /** Guards the poll tick — see {@link startPresencePolling}. */
 let polling = false;
@@ -205,6 +214,8 @@ export const state = () => ({
   ledUsage,
   buzzerMs,
   scanned,
+  /** Whether a read left its page held, which is what lets the frame render without a Retrieve. */
+  imageHeld: heldImage !== null,
   documentPresent,
   settings: { lights: [...lights], resolution, ambientLightElimination, source: mrzSource },
   api,
@@ -279,6 +290,7 @@ export async function disconnect(): Promise<void> {
   phase = "idle";
   led = "off";
   scanned = false;
+  heldImage = null;
   documentPresent = null;
   api = undefined;
   device = undefined;
@@ -442,6 +454,14 @@ export interface WireBarcode {
 export interface ReadResult {
   mrz: MrzRead;
   barcode: WireBarcode;
+  /**
+   * The page this read encoded, described rather than carried — the bytes are served by
+   * `GET /api/passportreader/image`, which hands back exactly these rather than encoding again.
+   *
+   * Present whenever the read produced one, which is what lets the page show the frame without a
+   * second click and without a second trip to the driver's "last scan".
+   */
+  image?: { light: LightSourceName; region: ImageRegion; format: ImageFormat; byteLength: number };
   /** How long the driver took, measured here. The page shows it beside the presentation. */
   ms: number;
 }
@@ -481,6 +501,15 @@ export const forWire = ({ data, ...rest }: BarcodeRead): WireBarcode => ({
 /** Printable ASCII plus tab, newline and carriage return — what a boarding pass is made of. */
 const isPlainText = (text: string) => /^[\t\n\r\x20-\x7e]*$/.test(text);
 
+/**
+ * Which light a read encodes its page under.
+ *
+ * Visible when it is enabled, because that is the one a person is looking at. Otherwise whatever is
+ * enabled — an image can only be encoded from an exposure the scan actually took, which is the same
+ * constraint `retrieve()` guards on the page.
+ */
+const readImageLight = (): LightSourceName => (lights.includes("visible") ? "visible" : lights[0]);
+
 export async function read(): Promise<ReadResult> {
   const open = held();
   phase = "scanning";
@@ -488,13 +517,24 @@ export async function read(): Promise<ReadResult> {
   // moment the device is asked to expose again, so a scan that then fails leaves nothing held —
   // and reporting one would have `Retrieve` encode the document *before* the one that failed.
   scanned = false;
+  heldImage = null;
   tell();
 
   try {
     if (mock) applyArmedOutcome();
-    const { result, ms } = await timed(() => open.readDocument({ source: mrzSource }));
+    // The page is requested *here*, not fetched afterwards. `readDocument`'s own comment gives the
+    // reason: the API's "last scan" is one piece of state inside the DLL, so an `image()` call after
+    // this returned encodes whatever was scanned most recently — on a busy unit, the next
+    // traveller's document attached to this one's MRZ. Asking inside the lock is the pairing.
+    const light = readImageLight();
+    const region: ImageRegion = "document";
+    // The mock synthesises BMP and nothing else; see `image()`, which forces the same.
+    const format: ImageFormat = mock ? "bmp" : "jpeg";
+    const { result, ms } = await timed(() => open.readDocument({ source: mrzSource, images: [{ light, format, region }] }));
     // `readDocument` scans under one lock before it recognises, so a scan is held afterwards.
     scanned = true;
+    const [encoded] = result.images;
+    heldImage = encoded ? { light, region, image: encoded } : null;
     phase = "idle";
     tell();
 
@@ -511,7 +551,12 @@ export async function read(): Promise<ReadResult> {
 
     if (result.barcode.found) log("ok", `Barcode read — ${result.barcode.symbology}, ${result.barcode.data.length} bytes`);
 
-    return { mrz: result.mrz, barcode: forWire(result.barcode), ms };
+    return {
+      mrz: result.mrz,
+      barcode: forWire(result.barcode),
+      ...(encoded ? { image: { light, region, format: encoded.format, byteLength: encoded.bytes.length } } : {}),
+      ms,
+    };
   }
   catch (err) {
     phase = "idle";
@@ -534,8 +579,10 @@ export async function read(): Promise<ReadResult> {
 export async function scan(): Promise<{ ms: number }> {
   const open = held();
   phase = "scanning";
-  // See `read()`: the held scan is gone the moment the device is asked for a new one.
+  // See `read()`: the held scan is gone the moment the device is asked for a new one — and with it
+  // the page the previous read encoded, which belongs to a presentation this scan has replaced.
   scanned = false;
+  heldImage = null;
   tell();
   let elapsed = 0;
   try {
@@ -596,6 +643,12 @@ export async function readBarcode(): Promise<{ barcode: WireBarcode; ms: number 
  */
 export async function image(light: LightSourceName, format: ImageFormat, region: ImageRegion): Promise<DocumentImage> {
   const open = held();
+  // The read's own page, when that is what is being asked for. Encoding again would go back to the
+  // DLL's "last scan", which is the one thing that must not decide what sits beside a read's MRZ.
+  if (heldImage && heldImage.light === light && heldImage.region === region && heldImage.image.format === format) {
+    log("info", `Image — ${region}, ${light}, ${heldImage.image.format}, ${heldImage.image.bytes.length} bytes, from the read`);
+    return heldImage.image;
+  }
   if (mock && mockLib) mockLib.state.imageBytes = syntheticScan(light);
   // The mock synthesises BMP and nothing else, so asking it for JPEG would return BMP bytes
   // labelled as JPEG. Forcing the format keeps what the page renders honest.

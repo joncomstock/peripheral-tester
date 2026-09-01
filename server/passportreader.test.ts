@@ -1,4 +1,5 @@
 import { assertEquals } from "@std/assert";
+import { configure, connect, disconnect, image, read, scan, state } from "./passportreader.ts";
 import { forWire } from "./passportreader.ts";
 
 /**
@@ -56,4 +57,80 @@ Deno.test("a field added to the driver's read reaches the wire rather than being
 Deno.test("the raw bytes do not cross the wire", () => {
   // They would serialise as an object of numeric keys, which is neither the bytes nor useful.
   assertEquals("data" in forWire(fromDriver(new Uint8Array([1, 2]))), false);
+});
+
+/**
+ * The page and the MRZ have to come from one presentation.
+ *
+ * `readDocument`'s own comment is explicit: the API's "last scan" is one piece of state inside the
+ * DLL, so an image fetched after the read returns encodes whatever was scanned most recently — on a
+ * busy unit, the next traveller's document attached to this one's MRZ. Requesting it inside the read
+ * is what makes the pairing a guarantee rather than a race.
+ */
+Deno.test("a read encodes its page under the same lock as its MRZ", async () => {
+  configure({ mock: true });
+  await connect();
+  try {
+    const result = await read();
+    assertEquals(result.image?.region, "document");
+    assertEquals(result.image!.byteLength > 0, true);
+  }
+  finally {
+    await disconnect();
+  }
+});
+
+Deno.test("a read leaves its page held, so the frame needs no second click", async () => {
+  configure({ mock: true });
+  await connect();
+  try {
+    await read();
+    assertEquals(state().imageHeld, true);
+  }
+  finally {
+    await disconnect();
+  }
+});
+
+/**
+ * The held page belongs to the read that produced it and to nothing else.
+ *
+ * A later `scan()` replaces the DLL's "last scan", so the page from the earlier read is no longer
+ * what the device is holding. Serving it on after that is the stale pairing this whole change
+ * exists to prevent — a page from one presentation beside an MRZ from another.
+ */
+Deno.test("a later scan drops the held page rather than serving it on", async () => {
+  configure({ mock: true });
+  await connect();
+  try {
+    await read();
+    await scan();
+    assertEquals(state().imageHeld, false);
+  }
+  finally {
+    await disconnect();
+  }
+});
+
+Deno.test("with no page held the image call still encodes, which is the granular path", async () => {
+  configure({ mock: true });
+  await connect();
+  try {
+    await scan();
+    assertEquals(state().imageHeld, false);
+    const encoded = await image("visible", "bmp", "document");
+    assertEquals(encoded.bytes.length > 0, true);
+  }
+  finally {
+    await disconnect();
+  }
+});
+
+Deno.test("releasing the scanner drops the held page with it", async () => {
+  configure({ mock: true });
+  await connect();
+  await read();
+  await disconnect();
+  // A page outliving the session it came from could be served against a different device entirely.
+  assertEquals(state().imageHeld, false);
 });

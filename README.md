@@ -65,9 +65,13 @@ it, so what goes on the wire is visible.
 
 **Passport reader** — scan a document and read what is on it: the machine-readable zone parsed into
 fields with every ICAO check digit verified, any 1D or 2D barcode, and the scanned page under each
-light source the unit has. `Read document` does all three under one driver lock; `Scan`, `Read MRZ`
-and `Read barcode` are the same calls one at a time, because a scan that produced an image but no
-MRZ and a recognition that failed on a good scan are different faults. The light, resolution,
+light source the unit has. `Read document` does all three under one driver lock — the page included,
+which is what makes it the MRZ's own: the API keeps one "last scan" per process, so an image fetched
+after the read returned would encode whatever was scanned most recently, and on a busy unit that is
+the next traveller's document beside this one's name. The page it encoded is held and served as-is
+until something scans again. `Scan`, `Read MRZ` and `Read barcode` are the same calls one at a time,
+because a scan that produced an image but no MRZ and a recognition that failed on a good scan are
+different faults. The light, resolution,
 ambient-light and OCR-source settings are the ones the next scan will use. Controls a unit cannot
 honour are not offered — a scanner without the UV lamp says so, and the ultraviolet option is then
 absent rather than dead.

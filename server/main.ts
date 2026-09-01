@@ -147,6 +147,19 @@ async function handle(request: Request): Promise<Response> {
       if (Object.keys(setting).length > 0) cardreader.settings(setting);
     });
   }
+  /**
+   * The two read delays, which take effect at the next open rather than now.
+   *
+   * Separate from `settings` because they are a different kind of thing: the transaction settings
+   * are re-sent to the device before each read, while these are `readonly` on the driver and fixed
+   * when the reader is constructed. `reopen` is what applies them, and it is the caller's own
+   * decision — a reopen does not release the shutter, so it must not happen behind a retained card.
+   */
+  if (post && pathname === "/api/cardreader/delays") {
+    const next = await body<{ trackReadDelayMs?: number; clearReadDelayMs?: number }>();
+    return await attempt(() => cardreader.readDelays(next));
+  }
+  if (post && pathname === "/api/cardreader/reopen") return await attempt(() => cardreader.reopen());
   if (post && pathname === "/api/cardreader/led") {
     const { color } = await body<{ color: LedColor | "off" }>();
     return await attempt(() => cardreader.setLed(color ?? "off"));

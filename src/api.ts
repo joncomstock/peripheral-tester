@@ -102,6 +102,21 @@ export interface CardReaderState {
   transaction: TransactionSetting;
   /** What these settings put on the wire, so the page can show what it is sending. */
   literals: { prepare: string; monitor: string; read: string; lock: string; unlock: string; led: string };
+  /**
+   * The two carried-over read delays, in milliseconds.
+   *
+   * Not transaction settings: they are `readonly` on the driver and fixed when the reader is
+   * constructed, so changing them decides what the *next* open uses. `pending` is true while the
+   * live reader is running on something else, and is answered by the reader itself.
+   */
+  delays: {
+    trackReadDelayMs: number;
+    clearReadDelayMs: number;
+    /** True while the live reader is running on values other than these. */
+    pending: boolean;
+    /** The driver's own defaults, served so the page need not restate them. */
+    shipped: { trackReadDelayMs: number; clearReadDelayMs: number };
+  };
 }
 
 export interface Track1 {
@@ -356,6 +371,10 @@ export const cardreader = {
   led: (color: LedColor | "off") => post("/api/cardreader/led", { color }),
   read: () => post<ReadResult>("/api/cardreader/read"),
   cancel: () => post("/api/cardreader/cancel"),
+  /** Set what the next open uses for the two read delays. Takes effect on {@link reopen}. */
+  delays: (next: { trackReadDelayMs?: number; clearReadDelayMs?: number }) => post("/api/cardreader/delays", next),
+  /** Close and reopen the reader, which is the only way a delay change reaches the driver. */
+  reopen: () => post("/api/cardreader/reopen"),
   /** One read cycle reported as the device's raw replies, into the activity log. */
   diagnose: () => post("/api/cardreader/diagnose"),
   /** Drive the shutter now, as opposed to the transaction's locks, which arm the next read. */

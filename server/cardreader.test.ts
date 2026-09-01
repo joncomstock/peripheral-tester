@@ -1,7 +1,7 @@
 import { assertEquals } from "@std/assert";
-import { configure, connect, describeTrackReply, diagnosticRead, disconnect, settings, state } from "./cardreader.ts";
+import { configure, connect, describeTrackReply, diagnosticRead, disconnect, readDelays, reopen, settings, state } from "./cardreader.ts";
 import { history } from "./activity.ts";
-import { ALL_TRACKS, TRACK_1, TRACK_2, TRACK_3 } from "@eai/omron/v4ku";
+import { ALL_TRACKS, DEFAULT_CLEAR_READ_DELAY_MS, DEFAULT_TRACK_READ_DELAY_MS, TRACK_1, TRACK_2, TRACK_3 } from "@eai/omron/v4ku";
 
 /**
  * The track bitmask and the digit the wire takes are not the same number.
@@ -194,6 +194,68 @@ Deno.test("a mock read is described by its header, not rejected as shapeless", a
     // The whole point of the header: the stripe it describes is not in what got recorded.
     assertEquals(replies.some((text) => text.includes("4111")), false, JSON.stringify(replies));
     assertEquals(replies.some((text) => text.includes("SANDOVAL")), false, JSON.stringify(replies));
+  }
+  finally {
+    await disconnect();
+  }
+});
+
+/**
+ * The two read delays the bench exists to test away.
+ *
+ * They are constructor options on `OmronV4KU` and `readonly` on the instance, so unlike the
+ * transaction settings they cannot be changed on a live reader — the reader has to be reopened. That
+ * is the whole shape of what follows.
+ */
+Deno.test("the shipped read delays are the driver's own, not numbers restated here", () => {
+  const fresh = new URL("./cardreader.ts", import.meta.url).href + "?delays";
+  return import(fresh).then((module: typeof import("./cardreader.ts")) => {
+    assertEquals(module.state().delays.trackReadDelayMs, DEFAULT_TRACK_READ_DELAY_MS);
+    assertEquals(module.state().delays.clearReadDelayMs, DEFAULT_CLEAR_READ_DELAY_MS);
+    // Served so the page can offer "back to shipped" without writing the numbers down itself.
+    assertEquals(module.state().delays.shipped.trackReadDelayMs, DEFAULT_TRACK_READ_DELAY_MS);
+    assertEquals(module.state().delays.shipped.clearReadDelayMs, DEFAULT_CLEAR_READ_DELAY_MS);
+  });
+});
+
+Deno.test("a read delay is whole milliseconds and never negative", () => {
+  // The driver validates its own options, but it does so by throwing in the constructor — which
+  // here would mean a reopen that fails and leaves the bench with no reader at all.
+  readDelays({ trackReadDelayMs: -5, clearReadDelayMs: 12.7 });
+  assertEquals(state().delays.trackReadDelayMs, 0);
+  assertEquals(state().delays.clearReadDelayMs, 13);
+});
+
+/**
+ * `pending` is answered by the reader, not by a copy of what we asked for.
+ *
+ * The value it compares against is read back off the live `OmronV4KU`, so `pending === false`
+ * straight after a connect is the assertion that the driver actually received them.
+ */
+Deno.test("connecting hands the delays to the driver, and pending says when the live reader differs", async () => {
+  configure({ mock: true });
+  readDelays({ trackReadDelayMs: 0, clearReadDelayMs: 0 });
+  await connect();
+  try {
+    assertEquals(state().delays.pending, false);
+    readDelays({ trackReadDelayMs: 500 });
+    assertEquals(state().delays.pending, true);
+  }
+  finally {
+    await disconnect();
+  }
+});
+
+Deno.test("reopening rebuilds the reader on the new delays", async () => {
+  configure({ mock: true });
+  readDelays({ trackReadDelayMs: 500, clearReadDelayMs: 200 });
+  await connect();
+  try {
+    readDelays({ trackReadDelayMs: 0, clearReadDelayMs: 0 });
+    assertEquals(state().delays.pending, true);
+    await reopen();
+    assertEquals(state().delays.pending, false);
+    assertEquals(state().status, "open");
   }
   finally {
     await disconnect();

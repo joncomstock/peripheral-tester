@@ -232,6 +232,11 @@ export function CardReaderPage(
     a.insertionLock === b.insertionLock && a.pullOutLock === b.pullOutLock;
   /** Which scenario the panel is currently configured as, if any — hand-tuning simply matches none. */
   const activeScenario = CARD_SCENARIOS.find((scenario) => sameSetting(scenario.setting, transaction)) ?? null;
+
+  /** Which end of the delay experiment the panel is currently set to — hand-tuning matches neither. */
+  const atZero = state.delays.trackReadDelayMs === 0 && state.delays.clearReadDelayMs === 0;
+  const atShipped = state.delays.trackReadDelayMs === state.delays.shipped.trackReadDelayMs &&
+    state.delays.clearReadDelayMs === state.delays.shipped.clearReadDelayMs;
   /** Why the current manual configuration cannot read, if it cannot. */
   const configFault = incoherence(transaction);
 
@@ -579,6 +584,66 @@ export function CardReaderPage(
                 onLess={() => send("seconds", api.cardreader.settings({ seconds: state.seconds - 5 }))}
                 onMore={() => send("seconds", api.cardreader.settings({ seconds: state.seconds + 5 }))}
               />
+            </Row>
+
+            {/*
+              * The two carried-over read delays, which are worth about 700ms a transaction between
+              * them and have never been measured away. They are `readonly` on the driver and fixed
+              * when the reader is constructed, so these decide the *next* open — `Apply` is what
+              * reaches the device. Deliberately a separate action: a reopen does not release the
+              * shutter, so doing it automatically would strand a retained card.
+              */}
+            <Row label="Track read delay" chip={state.delays.pending ? "reopen to apply" : undefined}>
+              <Stepper
+                {...waiting("trackDelay")}
+                value={`${state.delays.trackReadDelayMs}ms`}
+                enabled={!busy}
+                less="less delay"
+                more="more delay"
+                onLess={() => send("trackDelay", api.cardreader.delays({ trackReadDelayMs: state.delays.trackReadDelayMs - 50 }))}
+                onMore={() => send("trackDelay", api.cardreader.delays({ trackReadDelayMs: state.delays.trackReadDelayMs + 50 }))}
+              />
+            </Row>
+
+            <Row label="Clear read delay">
+              <Stepper
+                {...waiting("clearDelay")}
+                value={`${state.delays.clearReadDelayMs}ms`}
+                enabled={!busy}
+                less="less delay"
+                more="more delay"
+                onLess={() => send("clearDelay", api.cardreader.delays({ clearReadDelayMs: state.delays.clearReadDelayMs - 50 }))}
+                onMore={() => send("clearDelay", api.cardreader.delays({ clearReadDelayMs: state.delays.clearReadDelayMs + 50 }))}
+              />
+            </Row>
+
+            <Row label="Both delays">
+              <div {...seg("delays")}>
+                <button
+                  className="chooser"
+                  style={segStyle({ active: atZero, enabled: !busy })}
+                  disabled={busy}
+                  onClick={() => send("delays", api.cardreader.delays({ trackReadDelayMs: 0, clearReadDelayMs: 0 }))}
+                >
+                  Both to 0
+                </button>
+                <button
+                  className="chooser"
+                  style={segStyle({ active: atShipped, enabled: !busy })}
+                  disabled={busy}
+                  onClick={() => send("delays", api.cardreader.delays(state.delays.shipped))}
+                >
+                  Shipped
+                </button>
+                <button
+                  className="chooser"
+                  style={segStyle({ active: false, enabled: state.delays.pending && !busy })}
+                  disabled={!state.delays.pending || busy}
+                  onClick={() => send("delays", api.cardreader.reopen())}
+                >
+                  Apply
+                </button>
+              </div>
             </Row>
           </Card>
         </div>

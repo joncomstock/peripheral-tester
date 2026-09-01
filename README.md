@@ -63,6 +63,15 @@ device takes: read direction, track mask, whether to hold the card, and how long
 LED and the shutter are driven directly. The literal command each setting produces is shown beside
 it, so what goes on the wire is visible.
 
+The two carried-over **read delays** are here too, and they behave differently from everything else
+on the screen. `trackReadDelayMs` and `clearReadDelayMs` are worth about 700ms a transaction between
+them, are timing allowances on the known-good path rather than measured requirements, and have never
+been tested away. They are `readonly` on the driver and fixed when the reader is constructed — so
+changing them decides what the *next* open uses, and **Apply** reopens the reader to get there.
+`Both to 0` and `Shipped` are the two ends of that experiment; the shipped values come from
+`@eai/omron`, not from a number written down here. Apply is a separate press on purpose: closing the
+reader does not release the shutter, so reopening behind a retained card would strand it.
+
 **Passport reader** — scan a document and read what is on it: the machine-readable zone parsed into
 fields with every ICAO check digit verified, any 1D or 2D barcode, and the scanned page under each
 light source the unit has. `Read document` does all three under one driver lock — the page included,

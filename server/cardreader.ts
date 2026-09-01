@@ -12,7 +12,7 @@
 
 import type { HidDevice } from "@eai/hid";
 import { listenForWarnings } from "./driverWarnings.ts";
-import { OmronV4KU, TRACK_1, TRACK_2, TRACK_3, V4KU_PID, V4KU_VID } from "@eai/omron/v4ku";
+import { DEFAULT_CLEAR_READ_DELAY_MS, DEFAULT_TRACK_READ_DELAY_MS, OmronV4KU, TRACK_1, TRACK_2, TRACK_3, V4KU_PID, V4KU_VID } from "@eai/omron/v4ku";
 import type { CardData, LedColor, MonitorOutcome, ReadDirection, TransactionSetting } from "@eai/omron/v4ku";
 import { announce, record } from "./activity.ts";
 
@@ -385,6 +385,19 @@ let transaction: TransactionSetting = {
   pullOutLock: false,
 };
 
+/**
+ * The two carried-over read delays, taken from the driver rather than restated.
+ *
+ * Unlike {@link transaction}, these cannot be changed on a live reader: they are `readonly` on
+ * `OmronV4KU` and set in its constructor, deliberately, because a delay that changed mid-cycle would
+ * mean one read that used two different values. Changing them here therefore only decides what the
+ * *next* open uses — see {@link reopen}.
+ */
+let delays = {
+  trackReadDelayMs: DEFAULT_TRACK_READ_DELAY_MS,
+  clearReadDelayMs: DEFAULT_CLEAR_READ_DELAY_MS,
+};
+
 export function configure(options: { mock: boolean }): void {
   mock = options.mock;
 }
@@ -398,6 +411,19 @@ export const state = () => ({
   led,
   seconds,
   transaction: { ...transaction },
+  /** What the next open will use. `pending` says the live reader was opened with something else. */
+  delays: {
+    ...delays,
+    // Answered by the reader rather than by a copy of what was asked for: these are `readonly` on
+    // the instance, so what it reports is what it is actually applying between the tracks.
+    pending: reader !== null &&
+      (reader.trackReadDelayMs !== delays.trackReadDelayMs || reader.clearReadDelayMs !== delays.clearReadDelayMs),
+    /**
+     * The driver's own defaults, so the page can offer "back to shipped" without writing the two
+     * numbers down where they would be free to disagree with `@eai/omron`.
+     */
+    shipped: { trackReadDelayMs: DEFAULT_TRACK_READ_DELAY_MS, clearReadDelayMs: DEFAULT_CLEAR_READ_DELAY_MS },
+  },
   /** The literals these settings will put on the wire, so the page can show what it is sending. */
   literals: {
     prepare: `C:6${WIRE.direction[transaction.direction]}${trackDigit(transaction.tracks)}` +
@@ -423,10 +449,10 @@ export async function connect(): Promise<void> {
   try {
     if (mock) {
       mockReader = new MockReader();
-      reader = await OmronV4KU.openWithDevice(mockReader, { transaction });
+      reader = await OmronV4KU.openWithDevice(mockReader, { transaction, ...delays });
     }
     else {
-      reader = await OmronV4KU.open({ transaction });
+      reader = await OmronV4KU.open({ transaction, ...delays });
     }
     listenForWarnings("cardreader", loggerName());
   }
@@ -459,6 +485,19 @@ export async function disconnect(): Promise<void> {
   await open.close();
   tell();
   log("info", "Reader released");
+}
+
+/**
+ * Close the reader and open it again on the current delays.
+ *
+ * Explicit, and never automatic on a delay change. `disconnect()` darkens the LED and drops the
+ * handle but does not release the shutter, so a reopen while a card is retained leaves that card in
+ * the throat — which is not something to do behind someone's back while they are running cards.
+ */
+export async function reopen(): Promise<void> {
+  log("info", `Reopening on track ${delays.trackReadDelayMs}ms, clear ${delays.clearReadDelayMs}ms`);
+  await disconnect();
+  await connect();
 }
 
 function held(): OmronV4KU {
@@ -571,6 +610,20 @@ export function settings(next: Partial<TransactionSetting>): void {
   transaction = { ...transaction, ...next };
   tell();
   log("info", `Transaction: ${state().literals.prepare}`);
+}
+
+/**
+ * Set what the next open will use for the two read delays.
+ *
+ * Clamped here rather than left to the driver: `OmronV4KU` validates these in its constructor and
+ * throws, which on this path would mean a reopen that fails and leaves the bench with no reader.
+ */
+export function readDelays(next: Partial<typeof delays>): void {
+  const whole = (value: number) => Math.max(0, Math.round(value));
+  if (next.trackReadDelayMs !== undefined) delays.trackReadDelayMs = whole(next.trackReadDelayMs);
+  if (next.clearReadDelayMs !== undefined) delays.clearReadDelayMs = whole(next.clearReadDelayMs);
+  tell();
+  log("info", `Read delays: track ${delays.trackReadDelayMs}ms, clear ${delays.clearReadDelayMs}ms — on the next open`);
 }
 
 export function monitorSeconds(next: number): void {

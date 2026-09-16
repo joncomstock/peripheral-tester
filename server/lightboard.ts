@@ -1,8 +1,8 @@
 /**
  * The IER S33380 light board, as one device of the tester.
  *
- * Owns the COM port for as long as it is connected. Only the process holding the COM handle can
- * drive the board, which is why the browser never speaks to it directly.
+ * Claims the board's USB interface for as long as it is connected. Only the process holding the
+ * interface can drive the board, which is why the browser never speaks to it directly.
  *
  * @module
  */
@@ -12,8 +12,10 @@ import type { Transport } from "@eai/models";
 import {
   ACTIONS,
   IER_S33380_DEFAULTS,
+  IER_VENDOR_ID,
   IERS33380,
   INDICATOR_SECTIONS,
+  S33380_PRODUCT_ID,
   SEMAPHORE_COLORS,
   SIDES,
   STRIP_COLORS,
@@ -24,16 +26,6 @@ import { aiCollisions } from "./collisions.ts";
 import { announce, record } from "./activity.ts";
 
 const log = (kind: string, text: string) => record("lightboard", kind, text);
-
-/**
- * The port to offer when nobody has picked one.
- *
- * `@eai/ier` exported this until the board gained a USB-serial transport alongside the COM one, at
- * which point a single default port stopped meaning anything to the driver. It still means
- * something to this page, which asks a person for a port name: COM14 is where the board sits on the
- * 919 the channel map was walked on, and it is a prefill, not a pin.
- */
-const DEFAULT_PORT = "COM14";
 
 // ---------------------------------------------------------------------------------------------
 // A fake board, for driving the page without a kiosk.
@@ -99,7 +91,6 @@ export type Status = "closed" | "opening" | "open";
 let board: IERS33380 | null = null;
 let mockBoard: MockBoard | null = null;
 let status: Status = "closed";
-let portName: string;
 let mock = false;
 
 const doors: Record<"upper" | "lower", string> = {
@@ -107,12 +98,20 @@ const doors: Record<"upper" | "lower", string> = {
   lower: "closed",
 };
 
-export function configure(options: { mock: boolean; portName?: string }): void {
+export function configure(options: { mock: boolean }): void {
   mock = options.mock;
-  portName = mock ? "mock" : (options.portName ?? DEFAULT_PORT);
 }
 
-export const state = () => ({ status, portName, mock, doors: { ...doors } });
+/**
+ * The board's USB identity, fixed rather than offered.
+ *
+ * It used to be a COM port this page asked a person for. The board is a vendor-specific bulk device
+ * — `@eai/ier` claims `171c:00a0` with libusb — so there is nothing left to choose, and `open()`
+ * finds the first one attached.
+ */
+const usb = { vendorId: IER_VENDOR_ID, productId: S33380_PRODUCT_ID };
+
+export const state = () => ({ status, usb, mock, doors: { ...doors } });
 
 const tell = () => announce("lightboard", state());
 
@@ -125,6 +124,12 @@ function wire(opened: IERS33380): void {
     );
     tell();
   });
+  // A report from an input channel that is not a configured door — on the office 919, J17 is a
+  // media sensor in the boarding-pass printer's output. The driver names it from `config.inputs`
+  // and reports it here rather than on `data`, so without this the sensor is simply silent.
+  opened.on("input", (event: { channel: number; name: string | null; state: string }) => {
+    log("data", `Input ${event.name ?? `channel ${event.channel}`} ${event.state}`);
+  });
   opened.on("data", (text: string) => log("data", text));
   opened.on("error", (err: Error) => log("error", err.message));
   opened.on("disconnect", () => {
@@ -136,23 +141,24 @@ function wire(opened: IERS33380): void {
   });
 }
 
-export async function connect(requested?: string): Promise<void> {
+export async function connect(): Promise<void> {
   if (status !== "closed") return;
-  portName = mock ? "mock" : (requested ?? portName).trim().toUpperCase() || DEFAULT_PORT;
   status = "opening";
   tell();
-  log("info", `Opening ${portName} at 9600 8N1`);
 
-  const name = `IERS33380:${portName}`;
+  const id = `${usb.vendorId.toString(16).padStart(4, "0")}:${usb.productId.toString(16).padStart(4, "0")}`;
+  const name = mock ? "IERS33380:mock" : `IERS33380:${id}`;
+  log("info", mock ? "Opening a fake board" : `Claiming ${id} over USB`);
+
   try {
     if (mock) {
       mockBoard = new MockBoard();
       board = await IERS33380.openWithTransport(mockBoard, undefined, name);
     }
     else {
-      // `open()` is now the USB-serial door and wants a vendor/product pair; `openPort()` is the
-      // one that takes a COM port, which is what IER's own bus driver presents on a 919.
-      board = await IERS33380.openPort({ port: portName });
+      // No arguments: the identity is the driver's, and a bare open() takes the first board on the
+      // machine. On Windows the interface has to be bound to WinUSB for libusb to claim it.
+      board = await IERS33380.open();
     }
   }
   catch (err) {
@@ -184,7 +190,7 @@ export async function disconnect(): Promise<void> {
   catch { /* a board that is already unreachable cannot be darkened */ }
   await open.close();
   tell();
-  log("info", `${portName} released`);
+  log("info", "Board released");
 }
 
 /**
@@ -202,10 +208,13 @@ export function vocabulary() {
   const config = IER_S33380_DEFAULTS;
   return {
     actions: ACTIONS,
-    indicators: INDICATOR_SECTIONS.map((section) => ({
-      section,
-      channel: config.indicators[section],
-    })),
+    // Only the sections this board actually has a lamp for. The channel map is `Partial`: a
+    // section absent from it is not fitted on the unit, the driver rejects it by name, and offering
+    // a button for it would be a dead control with an undefined channel under it.
+    indicators: INDICATOR_SECTIONS.flatMap((section) => {
+      const channel = config.indicators[section];
+      return channel === undefined ? [] : [{ section, channel }];
+    }),
     sides: SIDES.map((side) => ({ side, channel: config.bagTag[side] })),
     // A strip colour is one or more primaries lit together — the channels mix additively in the
     // strip itself, so cyan is green and blue rather than wiring of its own.

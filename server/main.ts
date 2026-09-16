@@ -2,7 +2,7 @@
  * Peripheral tester — backend.
  *
  * Owns every device the page can drive and exposes them over one local JSON + SSE API. The browser
- * never touches hardware: the light board is a COM port held by this process, the card reader a USB
+ * never touches hardware: the light board is a USB interface claimed by this process, the card reader a USB
  * HID handle, the passport reader a loaded `PageScanAPI.dll`, and every driver is Deno-native.
  *
  * These are control panels, not probes. They drive the peripherals and report what came back; where
@@ -40,7 +40,6 @@ import * as lightboard from "./lightboard.ts";
 import * as cardreader from "./cardreader.ts";
 import * as passportreader from "./passportreader.ts";
 
-const args = Deno.args.filter((a) => a !== "--mock");
 const mock = Deno.args.includes("--mock");
 const port = Number(Deno.env.get("PORT") ?? 8777);
 
@@ -49,7 +48,7 @@ if (here === undefined) throw new Error("run this from a checkout: the built UI 
 const distDir = join(here, "..", "dist");
 const built = await Deno.stat(join(distDir, "index.html")).then(() => true).catch(() => false);
 
-lightboard.configure({ mock, portName: args[0] });
+lightboard.configure({ mock });
 cardreader.configure({ mock });
 passportreader.configure({ mock, dllPath: Deno.env.get("DESKO_PAGESCAN_DLL_PATH") });
 
@@ -118,10 +117,7 @@ async function handle(request: Request): Promise<Response> {
 
   // ---- light board ----
 
-  if (post && pathname === "/api/lightboard/connect") {
-    const { portName } = await body<{ portName: string }>();
-    return await attempt(() => lightboard.connect(portName));
-  }
+  if (post && pathname === "/api/lightboard/connect") return await attempt(() => lightboard.connect());
   if (post && pathname === "/api/lightboard/disconnect") return await attempt(() => lightboard.disconnect());
   if (post && pathname === "/api/lightboard/led") {
     const request_ = await request.json() as LedRequest;

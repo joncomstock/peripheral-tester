@@ -22,7 +22,7 @@
  * generations of several of these — `@eai/honeywell-n56xx` before `@eai/honeywell/n56xx`,
  * `@eai/pa-itk38` before `@eai/itk38`, `@eai/hengstler` before `@eai/xpm`, `@eai/node-usb` before
  * `@eai/usb` — and those are left out on purpose rather than missed. Left out too are the
- * libraries that are not a device at all: `@eai/usb`, `@eai/serial` and `@eai/hotplug`, and the
+ * libraries that are not a device at all: `@eai/usb` and `@eai/hotplug`, and the
  * two printer protocol bases — `@eai/aea-printer`, which the Custom 180 builds on, and
  * `@eai/thermal-printer`, whose only consumers were the superseded generations above. The K8
  * builds on neither: it carries its own USB layer and adapts to the external `aea-emulator-ts`.
@@ -68,7 +68,7 @@ export interface DeviceEntry {
 }
 
 export const DEVICES: DeviceEntry[] = [
-  { id: "lightboard", name: "Light Board", model: "IER S33380", bus: "RS-232", ready: true },
+  { id: "lightboard", name: "Light Board", model: "IER S33380", bus: "USB", ready: true },
   { id: "cardreader", name: "Card Reader", model: "Hitachi-Omron V4KU", bus: "USB HID", ready: true },
   { id: "passportreader", name: "Passport Reader", model: "DESKO PENTA", bus: "USB FFI", ready: true },
   {
@@ -357,7 +357,10 @@ export function verdict(
  */
 export function busLine(snapshot: Snapshot, id: DeviceId): string {
   const entry = deviceEntry(id);
-  if (id === "lightboard") return `${entry.bus} · ${snapshot.lightboard.portName}`;
+  if (id === "lightboard") {
+    const { vendorId, productId } = snapshot.lightboard.usb;
+    return `${entry.bus} · ${usbId(vendorId)}:${usbId(productId)}`;
+  }
   if (id === "cardreader") {
     const { vendorId, productId } = snapshot.cardreader.usb;
     return `${entry.bus} · ${usbId(vendorId)}:${usbId(productId)}`;

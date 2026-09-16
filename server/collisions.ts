@@ -15,7 +15,11 @@
  * test — depend on nothing. `LightboardConfig` satisfies it.
  */
 export interface AiChannels {
-  readonly indicators: Readonly<Record<string, number>>;
+  /**
+   * Partial: a section with no lamp fitted is absent, not zero. `Object.entries` skips a missing
+   * key, so an unfitted section cannot collide with anything.
+   */
+  readonly indicators: Readonly<Record<string, number | undefined>>;
   readonly bagTag: Readonly<Record<string, number>>;
   readonly semaphore: Readonly<Record<string, readonly number[]>>;
 }
@@ -52,7 +56,8 @@ export function aiCollisions(channels: AiChannels): Collision[] {
   };
 
   for (const [section, channel] of Object.entries(channels.indicators)) {
-    add(channel, { id: `indicator:${section}`, label: section });
+    // A section present in the map but explicitly undefined has no lamp either.
+    if (channel !== undefined) add(channel, { id: `indicator:${section}`, label: section });
   }
   for (const [side, channel] of Object.entries(channels.bagTag)) {
     add(channel, { id: `bagTag:${side}`, label: `bag-tag ${side}` });

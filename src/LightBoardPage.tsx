@@ -3,6 +3,7 @@ import type { Action, Door, LightBoardState, LogEntry } from "./api.ts";
 import * as api from "./api.ts";
 import type { Commanded, Control } from "./lightboardControls.ts";
 import { controlsFor, fullName, modeOf, requestFor, towerMode } from "./lightboardControls.ts";
+import { usbId } from "./format.ts";
 import { badgeClass, LAMP, lampColor, lampStyle, segStyle, stripPreviewStyle } from "./look.ts";
 import type { Tone } from "./look.ts";
 import { useCommands } from "./pending.ts";
@@ -25,7 +26,6 @@ export function LightBoardPage(
   },
 ) {
   const [commanded, setCommanded] = useState<Commanded>({});
-  const [portName, setPortName] = useState(state.portName);
   const open = state.status === "open";
   const opening = state.status === "opening";
   const wasOpen = useRef(open);
@@ -35,8 +35,6 @@ export function LightBoardPage(
     if (!open && wasOpen.current) setCommanded({});
     wasOpen.current = open;
   }, [open]);
-
-  useEffect(() => setPortName(state.portName), [state.portName]);
 
   const controls = useMemo(() => controlsFor(state.vocabulary), [state.vocabulary]);
   /**
@@ -69,7 +67,7 @@ export function LightBoardPage(
   const toggle = () => {
     if (open) api.lightboard.disconnect().catch((err: Error) => onFail(err.message));
     // A refused connection is already explained in the activity log by the backend.
-    else if (!opening) api.lightboard.connect(portName).catch(() => {});
+    else if (!opening) api.lightboard.connect().catch(() => {});
   };
 
   const allOff = () =>
@@ -84,25 +82,19 @@ export function LightBoardPage(
   return (
     <>
       <DeviceBar
-        label="RS-232"
+        label="USB bulk"
         address={
-          <input
-            className="addressbox-input"
-            id="port"
-            aria-label="COM port"
-            value={state.mock ? "mock" : portName}
-            onChange={(event) => setPortName(event.target.value.toUpperCase())}
-            disabled={open || opening || state.mock}
-            spellCheck={false}
-          />
+          <span className="addressbox-value">
+            {state.mock ? "mock" : `${usbId(state.usb.vendorId)}:${usbId(state.usb.productId)}`}
+          </span>
         }
-        meta="9600 8N1"
+        meta="vendor-specific"
         status={state.status}
         open="Connected · handshake OK"
-        opening="Opening port"
+        opening="Claiming interface"
         progress={progress}
         shut="Not connected"
-        hint="Set a port and connect to drive the indicators"
+        hint="Connect to drive the indicators"
       >
         <button className="button" {...waiting("alloff")} onClick={allOff} disabled={!open}>All off</button>
         <button className={open ? "button button--strong" : "button button--primary"} onClick={toggle} disabled={opening}>

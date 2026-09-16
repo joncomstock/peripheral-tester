@@ -13,19 +13,19 @@ It is intentionally minimal — no auth, no database, no cloud.
 
 > [!IMPORTANT]
 > **This revision does not build from a clean clone.** None of the five packages it needs —
-> `@eai/ier`, `@eai/serial`, `@eai/omron`, `@eai/hid`, `@eai/desko` — is published, and they sit on
+> `@eai/ier`, `@eai/omron`, `@eai/hid`, `@eai/desko` — is published, and they sit on
 > three unmerged `hardware-libs` branches. Building, testing or running the backend today needs the
 > local import substitutions in [Before the drivers are published](#before-the-drivers-are-published).
 > The frontend (`npm test`, `npm run build`) is unaffected and builds as cloned.
 >
-> What removes the caveat, in order: land `feat/hid-facepod` (PR #55), land `feat/omron-v4ku`,
-> `feat/ier-lightboard` and `feat/desko-penta` — none has a PR yet — then publish `@eai/hid` and
-> `@eai/serial` before `@eai/omron` and `@eai/ier`, which depend on them. `@eai/desko` depends on
-> neither and can go at any point. The pins here already name the versions that release should
-> produce, so nothing in this repo changes when it happens.
+> What removes the caveat, in order: land `feat/hid-facepod` (PR #55), `feat/omron-v4ku` (PR #62)
+> and `feat/desko-penta` (PR #63) — `@eai/ier` is already on master — then publish `@eai/hid` before
+> `@eai/omron`, which depends on it. `@eai/ier` and `@eai/desko` depend on neither and can go at any
+> point. The pins here already name the versions that release should produce, so nothing in this
+> repo changes when it happens.
 
-> The browser **never** talks to hardware. A COM handle and a USB HID handle are held by the backend,
-> and only the process holding them can drive the devices.
+> The browser **never** talks to hardware. The USB interfaces are claimed by the backend, and only
+> the process holding them can drive the devices.
 
 ```text
 Browser (React/Vite)  ──/api──►  Deno backend  ──serial / USB HID / FFI──►  kiosk peripherals
@@ -139,25 +139,24 @@ Until the drivers publish, the `deno task` forms cannot resolve them — use the
 deno.local.jsonc` commands in [Before the drivers are published](#before-the-drivers-are-published)
 instead. `npm` is unaffected either way.
 
-One process, because the one holding the COM handle has to be the one serving the page. The board is
-not opened until you press **Connect**, so starting the backend never touches the port.
+One process, because the one holding the USB interface has to be the one serving the page. The board
+is not opened until you press **Connect**, so starting the backend never claims anything.
 
 For frontend work, `npm run dev` runs Vite on `:5175` and proxies `/api` to the backend, so hot
 reload works while the board stays on the Deno side (`TESTER_PORT` overrides the target).
 
 ### Before the drivers are published
 
-No driver is on the registry yet, and they live on **three unmerged branches** of `hardware-libs` —
-`@eai/ier` and `@eai/serial` on `feat/ier-lightboard`, `@eai/omron` on `feat/omron-v4ku`,
-`@eai/desko` on `feat/desko-penta`. `@eai/hid` is on none of them — it is `feat/hid-facepod`'s, and
-until that lands the HID contract this app imports as `@eai/hid` is `@eai/usb`'s, which is why the
-map below points both names at the same module. Until they land on master a clean clone
-cannot build, and pointing at a single checkout is not enough: two of the three branches have to be
-worktrees.
+No driver is on the registry yet. **`@eai/ier` is on `hardware-libs` master** — nothing to check out
+for it beyond the repo itself. `@eai/omron` is on `feat/omron-v4ku` (PR #62) and `@eai/desko` on
+`feat/desko-penta` (PR #63), so one of those has to be a worktree beside the main checkout.
+`@eai/hid` is on neither — it is `feat/hid-facepod`'s (PR #55), and until that lands the HID
+contract this app imports as `@eai/hid` is `@eai/usb`'s, which is why the map below points both
+names at the same module.
 
 ```bash
 cd hardware-libs
-git worktree add --detach ../wt-ier-driver   origin/feat/ier-lightboard
+git switch feat/omron-v4ku                                   # or leave it on master and worktree both
 git worktree add --detach ../wt-desko-penta  origin/feat/desko-penta
 ```
 
@@ -175,8 +174,8 @@ or `lint`: the commands below invoke Deno directly, which is the point.
 {
   "imports": {
     // The three drivers, at the branches above. Adjust the paths to your layout.
-    "@eai/ier/s33380": "../wt-ier-driver/ier/s33380/mod.ts",
-    "@eai/serial": "../wt-ier-driver/serial/mod.ts",
+    // @eai/ier is on master, so this one is the main checkout whatever it is switched to.
+    "@eai/ier/s33380": "../hardware-libs/ier/s33380/mod.ts",
     "@eai/omron/v4ku": "../hardware-libs/omron/v4ku/mod.ts",
     // Not a typo and not `hid/`: there is no such package on `feat/omron-v4ku`, and `@eai/omron`
     // resolves the same contract as `@eai/usb`. Pointing this at `../hardware-libs/hid/mod.ts`
@@ -269,7 +268,7 @@ backend attaches a log handler so those land in **Activity** instead, quoted ver
 | ---------------------------- | ----------------------------------------------------------------- |
 | `server/main.ts`             | HTTP routing, and serves `dist/` on a kiosk.                      |
 | `server/activity.ts`         | The shared log and event stream. Carries no cardholder data.      |
-| `server/lightboard.ts`       | The light board session. Owns the COM port.                       |
+| `server/lightboard.ts`       | The light board session. Claims the board's USB interface.        |
 | `server/cardreader.ts`       | The card reader session. Owns the USB HID handle.                 |
 | `server/passportreader.ts`   | The passport reader session. Owns the loaded `PageScanAPI.dll`.   |
 | `server/collisions.ts`       | Which indicator channels two sections share, from the live map.   |

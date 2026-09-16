@@ -24,15 +24,14 @@ const { WIRED } = await import("./devices.ts");
 
 /** Only the fields the sweep reads. The rest of a `Snapshot` is irrelevant to it. */
 const snapshotWith = (
-  { board = "closed", card = "closed", passport = "closed", portName = "COM14" }: {
+  { board = "closed", card = "closed", passport = "closed" }: {
     board?: string;
     card?: string;
     passport?: string;
-    portName?: string;
   } = {},
 ) =>
   ({
-    lightboard: { status: board, portName },
+    lightboard: { status: board, usb: { vendorId: 0x171c, productId: 0x00a0 } },
     cardreader: { status: card },
     passportreader: { status: passport, device: undefined, api: undefined },
   }) as unknown as Snapshot;
@@ -61,13 +60,6 @@ describe("handshake", () => {
     expect(result.pass).toBe(true);
     expect(api.lightboard.connect).not.toHaveBeenCalled();
     expect(api.lightboard.disconnect).not.toHaveBeenCalled();
-  });
-
-  it("fails the light board without opening anything when no port is set", async () => {
-    const result = await handshake("lightboard", snapshotWith({ portName: "   " }));
-    expect(result.pass).toBe(false);
-    expect(result.detail).toBe("No port set");
-    expect(api.lightboard.connect).not.toHaveBeenCalled();
   });
 
   it("reports a refusal as a result rather than throwing, and releases the half-open handle", async () => {
@@ -114,7 +106,7 @@ describe("runSweep", () => {
   });
 
   it("carries on past a device that refused", async () => {
-    api.lightboard.connect.mockRejectedValue(new Error("COM14 is held by another process"));
+    api.lightboard.connect.mockRejectedValue(new Error("USB device 171c:00a0 is using a native Windows driver"));
     const passed: boolean[] = [];
     await runSweep(WIRED, () => snapshotWith(), (_id, result) => passed.push(result.pass), () => {});
     expect(passed).toEqual([false, true, true]);

@@ -67,7 +67,8 @@ export interface Vocabulary {
 
 export interface LightBoardState {
   status: Status;
-  portName: string;
+  /** The interface the driver claims. Fixed: the board has one USB identity, not a chosen port. */
+  usb: { vendorId: number; productId: number };
   mock: boolean;
   doors: Record<Door, string>;
   vocabulary: Vocabulary;
@@ -355,7 +356,7 @@ async function post<T = { ok: boolean }>(path: string, body?: unknown): Promise<
 }
 
 export const lightboard = {
-  connect: (portName: string) => post("/api/lightboard/connect", { portName }),
+  connect: () => post("/api/lightboard/connect"),
   disconnect: () => post("/api/lightboard/disconnect"),
   led: (request: LedRequest) => post("/api/lightboard/led", request),
   allOff: () => post("/api/lightboard/all-off"),

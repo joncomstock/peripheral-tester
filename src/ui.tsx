@@ -66,8 +66,8 @@ export function DeviceBar(
     /**
      * The device's most recent log line, shown in place of `opening` while it opens.
      *
-     * Opening is the one wait on this screen with stages the backend already narrates — "Opening
-     * COM14 at 9600 8N1", then "Board acknowledged handshake". Surfacing them turns a second of
+     * Opening is the one wait on this screen with stages the backend already narrates — "Claiming
+     * 171c:00a0 over USB", then "Board acknowledged handshake". Surfacing them turns a second of
      * nothing into a sequence, without inventing a progress bar for a duration nobody can predict.
      */
     progress?: string;

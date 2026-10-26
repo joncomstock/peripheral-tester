@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import type { Snapshot, Status } from "./api.ts";
 import { LAMP, lampStyle } from "./look.ts";
 
-export type View = "home" | "lightboard" | "cardreader" | "sankyo";
+export type View = "home" | "lightboard" | "cardreader" | "sankyo" | "penta";
 
 interface Device {
   name: string;
@@ -20,9 +20,8 @@ const DEVICES: Record<string, Device> = {
   lightboard: { name: "Light Board", model: "IER S33380", bus: (s) => `USB · ${s.lightboard.usbId}`, view: "lightboard" },
   cardreader: { name: "Card Reader", model: "Hitachi-Omron V4K", bus: (s) => `USB HID · ${s.cardreader.usbId}`, view: "cardreader" },
   sankyo: { name: "Card Reader", model: "Sankyo ICM330", bus: (s) => `USB HID · ${s.sankyo.usbId}`, view: "sankyo" },
-  passport: { name: "Passport Reader", model: "Not yet wired up", bus: () => "—", view: null },
+  penta: { name: "Passport Reader", model: "DESKO Penta Gen4", bus: (s) => `USB · ${s.penta.usbId}`, view: "penta" },
   adr300: { name: "Document Reader", model: "Access-IS ADR300", bus: () => "USB HID · @eai/access-is", view: null },
-  penta: { name: "Document Scanner", model: "DESKO Penta Gen4", bus: () => "USB · @eai/desko", view: null },
   idtech: { name: "Card Reader", model: "ID TECH Secure Mag Insert", bus: () => "USB HID · @eai/idtech", view: null },
   honeywell: { name: "Barcode Scanner", model: "Honeywell N56xx / Vuquest 3310g", bus: () => "USB · @eai/honeywell", view: null },
   datalogic: { name: "Barcode Scanner", model: "Datalogic Gryphon GFS4470", bus: () => "USB · @eai/datalogic", view: null },
@@ -37,7 +36,7 @@ const DEVICES: Record<string, Device> = {
 
 /** Which devices each kiosk model is fitted with. "All Devices" is every entry above. */
 export const KIOSKS = {
-  "ier-919": { name: "IER 919", devices: ["lightboard", "cardreader", "passport"] },
+  "ier-919": { name: "IER 919", devices: ["lightboard", "cardreader", "penta"] },
   "sita-d4": { name: "SITA D4", devices: ["sankyo"] },
   all: { name: "All Devices", devices: Object.keys(DEVICES) },
 } as const satisfies Record<string, { name: string; devices: readonly (keyof typeof DEVICES)[] }>;

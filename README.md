@@ -8,13 +8,13 @@ backend owns every device handle; a React/Vite frontend drives them from a dashb
 | Light board                | `@eai/ier/s33380` | USB bulk, libusb (WinUSB) |
 | Card reader (Omron V4K)    | `@eai/omron-v4k`  | USB HID                   |
 | Card reader (Sankyo ICM330)| `@eai/sankyo`     | USB HID                   |
-| Passport reader            | not yet wired up  | —                         |
+| Passport reader (DESKO Penta Gen4) | `@eai/desko/penta` | USB, libusb (WinUSB) |
 
 Every device is its own session, so any combination can be connected at once: a kiosk is tested
 as a whole.
 
 The dashboard opens on a **kiosk picker**: **IER 919** shows the light board, the Omron V4K and the
-(planned) passport reader; **SITA D4** shows the Sankyo ICM330; **All Devices** shows every device,
+DESKO Penta passport reader; **SITA D4** shows the Sankyo ICM330; **All Devices** shows every device,
 including the rest of hardware-libs' drivers, which are listed as planned until a screen drives them.
 The choice is remembered per browser. The kiosk-to-device map is `KIOSKS` in `src/Home.tsx`.
 
@@ -55,8 +55,13 @@ the literal probe are gone: `@eai/omron-v4k` leaves them out until their encodin
 **Card reader (Sankyo)** — read one card (Intake, then the tracks the reader holds), or listen through
 the driver's polling monitor, which reports the card going in and out. Bezel LED and identity too.
 
-On Windows the light board must be bound to **WinUSB** (Zadig, or hardware-libs' binding script), not
-IER's `ierVBus` COM driver; on macOS it needs `brew install libusb`.
+**Passport reader (DESKO Penta)** — what is on the glass (placed, flipped, removed), the last barcode
+the engine decoded (a boarding pass, shown on the page and never logged), the status LED, the LED
+strips, the buzzer and the white flood. The driver does not read a passport's MRZ or images. Its
+configuration XML, symbology restriction and reset are left out: each restarts the device.
+
+On Windows the light board and the Penta must be bound to **WinUSB** (Zadig, or hardware-libs' binding script), not
+IER's `ierVBus` COM driver or DESKO's own driver ("DESKO Usblo Devices"); on macOS it needs `brew install libusb`.
 
 ### Cardholder data
 
@@ -95,7 +100,8 @@ reload works while the board stays on the Deno side (`TESTER_PORT` overrides the
 
 ## Mock mode
 
-The dashboard's **Settings** panel has a **Mock devices** switch. It moves every device between mock
+The **gear** at the top right of every screen opens **Settings**: the **Mock devices** switch, the
+**Theme** (dark by default, remembered per browser) and **Disconnect all**. The mock switch It moves every device between mock
 and real at runtime, so a demo needs no kiosk: start with `deno task dev` and switch it on. Switching
 disconnects every device first, so nothing opened in one mode carries on in the other. While mock is
 on, a **MOCK** badge stays in the header on every screen. `deno task dev:mock` starts with it on and
@@ -135,13 +141,16 @@ backend attaches a log handler so those land in **Activity** instead, quoted ver
 | `server/lightboard.ts`      | The light board session. Owns its USB interface.                |
 | `server/cardreader.ts`      | The Omron V4K session. Owns its USB HID handle.                 |
 | `server/sankyo.ts`          | The Sankyo ICM330 session. Owns its USB HID handle.             |
-| `server/devices.test.ts`    | All three mock devices connected and driven at once.            |
+| `server/penta.ts`           | The DESKO Penta session. Owns its USB interface.                |
+| `server/devices.test.ts`    | All four mock devices connected and driven at once.             |
 | `server/collisions.ts`      | Which indicator channels two sections share, from the live map. |
 | `src/App.tsx`               | The shell: which device is on screen, and the shared state.     |
 | `src/Home.tsx`              | The dashboard.                                                  |
 | `src/LightBoardPage.tsx`    | The light board's screen and header controls.                   |
 | `src/CardReaderPage.tsx`    | The V4K's screen and header controls, and the shared card panel. |
 | `src/SankyoPage.tsx`        | The Sankyo's screen and header controls.                        |
+| `src/PentaPage.tsx`         | The Penta's screen and header controls.                         |
+| `src/Settings.tsx`          | The gear and the settings modal: mock mode, theme, disconnect all. |
 | `src/Activity.tsx`          | The log panel, filtered to the device on screen.                |
 | `src/lightboardControls.ts` | Vocabulary → controls, and the naming rule the page uses.       |
 | `src/look.ts`               | Lamps, segmented buttons and the strip preview, computed.       |

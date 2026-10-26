@@ -45,7 +45,7 @@ export function lampStyle(color: string, mode: Action, size = 18): CSSProperties
   if (mode === "off") {
     return {
       ...base,
-      background: "radial-gradient(circle at 34% 28%, #f4f6f8, #d8dde2)",
+      background: "radial-gradient(circle at 34% 28%, var(--lamp-off-a), var(--lamp-off-b))",
       boxShadow: "inset 0 0 0 1px rgba(16,24,40,0.12), inset 0 1px 1px rgba(255,255,255,0.85)",
     };
   }
@@ -68,8 +68,8 @@ export function lampStyle(color: string, mode: Action, size = 18): CSSProperties
 export function segStyle(
   { active, off, enabled }: { active: boolean; off?: boolean; enabled: boolean },
 ): CSSProperties {
-  if (!enabled) return { background: "transparent", color: "#c1c6cc" };
-  if (!active) return { background: "transparent", color: "#565d65" };
+  if (!enabled) return { background: "transparent", color: "var(--seg-disabled)" };
+  if (!active) return { background: "transparent", color: "var(--seg-idle)" };
   if (off) {
     return {
       background: "linear-gradient(#5b636b, #4a5158)",
@@ -103,7 +103,7 @@ export function stripPreviewStyle(
 ): CSSProperties {
   if (litPrimaries.length === 0) {
     return {
-      background: "linear-gradient(#eceef1, #e3e6ea)",
+      background: "linear-gradient(var(--strip-off-a), var(--strip-off-b))",
       boxShadow: "inset 0 1px 3px rgba(16,24,40,0.12)",
     };
   }

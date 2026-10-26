@@ -28,10 +28,12 @@ import { serveDir } from "@std/http/file-server";
 import type { LedRequest } from "@eai/ier/s33380";
 import type { LedColor, TransactionSetting } from "@eai/omron-v4k";
 import type { LedColor as SankyoLedColor } from "@eai/sankyo";
+import type { ExternalLedColor as PentaStripColor, LedColor as PentaLedColor } from "@eai/desko/penta";
 import * as activity from "./activity.ts";
 import * as lightboard from "./lightboard.ts";
 import * as cardreader from "./cardreader.ts";
 import * as sankyo from "./sankyo.ts";
+import * as penta from "./penta.ts";
 
 let mock = Deno.args.includes("--mock");
 /** Real devices load libusb and hidapi, so they need FFI; `dev:mock` deliberately runs without it. */
@@ -43,9 +45,11 @@ if (here === undefined) throw new Error("run this from a checkout: the built UI 
 const distDir = join(here, "..", "dist");
 const built = await Deno.stat(join(distDir, "index.html")).then(() => true).catch(() => false);
 
-lightboard.configure({ mock });
-cardreader.configure({ mock });
-sankyo.configure({ mock });
+/** Every device session. Whatever is done to all of them — mode, disconnect, shutdown — goes through here. */
+const devices = [lightboard, cardreader, sankyo, penta];
+const disconnectAll = () => Promise.all(devices.map((device) => device.disconnect())).then(() => {});
+
+for (const device of devices) device.configure({ mock });
 
 const json = (body: unknown, statusCode = 200) =>
   new Response(JSON.stringify(body), { status: statusCode, headers: { "content-type": "application/json" } });
@@ -58,6 +62,7 @@ const snapshot = () => ({
   lightboard: { ...lightboard.state(), vocabulary: lightboard.vocabulary() },
   cardreader: cardreader.state(),
   sankyo: sankyo.state(),
+  penta: penta.state(),
 });
 
 /** Set while a switch is disconnecting devices, so no device can be opened in the outgoing mode. */
@@ -77,16 +82,14 @@ async function setMock(next: boolean): Promise<void> {
   }
   // A device still opening has no handle to disconnect yet; switching under it would leave the
   // devices split between modes. Refuse before anything changes.
-  if ([lightboard.state(), cardreader.state(), sankyo.state()].some((device) => device.status === "opening")) {
+  if (devices.some((device) => device.state().status === "opening")) {
     throw new Error("A device is still opening; try again once it has");
   }
   switching = true;
   try {
-    await Promise.all([lightboard.disconnect(), cardreader.disconnect(), sankyo.disconnect()]);
+    await disconnectAll();
     mock = next;
-    lightboard.configure({ mock });
-    cardreader.configure({ mock });
-    sankyo.configure({ mock });
+    for (const device of devices) device.configure({ mock });
   }
   finally {
     switching = false;
@@ -200,6 +203,38 @@ async function handle(request: Request): Promise<Response> {
     return await attempt(() => sankyo.simulateCard(inserted === true));
   }
 
+  // ---- DESKO Penta ----
+
+  if (post && pathname === "/api/penta/connect") return await attempt(() => penta.connect());
+  if (post && pathname === "/api/penta/disconnect") return await attempt(() => penta.disconnect());
+  if (post && pathname === "/api/penta/status-led") {
+    const { mode, color } = await body<{ mode: "on" | "flash" | "off"; color: PentaLedColor }>();
+    return await attempt(() => penta.setStatusLed(mode === "on" || mode === "flash" ? mode : "off", color));
+  }
+  if (post && pathname === "/api/penta/external-led") {
+    const { color } = await body<{ color: PentaStripColor | "off" }>();
+    return await attempt(() => penta.setExternalLed(color ?? "off"));
+  }
+  if (post && pathname === "/api/penta/beep") return await attempt(() => penta.beep());
+  if (post && pathname === "/api/penta/flood") {
+    const { level } = await body<{ level: number }>();
+    return await attempt(() => {
+      if (typeof level !== "number") throw new Error("level is required");
+      return penta.setFloodLevel(level);
+    });
+  }
+  if (post && pathname === "/api/penta/identity") return await attempt(() => penta.identity());
+  if (post && pathname === "/api/penta/simulate") {
+    const { action } = await body<{ action: "place" | "boarding-pass" | "flip" | "remove" }>();
+    return await attempt(() => {
+      if (!["place", "boarding-pass", "flip", "remove"].includes(action ?? "")) throw new Error(`unknown action '${action}'`);
+      penta.simulate(action!);
+    });
+  }
+
+  if (post && pathname === "/api/disconnect-all") {
+    return await attempt(disconnectAll);
+  }
   if (post && pathname === "/api/settings/mock") {
     const { on } = await body<{ on: boolean }>();
     return await attempt(() => setMock(on === true));
@@ -226,9 +261,7 @@ const server = Deno.serve({ port, onListen: () => {} }, handle);
 // Leave every device dark and every handle released on Ctrl-C, so the next run can open them.
 Deno.addSignalListener("SIGINT", async () => {
   console.log("\n  shutting down: releasing devices");
-  await lightboard.disconnect();
-  await cardreader.disconnect();
-  await sankyo.disconnect();
+  await disconnectAll();
   await server.shutdown();
   Deno.exit(0);
 });

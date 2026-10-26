@@ -12,7 +12,7 @@
 
 // ---- shared ---------------------------------------------------------------------------------
 
-export type Device = "system" | "lightboard" | "cardreader" | "sankyo";
+export type Device = "system" | "lightboard" | "cardreader" | "sankyo" | "penta";
 export type Status = "closed" | "opening" | "open";
 
 export interface LogEntry {
@@ -168,6 +168,29 @@ export interface SankyoState {
   seconds: number;
 }
 
+// ---- DESKO Penta ------------------------------------------------------------------------------
+
+export type PentaSimulation = "place" | "boarding-pass" | "flip" | "remove";
+
+export interface PentaState {
+  status: Status;
+  mock: boolean;
+  usbId: string;
+  /** The last document event. Edge-triggered: null until the first one after connecting. */
+  document: "present" | "flipped" | "removed" | null;
+  /** The last decode. A boarding pass carries a passenger's name: shown here, never logged. */
+  barcode: { symbology: string | null; text: string } | null;
+  /** What was last commanded; the device does not report its LEDs. */
+  statusLed: { mode: "on" | "flash"; color: string } | null;
+  externalLed: string;
+  /** 0 is off; the driver's steps up to `floodLevels`. Null until read. */
+  floodLevel: number | null;
+  floodLevels: number;
+  /** The driver's own vocabularies. */
+  ledColors: string[];
+  externalLedColors: string[];
+}
+
 // ---- snapshot + events ----------------------------------------------------------------------
 
 export interface Snapshot {
@@ -179,6 +202,7 @@ export interface Snapshot {
   lightboard: LightBoardState;
   cardreader: CardReaderState;
   sankyo: SankyoState;
+  penta: PentaState;
 }
 
 export type Event =
@@ -192,7 +216,8 @@ export type Event =
   | { type: "mode"; mock: boolean }
   | { type: "state"; device: "lightboard"; state: Omit<LightBoardState, "vocabulary"> }
   | { type: "state"; device: "cardreader"; state: CardReaderState }
-  | { type: "state"; device: "sankyo"; state: SankyoState };
+  | { type: "state"; device: "sankyo"; state: SankyoState }
+  | { type: "state"; device: "penta"; state: PentaState };
 
 async function getJson<T>(path: string): Promise<T> {
   const response = await fetch(path);
@@ -218,6 +243,9 @@ export const settings = {
   /** Switching disconnects every device first. */
   mock: (on: boolean) => post("/api/settings/mock", { on }),
 };
+
+/** Darken and release every connected device. */
+export const disconnectAll = () => post("/api/disconnect-all");
 
 export const lightboard = {
   connect: () => post("/api/lightboard/connect"),
@@ -256,6 +284,17 @@ export const sankyo = {
   takeCard: () => post<{ ok: boolean; card: CardData | null }>("/api/sankyo/take-card"),
   identity: () => post<{ ok: boolean; deviceName: string; serialNumber: string; revision: string }>("/api/sankyo/identity"),
   simulateCard: (inserted: boolean) => post("/api/sankyo/card", { inserted }),
+};
+
+export const penta = {
+  connect: () => post("/api/penta/connect"),
+  disconnect: () => post("/api/penta/disconnect"),
+  statusLed: (mode: "on" | "flash" | "off", color?: string) => post("/api/penta/status-led", { mode, color }),
+  externalLed: (color: string) => post("/api/penta/external-led", { color }),
+  beep: () => post("/api/penta/beep"),
+  flood: (level: number) => post("/api/penta/flood", { level }),
+  identity: () => post<{ ok: boolean; firmware: string; build: string; engine: string }>("/api/penta/identity"),
+  simulate: (action: PentaSimulation) => post("/api/penta/simulate", { action }),
 };
 
 /** Subscribes to the event stream, which carries every device at once. Returns an unsubscribe. */

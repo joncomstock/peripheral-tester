@@ -9,6 +9,7 @@
     "@eai/ier/s33380": "jsr:@eai/ier@^1.2.3/s33380",
     "@eai/omron-v4k": "jsr:@eai/omron-v4k@^1.2.2",
     "@eai/sankyo": "jsr:@eai/sankyo@^1.0.0",
+    "@eai/desko/penta": "jsr:@eai/desko@^1.0.4/penta",
     // The driver's Transport contract — the mock board implements it. Pin matches
     // hardware-libs/deno.jsonc so we resolve the same version.
     "@eai/models": "jsr:@eai/models@^1.6.0",

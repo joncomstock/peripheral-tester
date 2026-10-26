@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { CardReaderState, LogEntry, SankyoState, Snapshot } from "./api.ts";
+import type { CardReaderState, LogEntry, PentaState, SankyoState, Snapshot } from "./api.ts";
 import * as api from "./api.ts";
 import { Activity } from "./Activity.tsx";
 import { Home } from "./Home.tsx";
@@ -8,6 +8,7 @@ import type { Kiosk, View } from "./Home.tsx";
 import { CardReaderControls, CardReaderPage } from "./CardReaderPage.tsx";
 import { LightBoardControls, LightBoardPage, phrase as lightboardPhrase } from "./LightBoardPage.tsx";
 import { SankyoControls, SankyoPage } from "./SankyoPage.tsx";
+import { PentaControls, PentaPage } from "./PentaPage.tsx";
 import { Settings } from "./Settings.tsx";
 
 const MAX_LINES = 200;
@@ -17,6 +18,7 @@ const TITLES: Record<View, { title: string; sub: string }> = {
   lightboard: { title: "Light Board", sub: "IER S33380" },
   cardreader: { title: "Card Reader", sub: "Hitachi-Omron V4K" },
   sankyo: { title: "Card Reader", sub: "Sankyo ICM330" },
+  penta: { title: "Passport Reader", sub: "DESKO Penta Gen4" },
 };
 
 /**
@@ -70,6 +72,7 @@ export function App() {
             return { ...previous, lightboard: { ...previous.lightboard, ...event.state } };
           }
           if (event.device === "sankyo") return { ...previous, sankyo: event.state as SankyoState };
+          if (event.device === "penta") return { ...previous, penta: event.state as PentaState };
           return { ...previous, cardreader: event.state as CardReaderState };
         });
       },
@@ -161,6 +164,8 @@ export function App() {
         {view === "lightboard" && <LightBoardControls state={snapshot.lightboard} onFail={fail} />}
         {view === "cardreader" && <CardReaderControls state={snapshot.cardreader} onFail={fail} />}
         {view === "sankyo" && <SankyoControls state={snapshot.sankyo} onFail={fail} />}
+        {view === "penta" && <PentaControls state={snapshot.penta} onFail={fail} />}
+        <Settings snapshot={snapshot} onFail={fail} />
       </header>
 
       <main className="main">
@@ -170,12 +175,13 @@ export function App() {
             kiosk={kiosk}
             onKiosk={chooseKiosk}
             onOpen={setView}
-            aside={<><Settings snapshot={snapshot} onFail={fail} />{activity}</>}
+            aside={activity}
           />
         )}
         {view === "lightboard" && <LightBoardPage state={snapshot.lightboard} onFail={fail} aside={activity} />}
         {view === "cardreader" && <CardReaderPage state={snapshot.cardreader} onFail={fail} aside={activity} />}
         {view === "sankyo" && <SankyoPage state={snapshot.sankyo} onFail={fail} aside={activity} />}
+        {view === "penta" && <PentaPage state={snapshot.penta} onFail={fail} aside={activity} />}
       </main>
     </div>
   );

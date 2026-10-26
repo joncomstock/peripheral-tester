@@ -9,6 +9,14 @@
       rel="icon"
       href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><circle cx='8' cy='4.5' r='2.6' fill='%23e2686a'/><circle cx='8' cy='11.5' r='2.6' fill='%234ec9a5'/></svg>"
     />
+    <!-- Before the first paint, so a dark kiosk never flashes light. Dark unless light was chosen. -->
+    <script>
+      try {
+        document.documentElement.dataset.theme = localStorage.getItem("peripheral-tester.theme") === "light" ? "light" : "dark";
+      } catch {
+        document.documentElement.dataset.theme = "dark";
+      }
+    </script>
   </head>
   <body>
     <div id="root"></div>

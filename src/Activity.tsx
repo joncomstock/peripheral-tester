@@ -3,6 +3,9 @@ import type { Device, LogEntry } from "./api.ts";
 import { toneOf } from "./look.ts";
 import { Card } from "./ui.tsx";
 
+/** How each device's lines are tagged on the dashboard, where every device's lines are shown. */
+const DEVICE_TAG: Record<Device, string> = { system: "", lightboard: "board", cardreader: "v4k", sankyo: "sankyo", penta: "penta" };
+
 /**
  * The activity log, shared by every device.
  *
@@ -48,7 +51,7 @@ export function Activity(
               <span className="activity-time">{entry.at}</span>
               {!only && entry.device !== "system" && (
                 <span className={`activity-device activity-device--${entry.device}`}>
-                  {entry.device === "lightboard" ? "board" : entry.device === "sankyo" ? "sankyo" : "v4k"}
+                  {DEVICE_TAG[entry.device]}
                 </span>
               )}
               <span className={`activity-text tone-${entry.tone}`}>{entry.text}</span>

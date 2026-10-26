@@ -147,7 +147,7 @@ describe("stripPreviewStyle", () => {
   const mixes = vocabulary.stripColors;
 
   it("reads as unlit when nothing is on", () => {
-    expect(stripPreviewStyle([], mixes).background).toContain("#eceef1");
+    expect(stripPreviewStyle([], mixes).background).toContain("--strip-off");
   });
 
   it("shows the colour the strip actually mixes to", () => {

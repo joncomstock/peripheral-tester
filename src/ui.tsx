@@ -40,7 +40,7 @@ export function StatusPill(
       <span
         className={isOpening ? "statusdot statusdot-opening" : "statusdot"}
         style={{
-          background: isOpen ? LAMP.green : isOpening ? LAMP.amber : "#c3c9cf",
+          background: isOpen ? LAMP.green : isOpening ? LAMP.amber : "var(--pill-off)",
           boxShadow: isOpen ? `0 0 6px color-mix(in oklab, ${LAMP.green} 55%, transparent)` : "none",
         }}
       />

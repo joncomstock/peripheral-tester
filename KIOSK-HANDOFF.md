@@ -20,9 +20,14 @@ On the 919, the devices you can test for real are:
 | ------------ | ------------------------------ | ----------- | ------------------------------------- |
 | Light board  | `@eai/ier/s33380` 1.2.3        | `171c:00a0` | USB bulk through **libusb**, WinUSB   |
 | Card reader  | `@eai/omron-v4k` 1.2.2         | `0590:0034` | USB HID through **hidapi**            |
+| Passport reader (DESKO Penta Gen4) | `@eai/desko/penta` 1.0.4 | `1ac2:000f` | USB through **libusb**, WinUSB |
 
-The Sankyo ICM330 page belongs to the SITA D4, not the 919. Test it in **mock mode only**. The
-passport reader and the other hardware-libs devices appear as "Planned" tiles and do nothing yet.
+The Penta driver covers the barcode engine (boarding passes), document placed/flipped/removed, the
+status LED, the LED strips, the buzzer and the white flood. It does **not** read a passport's MRZ or
+images, so do not report that as missing.
+
+The Sankyo ICM330 page belongs to the SITA D4, not the 919. Test it in **mock mode only**. The other
+hardware-libs devices appear as "Planned" tiles under All Devices and do nothing yet.
 
 What changed in the port, so you know what is new and riskiest:
 
@@ -85,13 +90,13 @@ tested (`git -C ..\elevationai\hardware-libs log -1 --oneline`). This repo was v
 
 Under `deno run` on Windows, the drivers load their DLLs as follows:
 
-- **libusb (light board).** It loads `libusb-1.0.dll` **only from the working directory**, which
+- **libusb (light board, Penta).** It loads `libusb-1.0.dll` **only from the working directory**, which
   means the `peripheral-tester` folder, or from the path in `LIBUSB_PATH`. Get the x64 DLL from
   the libusb release at https://libusb.info (`VS2022\MS64\dll\libusb-1.0.dll` or similar).
 - **hidapi (card reader).** It loads `hidapi.dll` from the DLL search path, or from `HIDAPI_PATH`.
   Get the x64 DLL from https://github.com/libusb/hidapi/releases.
 
-Putting both DLLs in the `peripheral-tester` folder is simplest. `*.dll` is gitignored.
+The Penta uses libusb too. Putting both DLLs in the `peripheral-tester` folder is simplest. `*.dll` is gitignored.
 
 ### Light board driver binding (ask first, see rule 2)
 
@@ -105,6 +110,11 @@ board never answers. Expect an `open()`/handshake failure in Activity.
 - **This can break the kiosk's production software**, which expects the COM port. To undo:
   Device Manager → the device → Driver → Roll Back Driver (or Update Driver → the IER driver).
   Tell the operator this before they agree.
+
+**The Penta needs the same.** On this 919 it shows in Device Manager as "DESKO PENTA Device" under
+**"DESKO Usblo Devices"**, which is DESKO's own driver. Bind its `1AC2 000F` interface to WinUSB with
+Zadig the same way (leave the sibling `1AC2 0300` SmartCard Reader alone), with the same warning:
+DESKO's software stops working until it is rolled back. Ask first.
 
 The card reader is a standard HID device and needs no binding.
 
@@ -121,7 +131,7 @@ cd <parent>\peripheral-tester
 npm install
 npm run build              # dist/ is gitignored: build after every pull
 deno task check            # first error only: TS2307 means the links path or layout is wrong
-deno task test             # 7 backend tests, including all three mock devices at once
+deno task test             # 7 backend tests, including all four mock devices at once
 npm test                   # 19 frontend tests
 ```
 
@@ -140,13 +150,16 @@ snapshots to find controls rather than CSS selectors. Check each of these:
 
 **Dashboard**
 
+- [ ] The gear at the top right of every screen opens the Settings modal (Escape and Close dismiss
+      it). Theme is **Dark** by default; Light and back works and survives a reload. Disconnect all
+      releases every connected device.
 - [ ] Settings → Mock devices is On, and the header shows a **MOCK** badge on every screen. Off is
       disabled under `dev:mock` (no FFI permission). Under `deno task dev` it switches both ways,
       and switching disconnects any connected device first.
 
 - [ ] Opens on **IER 919** (first visit) showing Light Board, Card Reader (Hitachi-Omron V4K) and
-      Passport Reader (Planned, disabled).
-- [ ] **SITA D4** shows only Card Reader (Sankyo ICM330). **All Devices** shows 16 tiles.
+      Passport Reader (DESKO Penta Gen4).
+- [ ] **SITA D4** shows only Card Reader (Sankyo ICM330). **All Devices** shows 15 tiles.
 - [ ] The header subtitle follows the picked kiosk. The choice survives a page reload.
 
 **Light board (mock)**
@@ -183,11 +196,20 @@ snapshots to find controls rather than CSS selectors. Check each of these:
 - [ ] Read once with no insert, then Cancel gives "Read cancelled". LED colours/Blink, and Identity
       reads.
 
+**Passport reader Penta (mock)**
+
+- [ ] Connect gives "Scanner answered; barcode reporting armed".
+- [ ] Mock scanner → Boarding pass: "On the glass" says a document is present, and the barcode shows
+      with symbology `]L2`. Activity logs the symbology and length only, never the text. Flip and
+      Remove update the glass. Passport places a document with no barcode.
+- [ ] Status LED: every colour, steady and Flash, and Off. LED strips: red/green/yellow/off. Flood:
+      drag to a level and release; the level shown follows. Beep is accepted. Identity reads.
+
 **All at once**
 
-- [ ] Connect the light board, the V4K and the Sankyo together. The dashboard shows all three
-      Connected (use All Devices). Operating one never disturbs the others, and Activity on the
-      dashboard tags each line `board` / `v4k` / `sankyo`.
+- [ ] Connect the light board, the V4K, the Sankyo and the Penta together. The dashboard shows all
+      four Connected (use All Devices). Operating one never disturbs the others, and Activity on the
+      dashboard tags each line `board` / `v4k` / `sankyo` / `penta`.
 - [ ] Ctrl-C the backend: it releases every device and exits.
 
 ## 3. Real hardware pass (IER 919)
@@ -240,9 +262,24 @@ For each check, record **what the page did**, **what Activity said**, and **what
 - [ ] Identity reads the real version, serial and status.
 - [ ] Clear read data and Initial reset are accepted.
 
+**Passport reader (DESKO Penta)**
+
+- [ ] Connect gives "Scanner answered; barcode reporting armed". If the device is not found, it is
+      still on DESKO's driver (section 1).
+- [ ] The operator places a passport, flips it and removes it: "On the glass" follows, and the white
+      flood lights while a document is present. Document events are edge-triggered, so the page
+      knows nothing until the first move after connecting.
+- [ ] The operator places a **test** boarding pass: the barcode decodes. Do not copy its text into
+      the report; record the symbology and whether it decoded.
+- [ ] Status LED (the triangle on the glass): each colour, steady and flashing, and Off. LED strips
+      on the back bar: red, green, yellow, off. The operator confirms each. The strips stay lit after
+      disconnecting unless turned off, so Disconnect turns them off: confirm that.
+- [ ] Flood: Off (a barcode should then fail to decode), a low level, and full. Beep: the operator
+      hears it. Identity reads firmware, build and engine revision.
+
 **Together**
 
-- [ ] With the light board and the card reader both connected, drive lamps while a read or Listen is
+- [ ] With the light board, the card reader and the Penta all connected, drive lamps while a read or Listen is
       in progress. Neither blocks or breaks the other.
 
 ## 4. Troubleshooting

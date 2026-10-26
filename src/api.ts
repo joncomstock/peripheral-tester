@@ -163,7 +163,10 @@ export interface SankyoState {
 // ---- snapshot + events ----------------------------------------------------------------------
 
 export interface Snapshot {
+  /** Every device is simulated. Switched from the Settings panel. */
   mock: boolean;
+  /** The backend may open real devices (it has FFI permission). Without it, mock is the only mode. */
+  hardwareAllowed: boolean;
   log: LogEntry[];
   lightboard: LightBoardState;
   cardreader: CardReaderState;
@@ -178,6 +181,7 @@ export type Event =
    */
   | ({ type: "hello" } & Snapshot)
   | { type: "log"; entry: LogEntry }
+  | { type: "mode"; mock: boolean }
   | { type: "state"; device: "lightboard"; state: Omit<LightBoardState, "vocabulary"> }
   | { type: "state"; device: "cardreader"; state: CardReaderState }
   | { type: "state"; device: "sankyo"; state: SankyoState };
@@ -201,6 +205,11 @@ async function post<T = { ok: boolean }>(path: string, body?: unknown): Promise<
   if (!response.ok) throw new Error(payload?.error ?? `${response.status} ${response.statusText}`);
   return payload as T;
 }
+
+export const settings = {
+  /** Switching disconnects every device first. */
+  mock: (on: boolean) => post("/api/settings/mock", { on }),
+};
 
 export const lightboard = {
   connect: () => post("/api/lightboard/connect"),

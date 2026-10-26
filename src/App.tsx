@@ -8,6 +8,7 @@ import type { Kiosk, View } from "./Home.tsx";
 import { CardReaderControls, CardReaderPage } from "./CardReaderPage.tsx";
 import { LightBoardControls, LightBoardPage, phrase as lightboardPhrase } from "./LightBoardPage.tsx";
 import { SankyoControls, SankyoPage } from "./SankyoPage.tsx";
+import { Settings } from "./Settings.tsx";
 
 const MAX_LINES = 200;
 
@@ -55,6 +56,10 @@ export function App() {
         }
         if (event.type === "log") {
           setLog((previous) => [...previous, event.entry].slice(-MAX_LINES));
+          return;
+        }
+        if (event.type === "mode") {
+          setSnapshot((previous) => previous && { ...previous, mock: event.mock });
           return;
         }
         // A device's own state replaces its slice. The vocabulary only ever arrives in a snapshot,
@@ -149,6 +154,8 @@ export function App() {
             <span className="brand-name">{title}</span>
             <span className="brand-model">{sub}</span>
           </span>
+          {/* Always on screen while simulating, so a demo is never mistaken for real hardware. */}
+          {snapshot.mock && <span className="mock-badge">Mock</span>}
         </div>
 
         {view === "lightboard" && <LightBoardControls state={snapshot.lightboard} onFail={fail} />}
@@ -157,7 +164,15 @@ export function App() {
       </header>
 
       <main className="main">
-        {view === "home" && <Home snapshot={snapshot} kiosk={kiosk} onKiosk={chooseKiosk} onOpen={setView} aside={activity} />}
+        {view === "home" && (
+          <Home
+            snapshot={snapshot}
+            kiosk={kiosk}
+            onKiosk={chooseKiosk}
+            onOpen={setView}
+            aside={<><Settings snapshot={snapshot} onFail={fail} />{activity}</>}
+          />
+        )}
         {view === "lightboard" && <LightBoardPage state={snapshot.lightboard} onFail={fail} aside={activity} />}
         {view === "cardreader" && <CardReaderPage state={snapshot.cardreader} onFail={fail} aside={activity} />}
         {view === "sankyo" && <SankyoPage state={snapshot.sankyo} onFail={fail} aside={activity} />}

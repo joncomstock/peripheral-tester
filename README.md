@@ -95,6 +95,12 @@ reload works while the board stays on the Deno side (`TESTER_PORT` overrides the
 
 ## Mock mode
 
+The dashboard's **Settings** panel has a **Mock devices** switch. It moves every device between mock
+and real at runtime, so a demo needs no kiosk: start with `deno task dev` and switch it on. Switching
+disconnects every device first, so nothing opened in one mode carries on in the other. While mock is
+on, a **MOCK** badge stays in the header on every screen. `deno task dev:mock` starts with it on and
+without FFI permission, so there it cannot be switched off.
+
 `deno task dev:mock` runs fake transports through the **real drivers**, so the command
 construction, framing and ack matching being exercised are the shipped ones. It answers every
 command and echoes the parameters back on every third reply (`AI;3=O@` rather than `AI;3@`) — a shape

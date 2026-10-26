@@ -212,7 +212,10 @@ let waiting: CardData | null = null;
 let transaction: TransactionSetting = DEFAULT_TRANSACTION;
 
 export function configure(options: { mock: boolean }): void {
+  // A device opened in one mode must never carry on into the other.
+  if (status !== "closed") throw new Error("Disconnect before changing mode");
   mock = options.mock;
+  tell();
 }
 
 /** The USB identity the driver opens, as `lsusb` and Device Manager show it. */

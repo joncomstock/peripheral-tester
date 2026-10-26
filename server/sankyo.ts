@@ -183,7 +183,10 @@ let waiting: CardData | null = null;
 const usbId = [ICM330_VENDOR_ID, ICM330_PRODUCT_ID].map((id) => id.toString(16).padStart(4, "0")).join(":");
 
 export function configure(options: { mock: boolean }): void {
+  // A device opened in one mode must never carry on into the other.
+  if (status !== "closed") throw new Error("Disconnect before changing mode");
   mock = options.mock;
+  tell();
 }
 
 export const state = () => ({

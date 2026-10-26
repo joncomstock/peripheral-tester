@@ -1100,3 +1100,16 @@ button {
   background: linear-gradient(#d99a3f, #c9861f);
   box-shadow: inset 0 1px 0 rgb(255 255 255 / 22%);
 }
+
+/* Shown in the header whenever devices are simulated, so a demo is never taken for real hardware. */
+.mock-badge {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: var(--font-chip);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 4px 8px;
+  border-radius: 5px;
+  color: #7d5207;
+  background: #fdf3e0;
+  border: 1px solid #f2e1bf;
+}

@@ -1,4 +1,4 @@
-import { assert, assertEquals } from "@std/assert";
+import { assert, assertEquals, assertThrows } from "@std/assert";
 import * as lightboard from "./lightboard.ts";
 import * as cardreader from "./cardreader.ts";
 import * as sankyo from "./sankyo.ts";
@@ -11,6 +11,8 @@ Deno.test("all three mock devices run side by side", async () => {
   await Promise.all([lightboard.connect(), cardreader.connect(), sankyo.connect()]);
   try {
     assertEquals([lightboard.state().status, cardreader.state().status, sankyo.state().status], ["open", "open", "open"]);
+    // The mode never changes under an open device.
+    assertThrows(() => cardreader.configure({ mock: false }), Error, "Disconnect before changing mode");
 
     // One read per reader and a lamp on the board, all in flight together.
     const sankyoRead = sankyo.read();

@@ -138,6 +138,10 @@ snapshots to find controls rather than CSS selectors. Check each of these:
 
 **Dashboard**
 
+- [ ] Settings → Mock devices is On, and the header shows a **MOCK** badge on every screen. Off is
+      disabled under `dev:mock` (no FFI permission). Under `deno task dev` it switches both ways,
+      and switching disconnects any connected device first.
+
 - [ ] Opens on **IER 919** (first visit) showing Light Board, Card Reader (Hitachi-Omron V4K) and
       Passport Reader (Planned, disabled).
 - [ ] **SITA D4** shows only Card Reader (Sankyo ICM330). **All Devices** shows 16 tiles.
@@ -185,7 +189,8 @@ snapshots to find controls rather than CSS selectors. Check each of these:
 
 ## 3. Real hardware pass (IER 919)
 
-Stop the mock backend. Start the real one:
+Stop the mock backend. Start the real one, and check that Settings → Mock devices is **Off** and
+no MOCK badge shows. A page in mock mode during this pass would make every result meaningless:
 
 ```powershell
 deno task dev              # needs the DLLs and the WinUSB binding from section 1

@@ -16,7 +16,8 @@
  * ```
  *
  * `--mock` drives fake transports through the real drivers, so the command construction, framing and
- * reply matching under test are the shipped ones.
+ * reply matching under test are the shipped ones. It only sets the starting mode: the page's Settings
+ * panel switches every device between mock and real at runtime.
  *
  * @module
  */
@@ -32,7 +33,9 @@ import * as lightboard from "./lightboard.ts";
 import * as cardreader from "./cardreader.ts";
 import * as sankyo from "./sankyo.ts";
 
-const mock = Deno.args.includes("--mock");
+let mock = Deno.args.includes("--mock");
+/** Real devices load libusb and hidapi, so they need FFI; `dev:mock` deliberately runs without it. */
+const hardwareAllowed = Deno.permissions.querySync({ name: "ffi" }).state === "granted";
 const port = Number(Deno.env.get("PORT") ?? 8777);
 
 const here = import.meta.dirname;
@@ -50,11 +53,32 @@ const json = (body: unknown, statusCode = 200) =>
 /** Everything the page needs to render any screen, in one request. */
 const snapshot = () => ({
   mock,
+  hardwareAllowed,
   log: activity.history(),
   lightboard: { ...lightboard.state(), vocabulary: lightboard.vocabulary() },
   cardreader: cardreader.state(),
   sankyo: sankyo.state(),
 });
+
+/**
+ * Switch every device between mock and real.
+ *
+ * Everything is disconnected first, so nothing opened in one mode keeps running in the other: a page
+ * that says "mock" while driving a real board, or the reverse, is the mistake this prevents.
+ */
+async function setMock(next: boolean): Promise<void> {
+  if (next === mock) return;
+  if (!next && !hardwareAllowed) {
+    throw new Error("Real devices need FFI permission: restart with `deno task dev`");
+  }
+  await Promise.all([lightboard.disconnect(), cardreader.disconnect(), sankyo.disconnect()]);
+  mock = next;
+  lightboard.configure({ mock });
+  cardreader.configure({ mock });
+  sankyo.configure({ mock });
+  activity.announceMode(mock);
+  activity.record("system", "info", mock ? "Mock mode on: every device is simulated" : "Mock mode off: devices are real");
+}
 
 /** Runs a device action and turns a refusal into an answer rather than a stack trace. */
 async function attempt(work: () => unknown | Promise<unknown>): Promise<Response> {
@@ -153,6 +177,11 @@ async function handle(request: Request): Promise<Response> {
   if (post && pathname === "/api/sankyo/card") {
     const { inserted } = await body<{ inserted: boolean }>();
     return await attempt(() => sankyo.simulateCard(inserted === true));
+  }
+
+  if (post && pathname === "/api/settings/mock") {
+    const { on } = await body<{ on: boolean }>();
+    return await attempt(() => setMock(on === true));
   }
 
   if (pathname.startsWith("/api/")) return new Response("not found", { status: 404 });

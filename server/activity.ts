@@ -46,6 +46,11 @@ export function announce(device: Device, state: unknown): void {
   push({ type: "state", device, state });
 }
 
+/** Broadcast that every device switched between mock and real. */
+export function announceMode(mock: boolean): void {
+  push({ type: "mode", mock });
+}
+
 export const history = (): Entry[] => [...entries];
 
 export function subscribe(send: (line: string) => void): () => void {

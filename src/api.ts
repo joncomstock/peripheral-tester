@@ -1,8 +1,8 @@
 /**
  * Typed client for the tester backend's JSON + SSE API.
  *
- * Nothing here talks to hardware. Every peripheral is held by `server/`, which owns the COM handle
- * and the USB HID handle; only the process holding them can drive the devices.
+ * Nothing here talks to hardware. Every peripheral is held by `server/`, which owns the USB and USB
+ * HID handles; only the process holding them can drive the devices.
  *
  * The types mirror each driver, but the *values* deliberately do not: section names, actions,
  * channel numbers and track masks all arrive from the backend, which builds them from the drivers'
@@ -12,7 +12,7 @@
 
 // ---- shared ---------------------------------------------------------------------------------
 
-export type Device = "system" | "lightboard" | "cardreader";
+export type Device = "system" | "lightboard" | "cardreader" | "sankyo";
 export type Status = "closed" | "opening" | "open";
 
 export interface LogEntry {
@@ -67,7 +67,8 @@ export interface Vocabulary {
 
 export interface LightBoardState {
   status: Status;
-  portName: string;
+  /** The USB vendor:product the driver opens. */
+  usbId: string;
   mock: boolean;
   doors: Record<Door, string>;
   vocabulary: Vocabulary;
@@ -80,13 +81,6 @@ export type LedColor = "green" | "red" | "orange";
 export type ReadPhase = "idle" | "waiting" | "reading";
 /** What the mock reader will do next. Offered only when mocking. */
 export type NextOutcome = "card" | "timeout" | "unreadable";
-/**
- * Whether the shutter is holding a card.
- *
- * The device does not report this, so it is what was last commanded — on real hardware the card in
- * the slot is the authority.
- */
-export type Shutter = "locked" | "unlocked";
 /**
  * Who drives the bezel LED. In `automatic` the reader lights it from its own state, and asking for a
  * colour competes with that — which reads as an indicator that does not work.
@@ -105,53 +99,37 @@ export interface CardReaderState {
   status: Status;
   phase: ReadPhase;
   mock: boolean;
+  usbId: string;
   led: LedColor | "off";
   ledBlinking: boolean;
   ledMode: LedControlMode;
-  shutter: Shutter;
   listening: boolean;
   /** A listened-for card is held server-side until collected. The stream never carries the card. */
   cardWaiting: boolean;
-  /** Unidentified literals the driver considers safe to try. Probing is limited to these. */
-  candidates: readonly string[];
   seconds: number;
   transaction: TransactionSetting;
   /** What these settings put on the wire, so the page can show what it is sending. */
   literals: { prepare: string; monitor: string; read: string };
 }
 
-export interface Track1 {
-  pan: string;
-  surname: string;
-  firstName?: string;
-  nameRest?: string;
-  expiry?: string;
-  serviceCode?: string;
-  discretionary?: string;
-}
-
-export interface Track2 {
-  pan: string;
-  expiry?: string;
-  serviceCode?: string;
-  discretionary?: string;
+/** One track as read: its characters, and the ISO 7813 fields when they parsed. */
+export interface Track<Fields = never> {
+  raw: string;
+  fields?: Fields;
 }
 
 /**
- * A read card.
+ * A read card, in the shape both card reader drivers share.
  *
  * **Carries an unmasked PAN and the raw stripe.** It exists only in the reply to the read that
  * produced it — the backend never records it, and the page masks it unless asked. Do not put any of
  * this into the activity log, a URL, or storage.
  */
 export interface CardData {
-  track1?: Track1;
-  track2?: Track2;
-  pan?: string;
-  expiry?: string;
-  surname?: string;
-  firstName?: string;
-  raw: string;
+  /** `name` is as encoded: `SURNAME/FIRST`, space-padded. Expiry is `YYMM`. */
+  track1?: Track<{ pan: string; name: string; expiry: string }>;
+  track2?: Track<{ pan: string; expiry: string }>;
+  track3?: Track;
 }
 
 export interface ReadResult {
@@ -162,6 +140,26 @@ export interface ReadResult {
   error?: string;
 }
 
+// ---- Sankyo card reader ---------------------------------------------------------------------
+
+export type SankyoLedColor = "off" | "red" | "green" | "yellow";
+
+export interface SankyoState {
+  status: Status;
+  mock: boolean;
+  usbId: string;
+  /** An Intake is waiting for a card. */
+  reading: boolean;
+  listening: boolean;
+  /** A card is in the slot, as the monitor last polled. Only known while listening. */
+  present: boolean;
+  /** Whether the mock's card is in its slot. */
+  mockInserted: boolean;
+  cardWaiting: boolean;
+  led: SankyoLedColor;
+  seconds: number;
+}
+
 // ---- snapshot + events ----------------------------------------------------------------------
 
 export interface Snapshot {
@@ -169,6 +167,7 @@ export interface Snapshot {
   log: LogEntry[];
   lightboard: LightBoardState;
   cardreader: CardReaderState;
+  sankyo: SankyoState;
 }
 
 export type Event =
@@ -180,7 +179,8 @@ export type Event =
   | ({ type: "hello" } & Snapshot)
   | { type: "log"; entry: LogEntry }
   | { type: "state"; device: "lightboard"; state: Omit<LightBoardState, "vocabulary"> }
-  | { type: "state"; device: "cardreader"; state: CardReaderState };
+  | { type: "state"; device: "cardreader"; state: CardReaderState }
+  | { type: "state"; device: "sankyo"; state: SankyoState };
 
 async function getJson<T>(path: string): Promise<T> {
   const response = await fetch(path);
@@ -203,7 +203,7 @@ async function post<T = { ok: boolean }>(path: string, body?: unknown): Promise<
 }
 
 export const lightboard = {
-  connect: (portName: string) => post("/api/lightboard/connect", { portName }),
+  connect: () => post("/api/lightboard/connect"),
   disconnect: () => post("/api/lightboard/disconnect"),
   led: (request: LedRequest) => post("/api/lightboard/led", request),
   allOff: () => post("/api/lightboard/all-off"),
@@ -219,15 +219,26 @@ export const cardreader = {
   led: (color: LedColor | "off", blink?: boolean) => post("/api/cardreader/led", { color, blink }),
   read: () => post<ReadResult>("/api/cardreader/read"),
   cancel: () => post("/api/cardreader/cancel"),
-  shutter: (shutter: Shutter) => post("/api/cardreader/shutter", { shutter }),
   ledMode: (mode: LedControlMode) => post("/api/cardreader/led-mode", { mode }),
   listen: () => post("/api/cardreader/listen"),
   stopListening: () => post("/api/cardreader/stop"),
   takeCard: () => post<{ ok: boolean; card: CardData | null }>("/api/cardreader/take-card"),
   identity: () => post<{ ok: boolean; version: string; serialNumber: string; status: string }>("/api/cardreader/identity"),
-  deactivateIcc: () => post("/api/cardreader/deactivate-icc"),
-  probe: (literal: string) => post<{ ok: boolean; literal: string; token: string; accepted: boolean }>("/api/cardreader/probe", { literal }),
   arm: (outcome: NextOutcome) => post("/api/cardreader/arm", { outcome }),
+};
+
+export const sankyo = {
+  connect: () => post("/api/sankyo/connect"),
+  disconnect: () => post("/api/sankyo/disconnect"),
+  seconds: (seconds: number) => post("/api/sankyo/seconds", { seconds }),
+  led: (color: SankyoLedColor, blink: boolean) => post("/api/sankyo/led", { color, blink }),
+  read: () => post<ReadResult>("/api/sankyo/read"),
+  cancel: () => post("/api/sankyo/cancel"),
+  listen: () => post("/api/sankyo/listen"),
+  stopListening: () => post("/api/sankyo/stop"),
+  takeCard: () => post<{ ok: boolean; card: CardData | null }>("/api/sankyo/take-card"),
+  identity: () => post<{ ok: boolean; deviceName: string; serialNumber: string; revision: string }>("/api/sankyo/identity"),
+  simulateCard: (inserted: boolean) => post("/api/sankyo/card", { inserted }),
 };
 
 /** Subscribes to the event stream, which carries every device at once. Returns an unsubscribe. */

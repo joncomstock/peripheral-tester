@@ -2,8 +2,9 @@
  * Peripheral tester — backend.
  *
  * Owns every device the page can drive and exposes them over one local JSON + SSE API. The browser
- * never touches hardware: the light board is a COM port held by this process, the card reader a USB
- * HID handle, and both drivers are Deno-native.
+ * never touches hardware: the light board is a USB interface held by this process, the card readers
+ * USB HID handles, and every driver is Deno-native. Each device is its own session, so any of them
+ * can be connected at once — a kiosk is tested as a whole, not one peripheral at a time.
  *
  * These are control panels, not probes. They drive the peripherals and report what came back; where
  * a channel map or a setting turns out to be wrong for a kiosk, the fix is configuration passed to
@@ -24,12 +25,13 @@ import { delay } from "@std/async";
 import { join } from "@std/path";
 import { serveDir } from "@std/http/file-server";
 import type { LedRequest } from "@eai/ier/s33380";
-import type { LedColor, TransactionSetting } from "@eai/omron/v4ku";
+import type { LedColor, TransactionSetting } from "@eai/omron-v4k";
+import type { LedColor as SankyoLedColor } from "@eai/sankyo";
 import * as activity from "./activity.ts";
 import * as lightboard from "./lightboard.ts";
 import * as cardreader from "./cardreader.ts";
+import * as sankyo from "./sankyo.ts";
 
-const args = Deno.args.filter((a) => a !== "--mock");
 const mock = Deno.args.includes("--mock");
 const port = Number(Deno.env.get("PORT") ?? 8777);
 
@@ -38,8 +40,9 @@ if (here === undefined) throw new Error("run this from a checkout: the built UI 
 const distDir = join(here, "..", "dist");
 const built = await Deno.stat(join(distDir, "index.html")).then(() => true).catch(() => false);
 
-lightboard.configure({ mock, portName: args[0] });
+lightboard.configure({ mock });
 cardreader.configure({ mock });
+sankyo.configure({ mock });
 
 const json = (body: unknown, statusCode = 200) =>
   new Response(JSON.stringify(body), { status: statusCode, headers: { "content-type": "application/json" } });
@@ -50,6 +53,7 @@ const snapshot = () => ({
   log: activity.history(),
   lightboard: { ...lightboard.state(), vocabulary: lightboard.vocabulary() },
   cardreader: cardreader.state(),
+  sankyo: sankyo.state(),
 });
 
 /** Runs a device action and turns a refusal into an answer rather than a stack trace. */
@@ -77,10 +81,7 @@ async function handle(request: Request): Promise<Response> {
 
   // ---- light board ----
 
-  if (post && pathname === "/api/lightboard/connect") {
-    const { portName } = await body<{ portName: string }>();
-    return await attempt(() => lightboard.connect(portName));
-  }
+  if (post && pathname === "/api/lightboard/connect") return await attempt(() => lightboard.connect());
   if (post && pathname === "/api/lightboard/disconnect") return await attempt(() => lightboard.disconnect());
   if (post && pathname === "/api/lightboard/led") {
     const request_ = await request.json() as LedRequest;
@@ -100,10 +101,10 @@ async function handle(request: Request): Promise<Response> {
   if (post && pathname === "/api/cardreader/clear") return await attempt(() => cardreader.clearRead());
   if (post && pathname === "/api/cardreader/settings") {
     const next = await body<TransactionSetting & { seconds: number }>();
-    return await attempt(() => {
+    return await attempt(async () => {
       const { seconds, ...setting } = next;
       if (seconds !== undefined) cardreader.monitorSeconds(seconds);
-      if (Object.keys(setting).length > 0) cardreader.settings(setting);
+      if (Object.keys(setting).length > 0) await cardreader.settings(setting);
     });
   }
   if (post && pathname === "/api/cardreader/led") {
@@ -120,22 +121,38 @@ async function handle(request: Request): Promise<Response> {
     return await attempt(() => ({ card: cardreader.takeCard() }));
   }
   if (post && pathname === "/api/cardreader/identity") return await attempt(() => cardreader.identity());
-  if (post && pathname === "/api/cardreader/deactivate-icc") return await attempt(() => cardreader.deactivateIcc());
-  if (post && pathname === "/api/cardreader/probe") {
-    const { literal } = await body<{ literal: string }>();
-    return await attempt(() => cardreader.probe(literal ?? ""));
-  }
   if (post && pathname === "/api/cardreader/led-mode") {
     const { mode } = await body<{ mode: "manual" | "automatic" }>();
     return await attempt(() => cardreader.setLedMode(mode === "automatic" ? "automatic" : "manual"));
   }
-  if (post && pathname === "/api/cardreader/shutter") {
-    const { shutter } = await body<{ shutter: cardreader.Shutter }>();
-    return await attempt(() => cardreader.setShutter(shutter === "locked" ? "locked" : "unlocked"));
-  }
   if (post && pathname === "/api/cardreader/arm") {
     const { outcome } = await body<{ outcome: cardreader.NextOutcome }>();
     return await attempt(() => cardreader.arm(outcome ?? "card"));
+  }
+
+  // ---- Sankyo card reader ----
+
+  if (post && pathname === "/api/sankyo/connect") return await attempt(() => sankyo.connect());
+  if (post && pathname === "/api/sankyo/disconnect") return await attempt(() => sankyo.disconnect());
+  if (post && pathname === "/api/sankyo/seconds") {
+    const { seconds } = await body<{ seconds: number }>();
+    return await attempt(() => sankyo.monitorSeconds(seconds ?? 30));
+  }
+  if (post && pathname === "/api/sankyo/led") {
+    const { color, blink } = await body<{ color: SankyoLedColor; blink: boolean }>();
+    const valid: SankyoLedColor[] = ["off", "red", "green", "yellow"];
+    return await attempt(() => sankyo.setLed(valid.includes(color as SankyoLedColor) ? color as SankyoLedColor : "off", blink === true));
+  }
+  // Like the V4K's: the card is answered to the caller and never recorded or broadcast.
+  if (post && pathname === "/api/sankyo/read") return await attempt(() => sankyo.read());
+  if (post && pathname === "/api/sankyo/cancel") return await attempt(() => sankyo.cancel());
+  if (post && pathname === "/api/sankyo/listen") return await attempt(() => sankyo.startListening());
+  if (post && pathname === "/api/sankyo/stop") return await attempt(() => sankyo.stopListening());
+  if (post && pathname === "/api/sankyo/take-card") return await attempt(() => ({ card: sankyo.takeCard() }));
+  if (post && pathname === "/api/sankyo/identity") return await attempt(() => sankyo.identity());
+  if (post && pathname === "/api/sankyo/card") {
+    const { inserted } = await body<{ inserted: boolean }>();
+    return await attempt(() => sankyo.simulateCard(inserted === true));
   }
 
   if (pathname.startsWith("/api/")) return new Response("not found", { status: 404 });
@@ -161,6 +178,7 @@ Deno.addSignalListener("SIGINT", async () => {
   console.log("\n  shutting down: releasing devices");
   await lightboard.disconnect();
   await cardreader.disconnect();
+  await sankyo.disconnect();
   await server.shutdown();
   Deno.exit(0);
 });

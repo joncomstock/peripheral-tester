@@ -208,36 +208,6 @@ export function CardReaderPage(
 
             <div className="setting">
               <span className="setting-label">
-                Shutter
-                <span className="setting-note">
-                  Locking holds the card in the machine. Release always stays available.
-                </span>
-              </span>
-              <div className="seg" data-enabled={open}>
-                <button
-                  className={state.shutter === "locked" ? "chooser chooser-warn" : "chooser"}
-                  disabled={!open}
-                  onClick={() => guard(api.cardreader.shutter("locked"))}
-                >
-                  Hold card
-                </button>
-                {/*
-                  Never disabled on the shutter's believed state. The tester only knows what it last
-                  commanded, and the pair was documented backwards once — if that belief is wrong,
-                  the way out still has to work.
-                */}
-                <button
-                  className={state.shutter === "unlocked" ? "chooser chooser-on" : "chooser"}
-                  disabled={!open}
-                  onClick={() => guard(api.cardreader.shutter("unlocked"))}
-                >
-                  Release
-                </button>
-              </div>
-            </div>
-
-            <div className="setting">
-              <span className="setting-label">
                 LED control
                 <span className="setting-note">
                   In automatic the reader lights its own LED. Setting a colour takes control back.
@@ -295,7 +265,6 @@ export function CardReaderPage(
 
       <div className="col col-narrow">
         <Identity state={state} onFail={onFail} />
-        <Probe state={state} onFail={onFail} />
         {state.mock && (
           <Card title="Mock reader" aside="No hardware">
             <div className="doorsim">
@@ -315,7 +284,7 @@ export function CardReaderPage(
 }
 
 /** What a read produced when it produced no card. */
-function Verdict({ outcome, busy, open }: { outcome: ReadResult["kind"] | null; busy: boolean; open: boolean }) {
+export function Verdict({ outcome, busy, open }: { outcome: ReadResult["kind"] | null; busy: boolean; open: boolean }) {
   if (!open) return <div className="verdict">Connect the reader to read a card.</div>;
   if (busy) return <div className="verdict">Insert a card. The device is watching for one.</div>;
   if (outcome === "timeout") return <div className="verdict">No card arrived before the wait elapsed.</div>;
@@ -323,8 +292,8 @@ function Verdict({ outcome, busy, open }: { outcome: ReadResult["kind"] | null; 
   if (outcome === "readFailed") {
     return (
       <div className="verdict verdict-bad">
-        A card was present, but no rule in the track parser accepted a PAN from its stripe. Try the
-        read again, or a different card.
+        A card was present, but the reader refused to hand over its stripe. Try the read again, or a
+        different card.
       </div>
     );
   }
@@ -338,18 +307,24 @@ function Verdict({ outcome, busy, open }: { outcome: ReadResult["kind"] | null; 
  * whoever knows which scheme applies; on this screen the policy is "show the last four, and only
  * more if someone deliberately asks". Nothing here is logged or stored.
  */
-function CardPanel({ card, reveal, onReveal }: { card: CardData; reveal: boolean; onReveal: () => void }) {
-  const pan = card.pan ?? card.track1?.pan ?? card.track2?.pan ?? "";
+export function CardPanel({ card, reveal, onReveal }: { card: CardData; reveal: boolean; onReveal: () => void }) {
+  const t1 = card.track1?.fields;
+  const t2 = card.track2?.fields;
+  const pan = t1?.pan ?? t2?.pan ?? "";
+  const expiry = t1?.expiry ?? t2?.expiry;
   const shownPan = reveal ? spaced(pan) : maskPan(pan);
+  const raw = [card.track1?.raw, card.track2?.raw, card.track3?.raw].filter(Boolean).join(" ");
   // The raw stripe carries the PAN inline, so it is blanked there too when masked.
-  const shownRaw = reveal || !pan ? card.raw : card.raw.replaceAll(pan, "•".repeat(pan.length));
+  const shownRaw = reveal || !pan ? raw : raw.replaceAll(pan, "•".repeat(pan.length));
+  const track = (result?: { raw: string; fields?: unknown }) =>
+    !result ? "not read" : result.fields ? "decoded" : result.raw ? "read, not parsed" : "empty";
 
   const rows: { label: string; value?: string }[] = [
-    { label: "PAN", value: shownPan },
-    { label: "Name", value: [card.surname, card.firstName].filter(Boolean).join(", ") || undefined },
-    { label: "Expiry", value: card.expiry ? `${card.expiry.slice(2)}/${card.expiry.slice(0, 2)}` : undefined },
-    { label: "Track 1", value: card.track1 ? "decoded" : "not present" },
-    { label: "Track 2", value: card.track2 ? "decoded" : "not present" },
+    { label: "PAN", value: shownPan || undefined },
+    { label: "Name", value: t1?.name.trim() || undefined },
+    { label: "Expiry", value: expiry ? `${expiry.slice(2)}/${expiry.slice(0, 2)}` : undefined },
+    { label: "Track 1", value: track(card.track1) },
+    { label: "Track 2", value: track(card.track2) },
   ];
 
   return (
@@ -400,9 +375,6 @@ function Identity({ state, onFail }: { state: CardReaderState; onFail: (message:
         >
           Read
         </button>
-        <button disabled={!open} onClick={() => api.cardreader.deactivateIcc().catch((err: Error) => onFail(err.message))}>
-          IC contacts down
-        </button>
       </div>
       {about && (
         <dl className="fields">
@@ -418,62 +390,6 @@ function Identity({ state, onFail }: { state: CardReaderState; onFail: (message:
             <dt>Status</dt>
             <dd>{about.status || "—"}</dd>
           </div>
-        </dl>
-      )}
-    </Card>
-  );
-}
-
-/**
- * Try an unidentified command and see whether the device accepts it.
- *
- * A picker over the driver's own candidate list, never free text: the device's command space also
- * holds firmware download, tamper and rear-destroy, and the driver excludes those families from the
- * list for that reason. Acceptance is all this can report — what a command *did* is on the hardware.
- */
-function Probe({ state, onFail }: { state: CardReaderState; onFail: (message: string) => void }) {
-  const [literal, setLiteral] = useState("");
-  const [results, setResults] = useState<{ literal: string; token: string; accepted: boolean }[]>([]);
-  const open = state.status === "open";
-
-  return (
-    <Card title="Probe" aside="Unidentified literals">
-      <div className="doorsim">
-        <select
-          className="instead__pick"
-          value={literal}
-          onChange={(event) => setLiteral(event.target.value)}
-          disabled={!open}
-          aria-label="literal to try"
-        >
-          <option value="">choose a literal</option>
-          {state.candidates.map((candidate) => <option key={candidate} value={candidate}>{candidate}</option>)}
-        </select>
-        <button
-          disabled={!open || literal === ""}
-          onClick={() =>
-            api.cardreader.probe(literal)
-              .then(({ literal: sent, token, accepted }) =>
-                setResults((previous) => [{ literal: sent, token, accepted }, ...previous].slice(0, 8))
-              )
-              .catch((err: Error) => onFail(err.message))}
-        >
-          Send
-        </button>
-      </div>
-      <p className="masknote">
-        Watch the device. This reports only whether the command was accepted, never what it did.
-      </p>
-      {results.length > 0 && (
-        <dl className="fields">
-          {results.map((result, index) => (
-            <div className="field" key={index}>
-              <dt>{result.literal}</dt>
-              <dd className={result.accepted ? "tone-warn" : "tone-muted"}>
-                {result.token} {result.accepted ? "accepted" : "refused"}
-              </dd>
-            </div>
-          ))}
         </dl>
       )}
     </Card>
@@ -498,7 +414,7 @@ export function CardReaderControls(
         <div className="portbox">
           <label htmlFor="bus">Bus</label>
           <input id="bus" value={state.mock ? "mock" : "USB HID"} disabled readOnly />
-          <span className="baud">0590:0034</span>
+          <span className="baud">{state.usbId}</span>
         </div>
         <button className={open ? "connect connect-open" : "connect"} onClick={toggle} disabled={opening}>
           {open ? "Disconnect" : opening ? "Opening…" : "Connect"}

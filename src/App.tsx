@@ -1,18 +1,21 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { CardReaderState, LogEntry, Snapshot } from "./api.ts";
+import type { CardReaderState, LogEntry, SankyoState, Snapshot } from "./api.ts";
 import * as api from "./api.ts";
 import { Activity } from "./Activity.tsx";
 import { Home } from "./Home.tsx";
-import type { View } from "./Home.tsx";
+import { KIOSKS } from "./Home.tsx";
+import type { Kiosk, View } from "./Home.tsx";
 import { CardReaderControls, CardReaderPage } from "./CardReaderPage.tsx";
 import { LightBoardControls, LightBoardPage, phrase as lightboardPhrase } from "./LightBoardPage.tsx";
+import { SankyoControls, SankyoPage } from "./SankyoPage.tsx";
 
 const MAX_LINES = 200;
 
 const TITLES: Record<View, { title: string; sub: string }> = {
-  home: { title: "Peripheral Tester", sub: "IER 919 · kiosk peripherals" },
+  home: { title: "Peripheral Tester", sub: "kiosk peripherals" },
   lightboard: { title: "Light Board", sub: "IER S33380" },
-  cardreader: { title: "Card Reader", sub: "Hitachi-Omron V4KU" },
+  cardreader: { title: "Card Reader", sub: "Hitachi-Omron V4K" },
+  sankyo: { title: "Card Reader", sub: "Sankyo ICM330" },
 };
 
 /**
@@ -27,6 +30,7 @@ export function App() {
   const [unreachable, setUnreachable] = useState<string | null>(null);
   const [log, setLog] = useState<LogEntry[]>([]);
   const [view, setView] = useState<View>("home");
+  const [kiosk, setKiosk] = useState<Kiosk>(storedKiosk);
   /** Set once the stream has supplied a snapshot, after which the initial fetch is stale. */
   const hydrated = useRef(false);
 
@@ -60,6 +64,7 @@ export function App() {
           if (event.device === "lightboard") {
             return { ...previous, lightboard: { ...previous.lightboard, ...event.state } };
           }
+          if (event.device === "sankyo") return { ...previous, sankyo: event.state as SankyoState };
           return { ...previous, cardreader: event.state as CardReaderState };
         });
       },
@@ -108,7 +113,16 @@ export function App() {
 
   if (!snapshot) return <div className="gate"><p>Loading…</p></div>;
 
-  const { title, sub } = TITLES[view];
+  const { title } = TITLES[view];
+  const sub = view === "home" ? `${KIOSKS[kiosk].name} · ${TITLES.home.sub}` : TITLES[view].sub;
+  const chooseKiosk = (next: Kiosk) => {
+    setKiosk(next);
+    // Remembered per browser, so the kiosk's own screen keeps its model. Storage may be unavailable.
+    try {
+      localStorage.setItem(KIOSK_KEY, next);
+    }
+    catch { /* the choice still holds for this session */ }
+  };
 
   // Rendered by whichever page is open, at the foot of its side column.
   const activity = (
@@ -139,15 +153,28 @@ export function App() {
 
         {view === "lightboard" && <LightBoardControls state={snapshot.lightboard} onFail={fail} />}
         {view === "cardreader" && <CardReaderControls state={snapshot.cardreader} onFail={fail} />}
+        {view === "sankyo" && <SankyoControls state={snapshot.sankyo} onFail={fail} />}
       </header>
 
       <main className="main">
-        {view === "home" && <Home snapshot={snapshot} onOpen={setView} aside={activity} />}
+        {view === "home" && <Home snapshot={snapshot} kiosk={kiosk} onKiosk={chooseKiosk} onOpen={setView} aside={activity} />}
         {view === "lightboard" && <LightBoardPage state={snapshot.lightboard} onFail={fail} aside={activity} />}
         {view === "cardreader" && <CardReaderPage state={snapshot.cardreader} onFail={fail} aside={activity} />}
+        {view === "sankyo" && <SankyoPage state={snapshot.sankyo} onFail={fail} aside={activity} />}
       </main>
     </div>
   );
+}
+
+const KIOSK_KEY = "peripheral-tester.kiosk";
+
+function storedKiosk(): Kiosk {
+  try {
+    const saved = localStorage.getItem(KIOSK_KEY);
+    if (saved && saved in KIOSKS) return saved as Kiosk;
+  }
+  catch { /* no storage: fall through to the default */ }
+  return "ier-919";
 }
 
 const systemLine = (text: string): LogEntry => ({ at: "", device: "system", kind: "failed", text });

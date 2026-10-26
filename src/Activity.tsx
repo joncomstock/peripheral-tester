@@ -48,7 +48,7 @@ export function Activity(
               <span className="activity-time">{entry.at}</span>
               {!only && entry.device !== "system" && (
                 <span className={`activity-device activity-device--${entry.device}`}>
-                  {entry.device === "lightboard" ? "board" : "reader"}
+                  {entry.device === "lightboard" ? "board" : entry.device === "sankyo" ? "sankyo" : "v4k"}
                 </span>
               )}
               <span className={`activity-text tone-${entry.tone}`}>{entry.text}</span>

@@ -13,7 +13,7 @@
  */
 
 /** Which peripheral a line came from. `system` is the tester talking about itself. */
-export type Device = "system" | "lightboard" | "cardreader";
+export type Device = "system" | "lightboard" | "cardreader" | "sankyo";
 
 export interface Entry {
   at: string;

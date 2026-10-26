@@ -1,18 +1,30 @@
 /**
- * The Hitachi-Omron V4KU manual insertion card reader, as one device of the tester.
+ * The Hitachi-Omron V4K manual insertion card reader, as one device of the tester.
  *
  * **Cardholder data never leaves this module except in the reply to the read that produced it.**
- * `@eai/omron` returns an unmasked PAN and its own documentation says nothing above it should log
- * the PAN or the raw stripe. This is that "above it": the activity log is told a card was read and
- * how the tracks decoded, never what was on them. Masking for display is the page's job; not
- * recording it is this one's.
+ * `@eai/omron-v4k` returns an unmasked PAN, and nothing above it should log the PAN or the raw
+ * stripe. This is that "above it": the activity log is told a card was read and how the tracks
+ * decoded, never what was on them. Masking for display is the page's job; not recording it is this
+ * one's.
  *
  * @module
  */
 
-import type { HidDevice } from "@eai/hid";
-import { ALL_TRACKS, CANDIDATE_LITERALS, OmronV4KU } from "@eai/omron/v4ku";
-import type { CardData, LedColor, LedControlMode, MonitorOutcome, TransactionSetting } from "@eai/omron/v4ku";
+import type { MessageTransport } from "@eai/models";
+import {
+  DEFAULT_TRANSACTION,
+  monitorCardStatus,
+  OmronV4K,
+  openV4K,
+  prepareTransaction,
+  readMagTrack,
+  trackDigit,
+  V4K_PRODUCT_ID,
+  V4K_VENDOR_ID,
+  V4KCancelledError,
+  V4KCommandError,
+} from "@eai/omron-v4k";
+import type { CardData, LedColor, LedControlMode, TransactionSetting } from "@eai/omron-v4k";
 import { announce, record } from "./activity.ts";
 
 const log = (kind: string, text: string) => record("cardreader", kind, text);
@@ -25,93 +37,96 @@ const log = (kind: string, text: string) => record("cardreader", kind, text);
 export type NextOutcome = "card" | "timeout" | "unreadable";
 
 /**
- * Whether the shutter is holding a card.
- *
- * The device does not report this, so it is what was last commanded. On real hardware the card in
- * the slot is the authority — this is here so the page can show which way it last asked.
+ * Fabricated tracks. The PAN is the standard 4111… test number, so nothing here resembles a real
+ * card.
  */
-export type Shutter = "locked" | "unlocked";
+const DEMO_TRACKS: Record<number, string> = {
+  1: "B4111111111111111^SANDOVAL/MARIA            ^2909201000000259000000",
+  2: "4111111111111111=29092010000259",
+  4: "",
+};
 
 /**
- * A fabricated stripe: track 1 running straight into track 2, which is how the device delivers
- * them. The PAN is the standard 4111… test number, so nothing here resembles a real card.
- */
-const DEMO_STRIPE = "B4111111111111111^SANDOVAL/MARIA            ^29092010000002590000004111111111111111=29092010000259";
-
-const REPORT_IN = 0x42;
-const HEADER = 3;
-
-/**
- * Speaks enough of the V4KU's report protocol to drive the real driver.
+ * Speaks enough of the V4K's message protocol to drive the real driver.
  *
- * Command payloads are `C` + a two-character code + parameters; replies are `P`/`N`/`E` + that same
- * code + a two-digit status + any data. Answering with the real codes means the driver's own
- * framing, echo-matching and track parsing are the ones under test, not a second implementation.
+ * Messages are a two-byte length and an ASCII body. Commands are `C` + a two-character code +
+ * parameters; replies are `P`/`N` + that code + a two-digit status + any data, and a cancel (`E`)
+ * is echoed. Answering with the real codes means the driver's own framing, echo matching and track
+ * parsing are the ones under test, not a second implementation.
  */
-class MockReader implements HidDevice {
-  readonly info = {
-    vendorId: 0x0590,
-    productId: 0x0034,
-    product: "V4KU (mock)",
-    manufacturer: "Hitachi-Omron",
-  } as unknown as HidDevice["info"];
-  readonly inputReportLength = 64;
-
+class MockReader implements MessageTransport {
+  isOpen = true;
   #inbound: Uint8Array[] = [];
-  #next: NextOutcome = "card";
-  #shutter: Shutter = "unlocked";
-
-  get shutter(): Shutter {
-    return this.#shutter;
-  }
+  #wake: (() => void) | null = null;
+  /** One-shot, like the page says: after it is used the reader waits for a card that never comes. */
+  #next: NextOutcome | null = "card";
+  /** A monitor waiting out its window, answered with a timeout unless cancelled first. */
+  #parked: ReturnType<typeof setTimeout> | undefined;
 
   arm(outcome: NextOutcome): void {
     this.#next = outcome;
+    // A monitor already waiting answers now, the way a card arriving mid-wait would end it.
+    if (this.#parked !== undefined) {
+      clearTimeout(this.#parked);
+      this.#parked = undefined;
+      this.#monitor(0);
+    }
   }
 
-  #reply(payload: string): void {
-    const body = new TextEncoder().encode(payload);
-    const report = new Uint8Array(HEADER + body.length);
-    report[0] = REPORT_IN;
-    report[1] = (body.length >> 8) & 0xff;
-    report[2] = body.length & 0xff;
-    report.set(body, HEADER);
-    this.#inbound.push(report);
+  /** Answer a `C92` monitor from what is armed, or park it for its window when nothing is. */
+  #monitor(seconds: number): void {
+    const next = this.#next;
+    if (next === null) {
+      this.#parked = setTimeout(() => {
+        this.#parked = undefined;
+        this.#reply("N9261");
+      }, seconds * 1000);
+      return;
+    }
+    // An unreadable card still arrives; it is the track read that fails.
+    if (next !== "unreadable") this.#next = null;
+    this.#reply(next === "timeout" ? "N9261" : "P9202");
   }
 
-  write(report: Uint8Array): Promise<void> {
-    const length = (report[1] << 8) | report[2];
-    const payload = new TextDecoder().decode(report.subarray(HEADER, HEADER + length));
-    // Cancel arrives on its own report ID and carries no command code to echo.
-    if (report[0] === 0x01 || payload === "E") return Promise.resolve();
+  #reply(body: string): void {
+    const bytes = new TextEncoder().encode(body);
+    const message = new Uint8Array(2 + bytes.length);
+    message[0] = (bytes.length >> 8) & 0xff;
+    message[1] = bytes.length & 0xff;
+    message.set(bytes, 2);
+    this.#inbound.push(message);
+    this.#wake?.();
+  }
 
-    const code = payload.slice(1, 3);
+  send(message: Uint8Array): void {
+    const length = (message[0] << 8) | message[1];
+    const body = new TextDecoder().decode(message.subarray(2, 2 + length));
+    if (body === "E") {
+      clearTimeout(this.#parked);
+      this.#parked = undefined;
+      this.#reply("E");
+      return;
+    }
+
+    const code = body.slice(1, 3);
+    const param = body.slice(3);
     switch (code) {
-      case "00":
-        this.#reply("P0000");
-        break;
-      case "6s":
-        this.#reply("P6s00");
-        break;
-      case ":6":
-        this.#reply("P:600");
-        break;
       case "92":
-        this.#reply(this.#next === "timeout" ? "N9261" : "P9202");
+        this.#monitor(Number(param));
         break;
-      case "6a":
-        this.#reply(this.#next === "unreadable" ? "N6a49" : `P6a00${DEMO_STRIPE}`);
+      case "6a": {
+        if (this.#next === "unreadable") {
+          this.#next = null;
+          this.#reply("N6a40");
+          break;
+        }
+        const tracks = [1, 2, 3, 4, 5, 6, 7].find((mask) => trackDigit(mask) === param) ?? 0;
+        const order = [1, 2, 4].filter((bit) => (tracks & bit) !== 0);
+        const statuses = order.map(() => "00").join("");
+        const lengths = order.map((bit) => String(DEMO_TRACKS[bit].length).padStart(3, "0")).join("");
+        this.#reply(`P6a00${param}${statuses}${lengths}${order.map((bit) => DEMO_TRACKS[bit]).join("")}`);
         break;
-      // The indicator: `CP7<digit>` lights a colour, `CP8<digit><digit>` blinks it, `CP6` puts it out.
-      case "P7":
-      case "P8":
-      case "P6":
-        this.#reply(`P${code}00`);
-        break;
-      // Who drives the bezel LED: `CN3` + mode digit.
-      case "N3":
-        this.#reply("PN300");
-        break;
+      }
       // The read-only enquiries answer with a payload, not just a status.
       case "V0":
         this.#reply("PV000V4KU-MOCK-1.00");
@@ -122,33 +137,40 @@ class MockReader implements HidDevice {
       case "N0":
         this.#reply("PN0000000");
         break;
-      // IC contacts down.
-      case "C6":
-        this.#reply("PC600");
-        break;
-      // The shutter: `CC0` holds a card, `CC1` releases it.
-      case "C0":
-      case "C1":
-        this.#shutter = code === "C0" ? "locked" : "unlocked";
+      // Reset, clear, transaction, the LED commands and the LED mode: plain acknowledgements.
+      case "00":
+      case "6s":
+      case ":6":
+      case "P6":
+      case "P7":
+      case "P8":
+      case "N3":
         this.#reply(`P${code}00`);
         break;
       default:
-        // An unknown command still gets an echoing negative, which is what the device does and what
-        // the driver's resynchronisation expects to see. Every command the driver can actually send
-        // is handled above; reaching this means the driver grew one the mock has not learned.
+        // An unknown command still gets an echoing negative, which is what the device does. Every
+        // command the driver can send is handled above; reaching this means it grew a new one.
         this.#reply(`N${code}99`);
     }
-    return Promise.resolve();
   }
 
-  read(timeoutMs: number): Promise<Uint8Array | null> {
-    const next = this.#inbound.shift();
-    if (next) return Promise.resolve(next);
-    return new Promise((resolve) => setTimeout(() => resolve(null), Math.min(timeoutMs, 40)));
+  async receive(signal?: AbortSignal): Promise<Uint8Array | null> {
+    while (this.isOpen && !signal?.aborted) {
+      const next = this.#inbound.shift();
+      if (next) return next;
+      await new Promise<void>((resolve) => {
+        this.#wake = resolve;
+        signal?.addEventListener("abort", () => resolve(), { once: true });
+      });
+      this.#wake = null;
+    }
+    return null;
   }
 
-  close(): Promise<void> {
-    return Promise.resolve();
+  close(): void {
+    clearTimeout(this.#parked);
+    this.isOpen = false;
+    this.#wake?.();
   }
 }
 
@@ -159,20 +181,21 @@ class MockReader implements HidDevice {
 export type Status = "closed" | "opening" | "open";
 export type Phase = "idle" | "waiting" | "reading";
 
-let reader: OmronV4KU | null = null;
+let reader: OmronV4K | null = null;
 let mockReader: MockReader | null = null;
 let status: Status = "closed";
 let phase: Phase = "idle";
 let mock = false;
 let led: LedColor | "off" = "off";
 let seconds = 60;
-let shutter: Shutter = "unlocked";
 let listening = false;
+/** The listen loop in flight, so stopping can wait for it to actually let go of the line. */
+let loop: Promise<void> | null = null;
 /**
  * Who drives the bezel LED.
  *
- * The device does not report this either. It matters because in `automatic` the reader drives its
- * own LED, so `setLed` is competing with it — which looks exactly like a broken indicator.
+ * The device does not report this. It matters because in `automatic` the reader drives its own LED,
+ * so `setLed` is competing with it — which looks exactly like a broken indicator.
  */
 let ledMode: LedControlMode = "manual";
 /** Steady or blinking. The device does not report this either. */
@@ -186,36 +209,32 @@ let ledBlinking = false;
  */
 let waiting: CardData | null = null;
 
-let transaction: TransactionSetting = {
-  direction: "back",
-  tracks: ALL_TRACKS,
-  insertionLock: false,
-  pullOutLock: false,
-};
+let transaction: TransactionSetting = DEFAULT_TRANSACTION;
 
 export function configure(options: { mock: boolean }): void {
   mock = options.mock;
 }
 
+/** The USB identity the driver opens, as `lsusb` and Device Manager show it. */
+const usbId = [V4K_VENDOR_ID, V4K_PRODUCT_ID].map((id) => id.toString(16).padStart(4, "0")).join(":");
+
 export const state = () => ({
   status,
   phase,
   mock,
+  usbId,
   led,
   ledBlinking,
   listening,
   cardWaiting: waiting !== null,
-  candidates: CANDIDATE_LITERALS,
   ledMode,
-  shutter,
   seconds,
   transaction: { ...transaction },
-  /** The literals these settings will put on the wire, so the page can show what it is sending. */
+  /** The literals these settings will put on the wire, built by the driver's own command builders. */
   literals: {
-    prepare: `C:6${transaction.direction === "none" ? 0 : transaction.direction === "insertion" ? 1 : 2}` +
-      `${transaction.tracks}${transaction.insertionLock ? 1 : 0}${transaction.pullOutLock ? 1 : 0}`,
-    monitor: `C92${String(seconds).padStart(2, "0")}`,
-    read: `C6a${transaction.tracks}`,
+    prepare: prepareTransaction(transaction).body,
+    monitor: monitorCardStatus(seconds).body,
+    read: readMagTrack(transaction.tracks).body,
   },
 });
 
@@ -225,18 +244,20 @@ export async function connect(): Promise<void> {
   if (status !== "closed") return;
   status = "opening";
   tell();
-  log("info", mock ? "Opening mock reader" : "Opening V4KU over USB HID");
+  log("info", mock ? "Opening mock reader" : `Opening ${usbId} over USB HID`);
 
   try {
     if (mock) {
       mockReader = new MockReader();
-      reader = await OmronV4KU.openWithDevice(mockReader, { transaction });
+      reader = OmronV4K.withTransport(mockReader, { transaction });
+      await reader.initialize();
     }
     else {
-      reader = await OmronV4KU.open({ transaction });
+      reader = await openV4K({ transaction });
     }
   }
   catch (err) {
+    await reader?.close().catch(() => {});
     status = "closed";
     reader = null;
     mockReader = null;
@@ -259,11 +280,11 @@ export async function disconnect(): Promise<void> {
   phase = "idle";
   led = "off";
   ledBlinking = false;
-  shutter = "unlocked";
   ledMode = "manual";
-  listening = false;
   waiting = null;
   try {
+    // A parked monitor holds the line; it has to let go before the LED command can be heard.
+    await endListening(open);
     await open.ledOff();
   }
   catch { /* a reader already unreachable cannot be darkened */ }
@@ -272,7 +293,7 @@ export async function disconnect(): Promise<void> {
   log("info", "Reader released");
 }
 
-function held(): OmronV4KU {
+function held(): OmronV4K {
   if (!reader) throw new Error("Not connected");
   return reader;
 }
@@ -287,8 +308,11 @@ export async function clearRead(): Promise<void> {
   log("sent", "C6s — read buffer cleared");
 }
 
-export function settings(next: Partial<TransactionSetting>): void {
-  transaction = { ...transaction, ...next };
+export async function settings(next: Partial<TransactionSetting>): Promise<void> {
+  const proposed = { ...transaction, ...next };
+  // The reader holds the setting, so it is applied as it changes rather than at the next read.
+  if (reader) await reader.applyTransaction(proposed);
+  transaction = proposed;
   tell();
   log("info", `Transaction: ${state().literals.prepare}`);
 }
@@ -304,12 +328,18 @@ export async function setLed(color: LedColor | "off", blink?: boolean): Promise<
   // like the command was ignored, so control comes back first.
   if (ledMode === "automatic") await setLedMode("manual");
   if (color === "off") await open.ledOff();
-  else if (blink) await open.blinkLed(color);
-  else await open.setLed(color);
+  else if (blink) await open.ledBlink(color, "1hz");
+  else await open.ledOn(color);
   led = color;
   ledBlinking = color !== "off" && blink === true;
   tell();
   log("sent", `LED ${color}${ledBlinking ? " blinking" : ""}`);
+}
+
+/** Which tracks decoded, never what was on them. */
+function decoded(card: CardData | null): string {
+  const parsed = [card?.track1?.fields ? "track 1" : null, card?.track2?.fields ? "track 2" : null].filter(Boolean);
+  return parsed.join(" + ") || "no track parsed";
 }
 
 /**
@@ -319,43 +349,48 @@ export async function setLed(color: LedColor | "off", blink?: boolean): Promise<
  * which tracks decoded — and never the PAN or the stripe.
  */
 export interface ReadResult {
-  kind: MonitorOutcome["kind"];
+  kind: "card" | "timeout" | "cancelled" | "readFailed";
   card?: CardData;
   status?: string;
 }
 
+/** One monitor-and-read cycle, with the driver's refusals turned into outcomes. */
+async function cycle(open: OmronV4K): Promise<ReadResult> {
+  try {
+    const outcome = await open.readCard(seconds);
+    if (outcome.outcome === "timeout") return { kind: "timeout" };
+    if (!outcome.card) return { kind: "readFailed", status: outcome.response.status };
+    return { kind: "card", card: outcome.card };
+  }
+  catch (err) {
+    if (err instanceof V4KCancelledError) return { kind: "cancelled" };
+    if (err instanceof V4KCommandError) return { kind: "readFailed", status: err.response.status };
+    throw err;
+  }
+}
+
 export async function read(): Promise<ReadResult> {
   const open = held();
+  if (listening) throw new Error("Stop listening first");
   phase = "waiting";
   tell();
   log("sent", `${state().literals.prepare} · ${state().literals.monitor}`);
 
   try {
-    await open.prepareTransaction(transaction);
-    const outcome = await open.readOnce(seconds);
-
-    if (outcome.kind === "card") {
-      phase = "idle";
-      tell();
-      const { track1, track2 } = outcome.card;
-      // Which tracks decoded, never what was on them.
-      const decoded = [track1 ? "track 1" : null, track2 ? "track 2" : null].filter(Boolean).join(" + ");
-      log("ok", `Card read — ${decoded || "no track parsed"}`);
-      return { kind: "card", card: outcome.card };
-    }
-
-    phase = "idle";
-    tell();
-    if (outcome.kind === "timeout") log("info", `No card within ${seconds}s`);
-    else if (outcome.kind === "cancelled") log("info", "Read cancelled");
-    else log("error", `Card present but unreadable (${outcome.status})`);
-    return { kind: outcome.kind, status: outcome.kind === "readFailed" ? outcome.status : undefined };
+    const result = await cycle(open);
+    if (result.kind === "card") log("ok", `Card read — ${decoded(result.card ?? null)}`);
+    else if (result.kind === "timeout") log("info", `No card within ${seconds}s`);
+    else if (result.kind === "cancelled") log("info", "Read cancelled");
+    else log("error", `Card present but unreadable (${result.status})`);
+    return result;
   }
   catch (err) {
-    phase = "idle";
-    tell();
     log("error", err instanceof Error ? err.message : String(err));
     throw err;
+  }
+  finally {
+    phase = "idle";
+    tell();
   }
 }
 
@@ -381,27 +416,11 @@ export async function setLedMode(mode: LedControlMode): Promise<void> {
 }
 
 /**
- * Hold a card in the reader, or let it go.
- *
- * `CC0` locks the shutter and `CC1` releases it — measured from the vendor DLL, and the pair was
- * documented backwards once, which would have made locking *open* on a captured card. Releasing is
- * therefore never gated on believing the shutter is currently held: if the tester's idea of the
- * state is wrong, the way out still has to work.
- */
-export async function setShutter(next: Shutter): Promise<void> {
-  const open = held();
-  if (next === "locked") await open.lock();
-  else await open.unlock();
-  shutter = next;
-  tell();
-  log(next === "locked" ? "warned" : "ok", next === "locked" ? "CC0 — shutter locked, card held" : "CC1 — shutter released");
-}
-
-/**
  * Read cards continuously until {@link stopListening}.
  *
- * The driver emits one event per cycle. A card is kept for collection rather than pushed onward, for
- * the reason on {@link waiting}; the stream is told only that one is there.
+ * The driver has no listen loop of its own, so this runs read cycles back to back. A card is kept
+ * for collection rather than pushed onward, for the reason on {@link waiting}; the stream is told
+ * only that one is there.
  */
 export function startListening(): void {
   const open = held();
@@ -411,27 +430,46 @@ export function startListening(): void {
   tell();
   log("info", `Listening — ${state().literals.monitor} per cycle`);
 
-  open.on("card", (card: CardData) => {
-    waiting = card;
-    const decoded = [card.track1 ? "track 1" : null, card.track2 ? "track 2" : null].filter(Boolean).join(" + ");
-    log("ok", `Card read — ${decoded || "no track parsed"}`);
-    tell();
-  });
-  open.on("timeout", () => log("info", "Cycle elapsed with no card"));
-  open.on("readFailed", (status: string) => log("error", `Card present but unreadable (${status})`));
-
   // Not awaited: the loop runs until stopped, and the caller wants an answer now.
-  open.listen().catch((err: Error) => {
+  loop = (async () => {
+    while (listening && reader === open) {
+      const result = await cycle(open);
+      if (result.kind === "card") {
+        waiting = result.card ?? null;
+        log("ok", `Card read — ${decoded(waiting)}`);
+        tell();
+      }
+      else if (result.kind === "timeout") log("info", "Cycle elapsed with no card");
+      else if (result.kind === "readFailed") log("error", `Card present but unreadable (${result.status})`);
+    }
+  })().catch((err: Error) => {
     listening = false;
     tell();
     log("error", err.message);
   });
 }
 
-export async function stopListening(): Promise<void> {
-  const open = held();
+/**
+ * Stop the listen loop and wait until it has let go of the line.
+ *
+ * One cancel is not enough: sent during a cycle's preamble, it is swallowed there, and the monitor
+ * that follows would hold the line for its whole window. So it is repeated until the loop ends.
+ */
+async function endListening(open: OmronV4K): Promise<void> {
   listening = false;
-  await open.stop();
+  const running = loop;
+  loop = null;
+  if (!running) return;
+  let ended = false;
+  running.finally(() => (ended = true));
+  while (!ended) {
+    await open.cancel();
+    await Promise.race([running, new Promise((resolve) => setTimeout(resolve, 1000))]);
+  }
+}
+
+export async function stopListening(): Promise<void> {
+  await endListening(held());
   tell();
   log("info", "Stopped listening");
 }
@@ -452,36 +490,11 @@ export function takeCard(): CardData | null {
 /** The device's own identity and status. Read-only enquiries. */
 export async function identity(): Promise<{ version: string; serialNumber: string; status: string }> {
   const open = held();
-  const version = await open.getVersion();
-  const serialNumber = await open.getSerialNumber();
-  const status = await open.getStatus();
+  const version = await open.version();
+  const serialNumber = await open.serialNumber();
+  const status = await open.deviceStatus();
   log("info", `Version ${version} · serial ${serialNumber} · status ${status}`);
   return { version, serialNumber, status };
-}
-
-export async function deactivateIcc(): Promise<void> {
-  await held().deactivateIcc();
-  log("sent", "CC6 — IC contacts down");
-}
-
-/**
- * Send one unidentified literal and report what came back.
- *
- * Restricted to the driver's own candidate list. That list exists because the device's command space
- * also holds firmware download, tamper and rear-destroy operations, and issuing one of those can do
- * something neither read-only nor undoable — so this takes a choice from a vetted set rather than
- * free text. It reports whether the device accepted the command; it cannot say what the command
- * *did*, which is what watching the hardware is for.
- */
-export async function probe(literal: string): Promise<{ literal: string; token: string; accepted: boolean }> {
-  const open = held();
-  if (!CANDIDATE_LITERALS.includes(literal)) {
-    throw new Error(`'${literal}' is not in the driver's candidate list`);
-  }
-  const response = await open.sendRaw(literal);
-  const accepted = response.outcome === "positive";
-  log(accepted ? "warned" : "info", `${literal} → ${response.token}${accepted ? " — accepted, watch the device" : ""}`);
-  return { literal, token: response.token, accepted };
 }
 
 /** Arm what the mock reader will do next. The page offers this only when mocking. */

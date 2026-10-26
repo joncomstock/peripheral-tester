@@ -1,7 +1,7 @@
 /**
  * The IER S33380 light board, as one device of the tester.
  *
- * Owns the COM port for as long as it is connected. Only the process holding the COM handle can
+ * Owns the board's USB interface for as long as it is connected. Only the process holding it can
  * drive the board, which is why the browser never speaks to it directly.
  *
  * @module
@@ -13,10 +13,11 @@ import { attachHandler } from "@eai/logging-ts";
 import type { Transport } from "@eai/models";
 import {
   ACTIONS,
-  DEFAULT_PORT,
   IER_S33380_DEFAULTS,
+  IER_VENDOR_ID,
   IERS33380,
   INDICATOR_SECTIONS,
+  S33380_PRODUCT_ID,
   SEMAPHORE_COLORS,
   SIDES,
   STRIP_COLORS,
@@ -90,17 +91,18 @@ export type Status = "closed" | "opening" | "open";
 let board: IERS33380 | null = null;
 let mockBoard: MockBoard | null = null;
 let status: Status = "closed";
-let portName: string;
 let mock = false;
+
+/** The USB identity the driver opens by default, as `lsusb` and Device Manager show it. */
+const usbId = [IER_VENDOR_ID, S33380_PRODUCT_ID].map((id) => id.toString(16).padStart(4, "0")).join(":");
 
 const doors: Record<"upper" | "lower", string> = { upper: "closed", lower: "closed" };
 
-export function configure(options: { mock: boolean; portName?: string }): void {
+export function configure(options: { mock: boolean }): void {
   mock = options.mock;
-  portName = mock ? "mock" : (options.portName ?? DEFAULT_PORT);
 }
 
-export const state = () => ({ status, portName, mock, doors: { ...doors } });
+export const state = () => ({ status, usbId, mock, doors: { ...doors } });
 
 const tell = () => announce("lightboard", state());
 
@@ -153,21 +155,21 @@ function wire(opened: IERS33380): void {
   });
 }
 
-export async function connect(requested?: string): Promise<void> {
+export async function connect(): Promise<void> {
   if (status !== "closed") return;
-  portName = mock ? "mock" : (requested ?? portName).trim().toUpperCase() || DEFAULT_PORT;
   status = "opening";
   tell();
-  log("info", `Opening ${portName} at 9600 8N1`);
+  log("info", mock ? "Opening mock board" : `Opening ${usbId} over USB`);
 
-  const name = `IERS33380:${portName}`;
+  // The logger name the driver uses for itself, so its warnings can be caught.
+  const name = mock ? "IERS33380:mock" : `IERS33380:${usbId}`;
   try {
     if (mock) {
       mockBoard = new MockBoard();
       board = await IERS33380.openWithTransport(mockBoard, undefined, name);
     }
     else {
-      board = await IERS33380.open({ portName });
+      board = await IERS33380.open();
     }
   }
   catch (err) {
@@ -199,17 +201,17 @@ export async function disconnect(): Promise<void> {
   catch { /* a board that is already unreachable cannot be darkened */ }
   await open.close();
   tell();
-  log("info", `${portName} released`);
+  log("info", "Board released");
 }
 
 /**
  * The board's vocabulary and channel map.
  *
  * Built from the driver's own exported arrays, so the page cannot offer a section the driver does
- * not have. Before a connection there is no live config, so the shipped defaults stand in.
+ * not have. The board is always opened with the shipped 919 map, so that is the map described.
  */
 export function vocabulary() {
-  const config = board?.config ?? IER_S33380_DEFAULTS;
+  const config = IER_S33380_DEFAULTS;
   return {
     actions: ACTIONS,
     indicators: INDICATOR_SECTIONS.map((section) => ({ section, channel: config.indicators[section] })),

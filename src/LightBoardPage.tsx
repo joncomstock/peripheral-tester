@@ -146,42 +146,33 @@ export function LightBoardPage(
   );
 }
 
-/** The header cluster for this device: the port, the connection, and darkening the board. */
+/** The header cluster for this device: the bus, the connection, and darkening the board. */
 export function LightBoardControls(
   { state, onFail }: { state: LightBoardState; onFail: (message: string) => void },
 ) {
-  const [portName, setPortName] = useState(state.portName);
   const open = state.status === "open";
   const opening = state.status === "opening";
-
-  useEffect(() => setPortName(state.portName), [state.portName]);
 
   const toggle = () => {
     if (open) api.lightboard.disconnect().catch((err: Error) => onFail(err.message));
     // A refused connection is already explained in the activity log by the backend.
-    else if (!opening) api.lightboard.connect(portName).catch(() => {});
+    else if (!opening) api.lightboard.connect().catch(() => {});
   };
 
   return (
     <>
       <div className="bar-group">
         <div className="portbox">
-          <label htmlFor="port">Port</label>
-          <input
-            id="port"
-            value={state.mock ? "mock" : portName}
-            onChange={(event) => setPortName(event.target.value.toUpperCase())}
-            disabled={open || opening || state.mock}
-            spellCheck={false}
-          />
-          <span className="baud">9600 8N1</span>
+          <label htmlFor="bus">Bus</label>
+          <input id="bus" value={state.mock ? "mock" : "USB"} disabled readOnly />
+          <span className="baud">{state.usbId}</span>
         </div>
         <button className={open ? "connect connect-open" : "connect"} onClick={toggle} disabled={opening}>
           {open ? "Disconnect" : opening ? "Opening…" : "Connect"}
         </button>
       </div>
 
-      <StatusPill status={state.status} open="Connected · handshake OK" opening="Opening port" shut="Not connected" />
+      <StatusPill status={state.status} open="Connected · handshake OK" opening="Opening board" shut="Not connected" />
 
       <button
         className="alloff"

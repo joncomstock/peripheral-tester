@@ -826,7 +826,10 @@ button {
 
 .activity {
   flex: 1;
-  min-height: 0;
+  /* The log never sizes its column: it fills the height the other panels leave and scrolls inside
+     it. Without this a long log grew the row, and every panel beside it stretched to match. */
+  contain: size;
+  min-height: 240px;
   overflow: auto;
   padding: 8px 0;
 }

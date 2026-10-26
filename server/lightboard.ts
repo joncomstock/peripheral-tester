@@ -217,7 +217,12 @@ export function vocabulary() {
   const config = IER_S33380_DEFAULTS;
   return {
     actions: ACTIONS,
-    indicators: INDICATOR_SECTIONS.map((section) => ({ section, channel: config.indicators[section] })),
+    // A section with no channel in the map has no lamp fitted on this unit (the driver refuses it), so
+    // it is not offered. The shipped 919 map has no GPP dispenser lamp.
+    indicators: INDICATOR_SECTIONS.flatMap((section) => {
+      const channel = config.indicators[section];
+      return channel === undefined ? [] : [{ section, channel }];
+    }),
     sides: SIDES.map((side) => ({ side, channel: config.bagTag[side] })),
     // A strip colour is one or more primaries lit together — the channels mix additively in the
     // strip itself, so cyan is green and blue rather than wiring of its own.

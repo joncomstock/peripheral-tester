@@ -7,6 +7,14 @@
  * configuration to flash and restarting the scanner are left out on purpose: both take it off USB,
  * and a save outlives the test.
  *
+ * Nothing is saved, but some settings last in the scanner's RAM until it is power-cycled: the
+ * driver's setup (decodes end in ETX, STX/ETX start and stop a read, Serial On Line mode, so it
+ * reads only when asked) and a trigger's Scanning Active Time and Phase Off. Symbologies changed
+ * here are put back to all-enabled on disconnect.
+ *
+ * The driver reports no unplug. A presentation read loop ends on its own only when the port stops
+ * answering, and a command fails to write or gets no reply once it is gone; either closes the session.
+ *
  * A barcode is often a boarding pass, which carries a passenger's name and booking. The log is told
  * one was read, never its text; the text goes to the page in state. The driver hands over the text
  * alone, so the symbology is known only when the scanner sends an AIM identifier ahead of it.
@@ -32,10 +40,11 @@ type PresentationMode = typeof PRESENTATION_MODES[number];
 
 /** Fabricated codes, each behind its AIM identifier: no real passenger or booking. */
 const DEMO_CODES = {
-  "boarding-pass": "]L2M1SAMPLE/TEST      EZZZ999 YYZYVRAC 0000 299Y012A0042 100",
-  qr: "]Q1https://example.com/not-a-real-ticket",
+  "boarding-pass": { label: "Boarding pass", enable: "P4EN", text: "]L2M1SAMPLE/TEST      EZZZ999 YYZYVRAC 0000 299Y012A0042 100" },
+  qr: { label: "QR code", enable: "QREN", text: "]Q1https://example.com/not-a-real-ticket" },
 } as const;
 export type DatalogicSimulation = keyof typeof DEMO_CODES;
+const SIMULATIONS = [...Object.entries(DEMO_CODES).map(([code, { label }]) => ({ code, label })), { code: "unplug", label: "Unplug" }];
 
 const enc = new TextEncoder();
 const dec = new TextDecoder();
@@ -48,17 +57,26 @@ const dec = new TextDecoder();
  */
 class MockScanner implements Transport {
   isOpen = true;
-  #settings = new Map<string, string>([["SNRM", OperatingMode.OBJECT_SENSE], ["SNET", "05"]]);
+  /** The scanner's RAM, which outlives a session as the real one does until it is power-cycled. */
+  static #ram = new Map<string, string>([["SNRM", OperatingMode.OBJECT_SENSE], ["SNET", "05"]]);
+  #settings = MockScanner.#ram;
   /** When the phase opened by STX ends; 0 when none is open. */
   #phaseUntil = 0;
   #buffer: number[] = [];
   #wake: (() => void)[] = [];
 
-  /** Present a code to the scanner. */
-  show(code: string): void {
+  /** The cable is pulled: reads end, and writes fail as the serial transport's do. */
+  unplug(): void {
+    this.isOpen = false;
+    for (const resolve of this.#wake.splice(0)) resolve();
+  }
+
+  /** Present a code to the scanner. A symbology it was told not to decode, it ignores. */
+  show(code: string, enable: string): void {
     const mode = this.#settings.get("SNRM");
     const presenting = mode === OperatingMode.OBJECT_SENSE || mode === OperatingMode.AUTOMATIC;
     if (!presenting && Date.now() > this.#phaseUntil) throw new Error("The scanner is not reading: Listen or Trigger first");
+    if (this.#settings.get(enable) === "00") return;
     this.#phaseUntil = 0; // a decode ends a single read's phase
     this.#feed(`${code}\x03`);
   }
@@ -69,6 +87,7 @@ class MockScanner implements Transport {
   }
 
   write(data: Uint8Array): void {
+    if (!this.isOpen) throw new Error("cannot write to the mock port: the port is not open");
     if (data[0] === 0x02) {
       this.#phaseUntil = Date.now() + parseInt(this.#settings.get("SNET") ?? "05", 16) * 1000;
       return;
@@ -83,6 +102,7 @@ class MockScanner implements Transport {
       const value = this.#settings.get(cmd.slice(1));
       return this.#feed(value === undefined ? "$%\r" : `$>${value}\r`);
     }
+    if (cmd === "AD") { for (const { enable } of Object.values(DEMO_CODES)) this.#settings.set(enable, "00"); }
     if (cmd.startsWith("C")) this.#settings.set(cmd.slice(1, 5), cmd.slice(5));
     this.#feed("$>\r");
   }
@@ -133,6 +153,10 @@ let barcode: { symbology: string | null; text: string } | null = null;
 /** What was last commanded; null until set since connecting. */
 let enabled: string[] | null = null;
 let presentationMode: PresentationMode = "OBJECT_SENSE";
+/** Set while listen or trigger configures the scanner, before the driver's read task exists. */
+let starting = false;
+/** Polls a presentation read, whose loop ending on its own means the port went away. */
+let watch: ReturnType<typeof setInterval> | undefined;
 
 const usbId = [DATALOGIC_VENDOR_ID, GFS4470_PRODUCT_ID].map((id) => id.toString(16).padStart(4, "0")).join(":");
 
@@ -147,6 +171,7 @@ export const state = () => ({
   /** The driver's vocabularies, so the page keeps no copy. */
   symbologies: SYMBOLOGIES,
   presentationModes: PRESENTATION_MODES,
+  simulations: SIMULATIONS,
 });
 
 const tell = () => announce("datalogic", state());
@@ -168,15 +193,32 @@ function wire(opened: DatalogicScanner): void {
     log("ok", `Barcode read — ${aim ?? "no symbology"}, ${barcode.text.length} characters`);
     tell();
   });
-  opened.on("disconnected", () => {
-    if (scanner !== opened) return;
-    scanner = null;
-    mockScanner = null;
-    status = "closed";
-    reading = null;
-    log("error", "The scanner went away. Reconnect to continue.");
-    tell();
-  });
+}
+
+/** Forget the scanner. The handle is closed without writing: whatever is left of it is gone. */
+function lost(open: DatalogicScanner): void {
+  if (scanner !== open) return;
+  clearInterval(watch);
+  scanner = null;
+  mockScanner = null;
+  status = "closed";
+  reading = null;
+  enabled = null;
+  open.close().catch(() => {});
+  log("error", "The scanner's port stopped answering. Reconnect to continue.");
+  tell();
+}
+
+/** Run a command; one that could not be written or got no reply means the port is gone. */
+async function command<T>(open: DatalogicScanner, work: () => Promise<T>): Promise<T> {
+  try {
+    return await work();
+  }
+  catch (err) {
+    // The driver's own refusals: the scanner answered, so it is still there.
+    if (!/rejected|no usable|already in progress/.test(err instanceof Error ? err.message : String(err))) lost(open);
+    throw err;
+  }
 }
 
 export async function connect(): Promise<void> {
@@ -190,7 +232,6 @@ export async function connect(): Promise<void> {
       mockScanner = new MockScanner();
       opened = new DatalogicScanner(mockScanner);
       await opened.setup();
-      opened.connected = true; // as connectDatalogic does, so close() reports the disconnect
     }
     else {
       opened = await connectDatalogic();
@@ -216,10 +257,13 @@ export async function connect(): Promise<void> {
 export async function disconnect(): Promise<void> {
   const open = scanner;
   if (!open) return;
+  clearInterval(watch);
   scanner = null;
   status = "closed";
   // Out of presentation mode, so the scanner does not go on decoding with no one listening.
   await open.deactivate();
+  // The next user would otherwise inherit this session's symbologies until a power-cycle.
+  if (enabled !== null) await open.resetSymbologies().catch(() => log("warned", "Could not restore every symbology"));
   await open.close();
   mockScanner = null;
   reading = null;
@@ -237,21 +281,33 @@ function held(): DatalogicScanner {
 /** A command sent while a read loop runs would lose its reply to that loop. */
 function idle(): DatalogicScanner {
   const open = held();
-  if (open.hasActiveReadTask()) throw new Error("Stop reading first");
+  if (starting || open.hasActiveReadTask()) throw new Error("Stop reading first");
   return open;
 }
 
 export const actions: Record<string, (body: Record<string, unknown>) => unknown> = {
   /** Read every code presented, until `stop`. */
   async listen() {
-    await idle().monitor();
+    const open = idle();
+    starting = true;
+    try {
+      await command(open, () => open.monitor());
+    }
+    finally {
+      starting = false;
+    }
     reading = "presentation";
+    watch = setInterval(() => {
+      if (!open.hasActiveReadTask()) lost(open);
+    }, 250);
     tell();
     log("sent", `Listening (${presentationMode.toLowerCase().replace("_", " ")})`);
   },
 
   async stop() {
-    await held().deactivate();
+    const open = held();
+    clearInterval(watch);
+    await open.deactivate();
     reading = null;
     tell();
     log("sent", "Stopped reading");
@@ -264,10 +320,17 @@ export const actions: Record<string, (body: Record<string, unknown>) => unknown>
     }
     const open = idle();
     const before = barcode;
-    await open.activate(seconds === undefined ? undefined : (seconds as number) * 1000);
+    starting = true;
+    try {
+      await command(open, () => open.activate(seconds === undefined ? undefined : (seconds as number) * 1000));
+    }
+    finally {
+      starting = false;
+    }
     reading = "single";
     tell();
     log("sent", seconds === undefined ? "Single read, the scanner's own time-out" : `Single read, ${seconds} s`);
+    // Ends at a decode, the time-out, or the port going away (which the next command tells).
     while (open.hasActiveReadTask()) await new Promise((resolve) => setTimeout(resolve, 50));
     if (reading === "single") reading = null;
     const decoded = barcode !== before;
@@ -281,7 +344,8 @@ export const actions: Record<string, (body: Record<string, unknown>) => unknown>
     if (!Array.isArray(codes) || codes.some((code) => !SYMBOLOGIES.includes(code))) {
       throw new Error(`codes must be a list drawn from ${SYMBOLOGIES.join(", ")}`);
     }
-    await idle().setSymbologies(codes);
+    const open = idle();
+    await command(open, () => open.setSymbologies(codes));
     enabled = SYMBOLOGIES.filter((code) => codes.includes(code));
     tell();
     log("sent", enabled.length ? `Decoding ${enabled.join(", ")}` : "Every symbology disabled");
@@ -297,15 +361,20 @@ export const actions: Record<string, (body: Record<string, unknown>) => unknown>
   },
 
   async identity() {
-    const firmware = await idle().version();
+    const open = idle();
+    const firmware = await command(open, () => open.version());
     log("info", `Firmware ${firmware}`);
     return { firmware };
   },
 
-  /** Body: `{ code }`, one of the demo codes. Mock only. */
+  /** Body: `{ code }`, one of the demo codes, or `unplug`. Mock only. */
   simulate({ code }) {
     if (!mock || !mockScanner) throw new Error("Only a mock scanner has simulated codes");
-    if (!(typeof code === "string" && code in DEMO_CODES)) throw new Error(`code must be one of ${Object.keys(DEMO_CODES).join(", ")}`);
-    mockScanner.show(DEMO_CODES[code as DatalogicSimulation]);
+    if (code === "unplug") return mockScanner.unplug();
+    if (!(typeof code === "string" && Object.hasOwn(DEMO_CODES, code))) {
+      throw new Error(`code must be one of ${Object.keys(DEMO_CODES).join(", ")}, unplug`);
+    }
+    const { text, enable } = DEMO_CODES[code as DatalogicSimulation];
+    mockScanner.show(text, enable);
   },
 };

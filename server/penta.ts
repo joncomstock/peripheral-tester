@@ -231,6 +231,11 @@ let document: DocumentEvent | null = null;
 let barcode: { symbology: string | null; text: string } | null = null;
 /** A mock passport's data page while it is on the glass. Mock mode only: see {@link specimenPassport}. */
 let passport: ReturnType<typeof specimenPassport> | null = null;
+/**
+ * A mock passport placed but not yet reported. It goes on the glass when the driver reports the
+ * document present: set at once, an earlier "removed" still queued in the mock would clear it.
+ */
+let pendingPassport: ReturnType<typeof specimenPassport> | null = null;
 /** What was last commanded; the device does not report its LEDs. */
 let statusLed: { mode: "on" | "flash"; color: LedColor } | null = null;
 let externalLed: ExternalLedColor | "off" = "off";
@@ -268,6 +273,10 @@ function wire(opened: DeskoPenta): void {
   opened.on("document", (event: DocumentEvent) => {
     document = event;
     if (event === "removed") passport = null;
+    if (event === "present" && pendingPassport) {
+      passport = pendingPassport;
+      pendingPassport = null;
+    }
     log("info", `Document ${event}`);
     tell();
   });
@@ -281,8 +290,8 @@ function wire(opened: DeskoPenta): void {
   opened.on("disconnect", () => {
     if (penta !== opened) return;
     penta = null;
-    mockPenta = null;
     status = "closed";
+    forget();
     log("error", "The scanner stopped reporting. Reconnect to continue.");
     tell();
   });
@@ -330,15 +339,21 @@ export async function disconnect(): Promise<void> {
   }
   catch { /* a scanner already unreachable cannot be darkened */ }
   await open.close();
+  forget();
+  tell();
+  log("info", "Scanner released");
+}
+
+/** Clear what a session knew, however it ended: nothing on the glass or lit is known any more. */
+function forget(): void {
   mockPenta = null;
   document = null;
   passport = null;
+  pendingPassport = null;
   barcode = null;
   statusLed = null;
   externalLed = "off";
   flood = null;
-  tell();
-  log("info", "Scanner released");
 }
 
 function held(): DeskoPenta {
@@ -392,10 +407,9 @@ export function simulate(action: "place" | "passport" | "boarding-pass" | "flip"
   if (!mock || !mockPenta) throw new Error("Only a mock scanner has a simulated document");
   if (action === "passport") {
     // Placed like any document, so the driver reports it; the data page is the mock's alone.
-    passport = specimenPassport();
+    pendingPassport = specimenPassport();
     log("info", "Mock passport placed (specimen data)");
     mockPenta.place(false);
-    tell();
     return;
   }
   if (action === "place") mockPenta.place(false);

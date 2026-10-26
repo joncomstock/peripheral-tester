@@ -46,7 +46,7 @@ export function lampStyle(color: string, mode: Action, size = 18): CSSProperties
     return {
       ...base,
       background: "radial-gradient(circle at 34% 28%, var(--lamp-off-a), var(--lamp-off-b))",
-      boxShadow: "inset 0 0 0 1px rgba(16,24,40,0.12), inset 0 1px 1px rgba(255,255,255,0.85)",
+      boxShadow: "inset 0 0 0 1px rgba(16,24,40,0.12), inset 0 1px 1px var(--shine)",
     };
   }
   const lit: CSSProperties = {

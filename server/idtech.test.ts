@@ -58,3 +58,14 @@ Deno.test("idtech: the mock reader is driven through the real driver", async () 
   assert(!JSON.stringify(history()).match(/4111|SANDOVAL/), "the log must carry no card data");
   await assertRejects(async () => await idtech.actions.identity({}), Error, "Not connected");
 });
+
+Deno.test("idtech: a reader lost underneath is released, so it can be opened again", async () => {
+  idtech.configure({ mock: true });
+  await idtech.connect();
+  idtech.actions.simulate({ event: "unplug" });
+  await until(() => idtech.state().status === "closed");
+  // The mock refuses a second open while the first handle is still held.
+  await idtech.connect();
+  assertEquals(idtech.state().status, "open");
+  await idtech.disconnect();
+});

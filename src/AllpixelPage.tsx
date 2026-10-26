@@ -39,7 +39,7 @@ export function AllpixelPage(
               <div className="setting" key={zone}>
                 <span className="setting-label">
                   {words(zone)}
-                  {state.lit[zone] === "mixed" && <span className="setting-note">Mixed: other zones overlap it.</span>}
+                  {state.lit[zone] === "mixed" && <span className="setting-note">Mixed: its LEDs differ.</span>}
                 </span>
                 <div className="seg seg-wrap" data-enabled={open}>
                   {state.colors.map((color) => {

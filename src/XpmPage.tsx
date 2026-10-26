@@ -17,6 +17,8 @@ export interface XpmState extends BaseState {
     temperature: number;
     voltage: number;
   } | null;
+  /** The server's verdict on why the printer cannot print now, or null when it can. */
+  trouble: string | null;
   /** What the mock printer is set to report. Null on real hardware. */
   simulated: { paper: "ok" | "low" | "out"; jammed: boolean; chute: boolean } | null;
 }
@@ -46,16 +48,12 @@ export function XpmPage({ state, onFail, aside }: { state: XpmState; onFail: (me
   const simulate = (action: Simulation) => guard(xpm.act("simulate", { action }));
   const p = state.printer;
   const chute = p?.flags.includes("paperInChute") ?? false;
-  const bad = !!p && (p.error !== null || p.paper === "out" || p.flags.includes("printheadRaised"));
+  const bad = open && !!state.trouble;
 
   const verdict = !open || !p
     ? "Connect the printer to see its status."
-    : p.error
-    ? `${p.error.type} — ${p.error.context.toLowerCase()}. Clear it before printing.`
-    : p.paper === "out"
-    ? "Out of paper. Load a roll before printing."
-    : p.flags.includes("printheadRaised")
-    ? "The printhead is raised. Close it before printing."
+    : state.trouble
+    ? `${state.trouble}. Fix it before printing.`
     : chute
     ? "A pass is waiting in the chute."
     : p.paper === "low"

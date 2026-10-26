@@ -161,7 +161,7 @@ export async function disconnect(): Promise<void> {
   switches = null;
   status = "closed";
   // Nothing to darken: the switches are inputs. Closing drops RTS with the port.
-  await open.close();
+  await open.close().catch((err) => log("warned", `Port did not close cleanly: ${err instanceof Error ? err.message : err}`));
   mockLines = null;
   doorOpen = null;
   buttonPressed = null;

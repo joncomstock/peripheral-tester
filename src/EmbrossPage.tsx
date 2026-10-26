@@ -27,6 +27,12 @@ export function EmbrossPage(
   { state, onFail, aside }: { state: EmbrossState; onFail: (message: string) => void; aside: ReactNode },
 ) {
   const [port, setPort] = useState(state.port);
+  // Follow a port chosen elsewhere (another tab), unless this box holds an unsaved edit.
+  const [shown, setShown] = useState(state.port);
+  if (shown !== state.port) {
+    setShown(state.port);
+    if (port === shown) setPort(state.port);
+  }
   const open = state.status === "open";
   const closed = state.status === "closed";
   const guard = (work: Promise<unknown>) => work.catch((err: Error) => onFail(err.message));

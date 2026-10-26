@@ -44,7 +44,9 @@ Deno.test("all four mock devices run side by side", async () => {
     assertEquals(penta.state().floodLevel, 18);
     penta.simulate("remove");
     // The mock passport's MRZ is well formed: 2 lines of 44, and cleared when the document leaves.
+    // Straight after the remove, with its "removed" still queued: the passport must survive it.
     penta.simulate("passport");
+    for (let i = 0; i < 50 && !penta.state().passport; i++) await new Promise((r) => setTimeout(r, 50));
     assertEquals(penta.state().passport?.mrz.map((line) => line.length), [44, 44]);
     penta.simulate("remove");
     for (let i = 0; i < 50 && penta.state().passport; i++) await new Promise((r) => setTimeout(r, 50));

@@ -1,5 +1,6 @@
 import { assert, assertEquals, assertRejects, assertThrows } from "@std/assert";
 import { delay } from "@std/async";
+import { history } from "./activity.ts";
 import * as itk38 from "./itk38.ts";
 
 /** The mock streams status every half second; wait for the next one to show a change. */
@@ -49,15 +50,38 @@ Deno.test("the mock ITK 38 reports paper and documents, prints, and answers its 
     await until(() => !flags().headLeverUp && !flags().paperError && !flags().outOfPaper && !flags().lowPaper);
     assertThrows(() => itk38.actions.simulate({ event: "fire" }), Error, "event must be one of");
 
-    // Pulling the cable closes the session.
+    // Pulling the cable closes the session. Every read after fails "not open"; that is said once, not per retry.
+    const errors = () => history().filter((e) => e.device === "itk38" && e.kind === "error").length;
+    const before = errors();
     itk38.actions.simulate({ event: "unplug" });
     await until(() => itk38.state().status === "closed");
     assertEquals(itk38.state().printer, null);
+    await delay(300);
+    assertEquals(errors() - before, 1);
   }
   finally {
     await itk38.disconnect();
   }
   assertEquals(itk38.state().status, "closed");
   assertThrows(() => itk38.actions.simulate({ event: "take" }), Error, "Only a mock printer");
+  itk38.configure({ mock: false });
+});
+
+// The driver's own open helper leaves the transport open when the first status times out.
+Deno.test("a mock ITK 38 that never answers fails to connect and is closed", async () => {
+  itk38.configure({ mock: true });
+  itk38.mockFaults.silent = true;
+  try {
+    await assertRejects(() => itk38.connect());
+  }
+  finally {
+    itk38.mockFaults.silent = false;
+  }
+  assertEquals(itk38.state().status, "closed");
+  assertEquals(itk38.mockFaults.transport?.isOpen, false);
+  // Nothing was left half-open: a retry opens cleanly.
+  await itk38.connect();
+  assertEquals(itk38.state().status, "open");
+  await itk38.disconnect();
   itk38.configure({ mock: false });
 });

@@ -61,12 +61,26 @@ const IDLE = Uint8Array.of(NAK, 0, 0, 0, 0, 0, 0, 0);
  * big-endian output length, the output) carry the slot notifications and card data unasked.
  */
 class MockIdTech implements IdTechTransport {
+  /** Like hidapi on this unit, a handle nobody closed keeps the device from opening again. */
+  static #held: MockIdTech | null = null;
   isOpen = true;
+  #pulled = false;
   #pending = new Uint8Array(0);
   #reply: Uint8Array[] = [];
   #input: Uint8Array[] = [];
   #wake: (() => void) | null = null;
   #slot: number = SLOT.empty;
+
+  constructor() {
+    if (MockIdTech.#held?.isOpen) throw new Error("HID device is already open");
+    MockIdTech.#held = this;
+  }
+
+  /** The cable is pulled: input reads fail, and the handle stays open until someone closes it. */
+  unplug(): void {
+    this.#pulled = true;
+    this.#wake?.();
+  }
 
   /** A card goes in, seats, and is withdrawn; the reader reads it on the way out. */
   dip(card: MockCard): void {
@@ -76,6 +90,7 @@ class MockIdTech implements IdTechTransport {
     this.#notify(SLOT.seated);
     this.#notify(SLOT.present);
     const output = new TextEncoder().encode(tracks.map((track) => track + "\r").join(""));
+    // As the bench unit sends it: track 1's length counts its CR, track 2's does not.
     this.#push([failed, failed, 0, tracks[0].length + 1, tracks[1].length, 0, 3], output);
     this.#notify(SLOT.empty);
   }
@@ -139,6 +154,7 @@ class MockIdTech implements IdTechTransport {
 
   async receive(): Promise<Uint8Array | null> {
     while (this.isOpen) {
+      if (this.#pulled) throw new Error("HID read failed: device disconnected");
       const next = this.#input.shift();
       if (next) return next;
       await new Promise<void>((resolve) => (this.#wake = resolve));
@@ -251,6 +267,8 @@ function wire(opened: IdTechReader): void {
   opened.on("lost", () => {
     if (reader !== opened) return;
     pending?.({ kind: "cancelled" });
+    // Release the HID handle, or the next connect may find the device still held.
+    void opened.close().catch(() => {});
     reader = null;
     mockReader = null;
     status = "closed";
@@ -383,9 +401,10 @@ export const actions: Record<string, (body: Record<string, unknown>) => unknown>
     return { version, serialNumber, status: where };
   },
 
-  /** Dip a card in the mock reader. The page offers this only when mocking. */
+  /** Dip a card in the mock reader, or pull its cable (`event: "unplug"`). The page offers this only when mocking. */
   simulate: (body) => {
     if (!mock || !mockReader) throw new Error("Only a mock reader has a simulated card");
+    if (body.event === "unplug") return mockReader.unplug();
     if (body.card !== "card" && body.card !== "unreadable") throw new Error(`'${body.card}' is not a mock card`);
     mockReader.dip(body.card);
   },

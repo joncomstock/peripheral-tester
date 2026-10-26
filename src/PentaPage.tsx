@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import type { PentaSimulation, PentaState } from "./api.ts";
 import * as api from "./api.ts";
@@ -10,6 +10,9 @@ const DOCUMENT_TEXT: Record<NonNullable<PentaState["document"]>, string> = {
   flipped: "The document was turned over.",
   removed: "The glass is clear.",
 };
+
+/** The keys that move a range input. Tabbing onto the slider must not write to the device. */
+const FLOOD_KEYS = new Set(["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End", "PageUp", "PageDown"]);
 
 const SIMULATIONS: { action: PentaSimulation; label: string }[] = [
   { action: "passport", label: "Mock passport scan" },
@@ -29,6 +32,10 @@ export function PentaPage(
   const [flash, setFlash] = useState(false);
   const [about, setAbout] = useState<{ firmware: string; build: string; engine: string } | null>(null);
   const open = state.status === "open";
+  // An identity read belongs to the session it was read in.
+  useEffect(() => {
+    if (!open) setAbout(null);
+  }, [open]);
   const guard = (work: Promise<unknown>) => work.catch((err: Error) => onFail(err.message));
   const name = (color: string) => color[0].toUpperCase() + color.slice(1);
 
@@ -163,7 +170,7 @@ export function PentaPage(
                 aria-label="flood level"
                 // Committed on release, not while dragging: every step is a device write and a read-back.
                 onPointerUp={(event) => guard(api.penta.flood(Number(event.currentTarget.value)))}
-                onKeyUp={(event) => guard(api.penta.flood(Number(event.currentTarget.value)))}
+                onKeyUp={(event) => FLOOD_KEYS.has(event.key) && guard(api.penta.flood(Number(event.currentTarget.value)))}
               />
               <span className="stepper-value">{state.floodLevel === null ? "—" : state.floodLevel === 0 ? "Off" : `${state.floodLevel}/${state.floodLevels}`}</span>
             </div>

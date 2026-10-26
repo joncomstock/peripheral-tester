@@ -13,7 +13,8 @@
  */
 
 import type { Transport } from "@eai/models";
-import { ITK38, openITK38, PID, VID } from "@eai/itk38";
+import { ITK38, PID, VID } from "@eai/itk38";
+import { USBTransport } from "@eai/usb";
 import type { ITK38BitFlags, ITK38Status } from "@eai/itk38";
 import { announce, record } from "./activity.ts";
 
@@ -132,6 +133,12 @@ const SIMULATIONS: readonly Simulation[] = ["paper-ok", "paper-low", "paper-out"
  * end-of-page command as a printed document. Every message here ends on a short packet, which is how
  * the driver tells messages apart.
  */
+/**
+ * For tests: `silent` makes the next mock a wedged printer that never streams status, so connect times
+ * out; `transport` is the newest mock's, so a test can see it was closed.
+ */
+export const mockFaults = { silent: false, transport: null as Transport | null };
+
 class MockItk38 {
   flags = new Set<keyof ITK38BitFlags>();
   #documents = 0;
@@ -150,6 +157,10 @@ class MockItk38 {
     readUntil: () => Promise.reject(new Error("the ITK 38 frames its own reads")),
     close: () => this.#close(),
   } as unknown as Transport;
+
+  constructor() {
+    mockFaults.transport = this.transport;
+  }
 
   simulate(event: Simulation): void {
     const set = (flag: keyof ITK38BitFlags, on: boolean) => on ? this.flags.add(flag) : this.flags.delete(flag);
@@ -203,8 +214,8 @@ class MockItk38 {
   }
 
   async #read(): Promise<Uint8Array | null> {
-    if (!this.#open) throw new Error("USB device is not open");
-    if (this.#unplugged) throw new Error("LIBUSB_ERROR_NO_DEVICE");
+    // Unplugged, the USB transport closes itself on the failed transfer, and every read after says so.
+    if (!this.#open || this.#unplugged) throw new Error("USB device is not open");
     const next = this.#queue.shift();
     if (next) return next;
     await new Promise<void>((resolve) => {
@@ -213,7 +224,7 @@ class MockItk38 {
     });
     clearTimeout(this.#timer);
     this.#wake = null;
-    if (this.#queue.length === 0 && Date.now() - this.#lastStatus >= STATUS_EVERY_MS) {
+    if (!mockFaults.silent && this.#queue.length === 0 && Date.now() - this.#lastStatus >= STATUS_EVERY_MS) {
       this.#lastStatus = Date.now();
       this.#enqueue(this.#status());
     }
@@ -270,6 +281,19 @@ export function configure(options: { mock: boolean }): void {
   tell();
 }
 
+/** The printer is gone: forget it, say so once, and stop the driver's reader. */
+function lost(opened: ITK38): void {
+  if (printer !== opened) return;
+  printer = null;
+  mockPrinter = null;
+  printerStatus = null;
+  status = "closed";
+  log("error", "The printer went away. Reconnect to continue.");
+  tell();
+  // Not awaited: this may run inside the reader loop, which close() waits for.
+  opened.close().catch(() => {});
+}
+
 function wire(opened: ITK38): void {
   // The printer reports constantly; only a change is worth a broadcast.
   opened.on("status", (next: ITK38Status) => {
@@ -278,21 +302,18 @@ function wire(opened: ITK38): void {
     tell();
   });
   opened.on("flags_changed", (changed: Partial<ITK38BitFlags>) => {
+    if (printer !== opened) return;
     for (const [flag, on] of Object.entries(changed)) {
       log(on && PROBLEMS.has(flag) ? "warned" : "info", `${flag} ${on ? "raised" : "cleared"}`);
     }
   });
-  opened.on("error", (err: Error) => log("error", err.message));
-  opened.on("disconnect", async () => {
-    if (printer !== opened) return;
-    printer = null;
-    mockPrinter = null;
-    printerStatus = null;
-    status = "closed";
-    log("error", "The printer went away. Reconnect to continue.");
-    tell();
-    await opened.close().catch(() => {});
+  opened.on("error", (err: Error) => {
+    // After an unplug the transport has closed itself and the driver retries the read without pause;
+    // its "not open" is a disconnect the driver does not recognise.
+    if (err.message.includes("not open")) lost(opened);
+    else if (printer === opened) log("error", err.message);
   });
+  opened.on("disconnect", () => lost(opened));
 }
 
 export async function connect(): Promise<void> {
@@ -306,9 +327,13 @@ export async function connect(): Promise<void> {
       printer = new ITK38(mockPrinter.transport);
     }
     else {
-      printer = await openITK38();
+      // What openITK38 does, but holding the printer before the first status: if that times out,
+      // the catch below closes the transport rather than leaving its reader running.
+      const transport = new USBTransport(VID, PID);
+      await transport.open();
+      printer = new ITK38(transport);
     }
-    // openITK38 waits for this too: the first status means the printer is listening.
+    // The first status means the printer is listening.
     printerStatus = await printer.getStatus();
     wire(printer);
   }

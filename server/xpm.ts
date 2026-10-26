@@ -241,7 +241,8 @@ let printer: {
   voltage: number;
 } | null = null;
 let pollTimer: ReturnType<typeof setTimeout> | undefined;
-let polling: Promise<void> | null = null;
+/** Every driver call still running (poll, print, identity, simulate): disconnect waits for them all. */
+const inflight = new Set<Promise<unknown>>();
 let pollError: string | null = null;
 
 const usbId = [VID, PID].map((id) => id.toString(16).padStart(4, "0")).join(":");
@@ -252,6 +253,8 @@ export const state = () => ({
   usbId,
   printing,
   printer,
+  /** Why the printer cannot print now, worded for the operator, or null when it can. */
+  trouble: printer && trouble(printer),
   /** What the fake is set to, so the mock card can show it. Null on real hardware. */
   simulated: mockXpm ? { paper: mockXpm.paper, jammed: mockXpm.jammed, chute: mockXpm.chute } : null,
 });
@@ -310,10 +313,16 @@ function wire(opened: XPM): void {
   });
 }
 
+/** Run a driver call so disconnect knows to wait for it: closing libusb under a pending read can crash. */
+function track<T>(work: Promise<T>): Promise<T> {
+  inflight.add(work);
+  work.finally(() => inflight.delete(work)).catch(() => {});
+  return work;
+}
+
 function schedulePoll(opened: XPM): void {
   pollTimer = setTimeout(() => {
-    polling = refresh(opened).finally(() => {
-      polling = null;
+    track(refresh(opened)).finally(() => {
       if (xpm === opened) schedulePoll(opened);
     });
   }, POLL_MS);
@@ -382,8 +391,8 @@ export async function disconnect(): Promise<void> {
   const open = xpm;
   if (!open) return;
   release();
-  // A poll already asking finishes first, so its read is not cut off by the close.
-  await polling;
+  // A poll, print or read already under way finishes first, so its read is not cut off by the close.
+  await Promise.allSettled([...inflight]);
   await open.close();
   log("info", "Printer released");
 }
@@ -400,10 +409,15 @@ export const actions: Record<string, (body: Record<string, unknown>) => unknown>
     if (printing) throw new Error("A test print is already running");
     printing = true;
     tell();
-    log("sent", "Test pass sent");
     try {
+      // Read status fresh: with paper out the printer would hold the job and print it whenever paper is loaded.
+      await track(open.getStatus());
+      if (xpm !== open) return;
+      const before = printer && trouble(printer);
+      if (before) throw new Error(`The printer reported: ${before}`);
+      log("sent", "Test pass sent");
       // The driver answers with the post-print status, which has already reached the page by its event.
-      const after = await open.printScanlines(samplePass());
+      const after = await track(open.printScanlines(samplePass()));
       if (xpm !== open) return;
       const problem = printer && trouble(printer);
       if (problem) throw new Error(`The printer reported: ${problem}`);
@@ -422,7 +436,7 @@ export const actions: Record<string, (body: Record<string, unknown>) => unknown>
   },
 
   identity: async (): Promise<Pick<XPMPrinterInfo, "model" | "partNumber" | "serialNumber" | "firmwareVersion" | "firmwareDate">> => {
-    const info = await held().getPrinterInfo();
+    const info = await track(held().getPrinterInfo());
     log("info", `${info.model} · serial ${info.serialNumber} · firmware ${info.firmwareVersion}`);
     const { model, partNumber, serialNumber, firmwareVersion, firmwareDate } = info;
     return { model, partNumber, serialNumber, firmwareVersion, firmwareDate };
@@ -441,6 +455,6 @@ export const actions: Record<string, (body: Record<string, unknown>) => unknown>
     else mockXpm.chute = false;
     tell();
     // Read it back now rather than at the next poll, so the page answers the click.
-    await held().getStatus();
+    await track(held().getStatus());
   },
 };

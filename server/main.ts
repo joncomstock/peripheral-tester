@@ -88,7 +88,26 @@ const sessions: Record<string, Session> = {
   embross,
 };
 const devices = Object.values(sessions);
-const disconnectAll = () => Promise.all(devices.map((device) => device.disconnect())).then(() => {});
+/**
+ * Each device's connects and disconnects run one at a time. Interleaved, a disconnect arriving mid-open
+ * found no handle yet and returned, leaving the device to finish opening; and a connect arriving
+ * mid-disconnect had its new session wiped by the old one's cleanup. Queued, neither overtakes the other.
+ */
+const turns = new Map<Session, Promise<unknown>>();
+function inTurn(session: Session, work: () => Promise<void>): Promise<void> {
+  const run = (turns.get(session) ?? Promise.resolve()).catch(() => {}).then(work);
+  turns.set(session, run);
+  return run;
+}
+const connectDevice = (session: Session) => inTurn(session, () => session.connect());
+const disconnectDevice = (session: Session) => inTurn(session, () => session.disconnect());
+
+/** Release every device. One that fails does not stop the rest; the first failure is reported. */
+async function disconnectAll(): Promise<void> {
+  const results = await Promise.allSettled(devices.map(disconnectDevice));
+  const failed = results.find((result) => result.status === "rejected");
+  if (failed) throw (failed as PromiseRejectedResult).reason;
+}
 
 for (const device of devices) device.configure({ mock });
 
@@ -166,8 +185,6 @@ async function handle(request: Request): Promise<Response> {
 
   // ---- light board ----
 
-  if (post && pathname === "/api/lightboard/connect") return await attempt(() => lightboard.connect());
-  if (post && pathname === "/api/lightboard/disconnect") return await attempt(() => lightboard.disconnect());
   if (post && pathname === "/api/lightboard/led") {
     const request_ = await request.json() as LedRequest;
     return await attempt(() => lightboard.led(request_));
@@ -180,8 +197,6 @@ async function handle(request: Request): Promise<Response> {
 
   // ---- card reader ----
 
-  if (post && pathname === "/api/cardreader/connect") return await attempt(() => cardreader.connect());
-  if (post && pathname === "/api/cardreader/disconnect") return await attempt(() => cardreader.disconnect());
   if (post && pathname === "/api/cardreader/reset") return await attempt(() => cardreader.reset());
   if (post && pathname === "/api/cardreader/clear") return await attempt(() => cardreader.clearRead());
   if (post && pathname === "/api/cardreader/settings") {
@@ -217,8 +232,6 @@ async function handle(request: Request): Promise<Response> {
 
   // ---- Sankyo card reader ----
 
-  if (post && pathname === "/api/sankyo/connect") return await attempt(() => sankyo.connect());
-  if (post && pathname === "/api/sankyo/disconnect") return await attempt(() => sankyo.disconnect());
   if (post && pathname === "/api/sankyo/seconds") {
     const { seconds } = await body<{ seconds: number }>();
     return await attempt(() => {
@@ -244,8 +257,6 @@ async function handle(request: Request): Promise<Response> {
 
   // ---- DESKO Penta ----
 
-  if (post && pathname === "/api/penta/connect") return await attempt(() => penta.connect());
-  if (post && pathname === "/api/penta/disconnect") return await attempt(() => penta.disconnect());
   if (post && pathname === "/api/penta/status-led") {
     const { mode, color } = await body<{ mode: "on" | "flash" | "off"; color: PentaLedColor }>();
     return await attempt(() => penta.setStatusLed(mode === "on" || mode === "flash" ? mode : "off", color));
@@ -271,14 +282,14 @@ async function handle(request: Request): Promise<Response> {
     });
   }
 
-  // ---- every other device: connect, disconnect, and its own actions ----
+  // ---- every device's connect and disconnect, and the later devices' own actions ----
 
   const route = post ? pathname.match(/^\/api\/([a-z0-9]+)\/([a-z0-9-]+)$/) : null;
-  const session = route ? sessions[route[1]] : undefined;
+  const session = route && Object.hasOwn(sessions, route[1]) ? sessions[route[1]] : undefined;
   if (route && session) {
     const action = route[2];
-    if (action === "connect") return await attempt(() => session.connect());
-    if (action === "disconnect") return await attempt(() => session.disconnect());
+    if (action === "connect") return await attempt(() => connectDevice(session));
+    if (action === "disconnect") return await attempt(() => disconnectDevice(session));
     const run = session.actions && Object.hasOwn(session.actions, action) ? session.actions[action] : undefined;
     if (run) {
       const payload = await body<Record<string, unknown>>();
@@ -315,7 +326,8 @@ const server = Deno.serve({ port, onListen: () => {} }, handle);
 // Leave every device dark and every handle released on Ctrl-C, so the next run can open them.
 Deno.addSignalListener("SIGINT", async () => {
   console.log("\n  shutting down: releasing devices");
-  await disconnectAll();
+  // A device that fails to release must not keep the rest of the shutdown from running.
+  await disconnectAll().catch((err) => console.error(`  ${err instanceof Error ? err.message : err}`));
   await server.shutdown();
   Deno.exit(0);
 });

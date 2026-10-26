@@ -24,7 +24,8 @@ const SINGLE_SECONDS = 10;
 
 /**
  * The Honeywell 5X80's screen: the last code it decoded, presentation and single reads, the beeper,
- * and what the scanner says it is. Settings apply until power-off; none is saved.
+ * and what the scanner says it is. Every setting, the reading mode included, applies until power-off
+ * and none is saved; the kiosk's prefixes and suffixes are put back on disconnect.
  */
 export function HoneywellPage(
   { state, onFail, aside }: { state: HoneywellState; onFail: (message: string) => void; aside: ReactNode },
@@ -157,6 +158,10 @@ export function HoneywellPage(
                 Boarding pass
               </button>
               <button disabled={!open} onClick={() => guard(scanner.act("simulate", { code: "qr" }))}>QR code</button>
+            </div>
+            <div className="doorsim">
+              <span className="doorsim-label">Cable</span>
+              <button disabled={!open} onClick={() => guard(scanner.act("simulate", { code: "unplug" }))}>Unplug</button>
             </div>
           </Card>
         )}

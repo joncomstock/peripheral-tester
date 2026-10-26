@@ -1,7 +1,6 @@
 import type { ReactNode } from "react";
 import type { BaseState } from "./api.ts";
 import * as api from "./api.ts";
-import { LAMP, lampStyle } from "./look.ts";
 import { Card } from "./ui.tsx";
 
 export interface StormState extends BaseState {
@@ -24,6 +23,18 @@ export interface StormState extends BaseState {
 }
 
 const storm = api.device("storm");
+
+/** Where each of the driver's keys sits on the face (row, column), and what is printed on it. */
+const PLACE: Record<string, { row: number; col: number; legend: string }> = {
+  home: { row: 1, col: 1, legend: "≪" },
+  help: { row: 1, col: 2, legend: "?" },
+  end: { row: 1, col: 3, legend: "≫" },
+  back: { row: 2, col: 1, legend: "BACK" },
+  next: { row: 2, col: 3, legend: "NEXT" },
+  up: { row: 3, col: 2, legend: "" },
+  down: { row: 4, col: 2, legend: "" },
+  action: { row: 4, col: 3, legend: "" },
+};
 
 /**
  * The Storm Nav-Pad's screen: the keys as they go down and up, captured exclusively so the OS sees
@@ -63,17 +74,7 @@ export function StormPage(
                 ? `Holding ${state.held.join(" + ")}`
                 : "Press a key on the keypad."}
             </div>
-            <div className="seg seg-wrap" data-enabled={open} role="list" aria-label="key map">
-              {state.keys.map((key) => {
-                const down = state.held.includes(key);
-                return (
-                  <span key={key} role="listitem" className={down ? "chooser chooser-on" : "chooser"}>
-                    <span className="chooser-lamp" style={lampStyle(LAMP.green, down ? "on" : "off", 12)} />
-                    {key}
-                  </span>
-                );
-              })}
-            </div>
+            <NavPad state={state} simulate={(body) => guard(storm.act("simulate", body))} />
             <dl className="fields">
               <div className="field">
                 <dt>Headset jack</dt>
@@ -161,30 +162,62 @@ export function StormPage(
         </Card>
         {state.mock && (
           <Card title="Mock keypad" aside="No hardware">
-            <div className="doorsim">
-              <span className="doorsim-label">Press</span>
-              {state.keys.map((key) => (
-                <button key={key} disabled={!open} onClick={() => guard(storm.act("simulate", { event: "press", key }))}>
-                  {key}
-                </button>
-              ))}
-            </div>
-            <div className="doorsim">
-              <span className="doorsim-label">Headset</span>
-              {[true, false].map((inserted) => (
-                <button
-                  key={String(inserted)}
-                  disabled={!open}
-                  onClick={() => guard(storm.act("simulate", { event: "jack", inserted }))}
-                >
-                  {inserted ? "Plug in" : "Unplug"}
-                </button>
-              ))}
-            </div>
+            <p className="masknote">
+              Click or tap a key on the drawn keypad to press it, and the jack to plug a headset in or out. Each goes through the real
+              driver as a key report.
+            </p>
           </Card>
         )}
         {aside}
       </div>
     </>
+  );
+}
+
+/**
+ * The keypad as it looks. A key lights while the keypad reports it held. With a mock keypad the keys
+ * and the jack are buttons that press through the driver; with a real one the face is a display only.
+ */
+function NavPad({ state, simulate }: { state: StormState; simulate: (body: Record<string, unknown>) => void }) {
+  const open = state.status === "open";
+  const plugged = state.jack === true;
+  const cell = (row: number, col: number) => ({ gridRow: row, gridColumn: col });
+  const jackLabel = `Headset jack: ${state.jack === null ? "not reported" : plugged ? "plugged in" : "unplugged"}`;
+  return (
+    <div className="stormpad">
+      <div className="stormpad-face" role="group" aria-label="Nav-Pad keys">
+        {state.keys.filter((key) => PLACE[key]).map((key) => {
+          const { row, col, legend } = PLACE[key];
+          const down = state.held.includes(key);
+          const props = { className: `stormkey stormkey-${key}`, "data-down": down, style: cell(row, col) };
+          const cap = <span className="stormkey-cap" aria-hidden="true">{legend}</span>;
+          return state.mock
+            ? (
+              <button key={key} {...props} disabled={!open} aria-label={`Press ${key}`} onClick={() => simulate({ event: "press", key })}>
+                {cap}
+              </button>
+            )
+            : <span key={key} {...props} role="img" aria-label={down ? `${key}, held` : key}>{cap}</span>;
+        })}
+        {state.mock
+          ? (
+            <button
+              className="stormkey stormkey-jack"
+              data-plugged={plugged}
+              style={cell(4, 1)}
+              disabled={!open}
+              aria-label={`${jackLabel}. ${plugged ? "Unplug" : "Plug in"} the headset`}
+              onClick={() => simulate({ event: "jack", inserted: !plugged })}
+            >
+              <span className="stormkey-cap" aria-hidden="true" />
+            </button>
+          )
+          : (
+            <span className="stormkey stormkey-jack" data-plugged={plugged} style={cell(4, 1)} role="img" aria-label={jackLabel}>
+              <span className="stormkey-cap" />
+            </span>
+          )}
+      </div>
+    </div>
   );
 }

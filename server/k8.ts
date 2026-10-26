@@ -130,7 +130,9 @@ let mockK8: MockK8 | null = null;
 let status: Status = "closed";
 let mock = false;
 let identity: { serialNumber: string; model: string; firmware: string; firmwareDate: string; twoSided: boolean } | null = null;
-let config: { density: number; documentLength: number; blackMark: boolean; paperWidth: number } | null = null;
+/** The configuration's paper width code, as the driver's `K8Config` documents it. */
+const PAPER_WIDTH = ['6.125"', '7.38"', '8.0"', "A4", '8.5"'];
+let config: { density: number; documentLength: number; blackMark: boolean; paperWidth: string } | null = null;
 /** The last status read: the faults that stop a page, and every bit set, for the page to show. */
 let paper: { faults: string[]; set: string[]; raw: string } | null = null;
 
@@ -196,7 +198,7 @@ export async function connect(): Promise<void> {
     }
     else {
       const usb = new USBTransport(VID, PID);
-      transport = usb as unknown as K8Transport;
+      transport = usb;
       await usb.open();
     }
     printer = new K8(transport);
@@ -204,7 +206,12 @@ export async function connect(): Promise<void> {
     await printer.drain();
     identity = await printer.identify();
     const read = await printer.config();
-    config = { density: read.density, documentLength: read.documentLength, blackMark: read.blackMark, paperWidth: read.paperWidth };
+    config = {
+      density: read.density,
+      documentLength: read.documentLength,
+      blackMark: read.blackMark,
+      paperWidth: PAPER_WIDTH[read.paperWidth] ?? `code ${read.paperWidth}`,
+    };
     take(await printer.status());
   }
   catch (err) {

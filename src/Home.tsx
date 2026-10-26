@@ -111,7 +111,8 @@ export function Home(
                 </div>
                 <span className="tile-model">{device.model}</span>
                 <span className="tile-bus">{device.bus}{state ? ` · ${state.usbId}` : ""}</span>
-                <button className="tile-action" onClick={() => onOpen(id)}>Open tester →</button>
+                {/* Its click bubbles to the tile, which opens the tester; it is here for the keyboard. */}
+                <button className="tile-action">Open tester →</button>
               </div>
             );
           })}

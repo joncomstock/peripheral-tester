@@ -60,4 +60,27 @@ Deno.test("the mock 5X80 reads, triggers, and takes its settings", async () => {
   assertEquals(honeywell.state().status, "closed");
   assertEquals(honeywell.state().barcode, null);
   await honeywell.disconnect(); // idempotent
+
+  // Nothing saved to flash: every command went with "!", never ".".
+  assert(honeywell.mockCommands.length > 0);
+  assertEquals(honeywell.mockCommands.filter((command) => !command.endsWith("!")), []);
+  // The kiosk's own prefix and suffix, read at connect, are put back on disconnect.
+  assertEquals(honeywell.mockCommands[0], "PREBK2?;SUFBK2?!");
+  assertEquals(honeywell.mockCommands.at(-1), "TRGMOD0;PRECA2;SUFCA2;PREBK29902;SUFBK29903!");
+});
+
+Deno.test("a 5X80 unplugged while listening is reported lost", async () => {
+  honeywell.configure({ mock: true });
+  await honeywell.connect();
+  try {
+    await actions.listen({});
+    actions.simulate({ code: "unplug" });
+    await settle(() => honeywell.state().status === "closed");
+    assertEquals(honeywell.state().status, "closed");
+    assertEquals(honeywell.state().mode, "idle");
+    await assertRejects(() => Promise.resolve(actions.identity({})), Error, "Not connected");
+  }
+  finally {
+    await honeywell.disconnect();
+  }
 });

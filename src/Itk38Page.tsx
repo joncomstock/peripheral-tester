@@ -23,21 +23,6 @@ const words = (flag: string) => {
   return spaced[0].toUpperCase() + spaced.slice(1);
 };
 
-const MOCK_ROWS: { label: string; events: { event: string; label: string; flag?: string }[] }[] = [
-  {
-    label: "Paper",
-    events: [
-      { event: "paper-ok", label: "OK" },
-      { event: "paper-low", label: "Low", flag: "lowPaper" },
-      { event: "paper-out", label: "Out", flag: "outOfPaper" },
-      { event: "jam", label: "Jam", flag: "paperError" },
-    ],
-  },
-  { label: "Head", events: [{ event: "lever-up", label: "Open", flag: "headLeverUp" }, { event: "lever-down", label: "Close" }] },
-  { label: "Document", events: [{ event: "take", label: "Take" }] },
-  { label: "Cable", events: [{ event: "unplug", label: "Unplug" }] },
-];
-
 /**
  * The ITK 38's screen: paper and document state as the printer streams it, a test boarding pass, and
  * the presented document's eject and dispose.
@@ -147,21 +132,13 @@ export function Itk38Page(
         </Card>
         {state.mock && (
           <Card title="Mock printer" aside="No hardware">
-            {MOCK_ROWS.map(({ label, events }) => (
-              <div className="doorsim" key={label}>
-                <span className="doorsim-label">{label}</span>
-                {events.filter(({ event }) => state.simulations.includes(event)).map(({ event, label, flag }) => (
-                  <button
-                    key={event}
-                    className={flag && f[flag] ? "chooser chooser-on" : undefined}
-                    disabled={!open}
-                    onClick={() => act("simulate", { event })}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
-            ))}
+            <div className="seg seg-wrap" data-enabled={open}>
+              {state.simulations.map((event) => (
+                <button key={event} disabled={!open} onClick={() => act("simulate", { event })}>
+                  {words(event.replace("-", " "))}
+                </button>
+              ))}
+            </div>
           </Card>
         )}
         {aside}

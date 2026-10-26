@@ -5,7 +5,7 @@ import { Card } from "./ui.tsx";
 
 export interface K8State extends BaseState {
   identity: { serialNumber: string; model: string; firmware: string; firmwareDate: string; twoSided: boolean } | null;
-  config: { density: number; documentLength: number; blackMark: boolean; paperWidth: number } | null;
+  config: { density: number; documentLength: number; blackMark: boolean; paperWidth: string } | null;
   /** The last status read: faults that stop a page, every bit set, and the six bytes. */
   paper: { faults: string[]; set: string[]; raw: string } | null;
 }
@@ -17,9 +17,6 @@ const SIMULATIONS: { action: string; label: string }[] = [
   { action: "clear", label: "Clear" },
   { action: "unplug", label: "Unplug" },
 ];
-
-/** The configuration's paper width code, as the manual words it. */
-const PAPER_WIDTH = ['6.125"', '7.38"', '8.0"', "A4", '8.5"'];
 
 /**
  * The NCR K8's screen: the printer's status as last read, a test page, and its identity. The status
@@ -112,7 +109,7 @@ export function K8Page({ state, onFail, aside }: { state: K8State; onFail: (mess
             <dl className="fields">
               <div className="field">
                 <dt>Paper width</dt>
-                <dd>{PAPER_WIDTH[state.config.paperWidth] ?? `code ${state.config.paperWidth}`}</dd>
+                <dd>{state.config.paperWidth}</dd>
               </div>
               <div className="field">
                 <dt>Cut</dt>

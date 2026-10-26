@@ -53,6 +53,9 @@ const usageOf = (key: string) => NAV_PAD_DEFAULT_KEYCODES[NAV_PAD_KEY_SLOTS.inde
 // A fake keypad, for driving the page without hardware.
 // ---------------------------------------------------------------------------------------------
 
+/** For tests: what reached the mocks, in order ("capture closed", or "<msgId>:<value>" for a setting). */
+export const mockTrace: string[] = [];
+
 /** A `MessageTransport` whose `receive()` parks until something is queued or it closes. */
 class Queue implements MessageTransport {
   #queue: Uint8Array[] = [];
@@ -106,6 +109,7 @@ class MockCommands extends Queue {
     const command = decodeReply(message);
     if (command === null || command === "ack") return Promise.resolve();
     const [value] = command.data;
+    if (command.msgId !== MSG_GET_STATUS) mockTrace.push(`${command.msgId}:${value}`);
     if (command.msgId === MSG_SET_LED) this.#led = value;
     if (command.msgId === MSG_SET_JACK_LED) this.#jackLed = value;
     if (command.msgId === MSG_SET_KEYPRESS_BEEP) this.#beep = value !== 0;
@@ -157,6 +161,7 @@ class MockKeyboard extends Queue {
   override close(): Promise<void> {
     for (const timer of this.#timers) clearTimeout(timer);
     this.#timers.clear();
+    mockTrace.push("capture closed");
     return super.close();
   }
 }
@@ -175,6 +180,8 @@ let mockKeyboard: MockKeyboard | null = null;
 let status: Status = "closed";
 let mock = false;
 let info: NavPadStatus | null = null;
+/** The light, jack LED and beep as found at connect, put back at disconnect: the tester leaves no trace. */
+let found: Pick<NavPadStatus, "led" | "jackLed" | "keypressBeep"> | null = null;
 /** Keys held right now, by name (or `0x..` for a usage outside the keypad's table). */
 let held: string[] = [];
 let presses: { at: string; key: string }[] = [];
@@ -250,6 +257,7 @@ function wire(opened: StormNavPadKeys): void {
 function reset(): void {
   status = "closed";
   info = null;
+  found = null;
   held = [];
   presses = [];
   jack = null;
@@ -291,6 +299,7 @@ export async function connect(): Promise<void> {
     log("error", err instanceof Error ? err.message : String(err));
     throw err;
   }
+  found = { led: info.led, jackLed: info.jackLed, keypressBeep: info.keypressBeep };
   keys = capture;
   wire(capture);
   status = "open";
@@ -301,14 +310,19 @@ export async function connect(): Promise<void> {
 export async function disconnect(): Promise<void> {
   const open = keypad;
   const capture = keys;
+  const restore = found;
   if (!open) return;
   keypad = null;
   keys = null;
   mockKeyboard = null;
   reset();
-  // Leave it dark; the level is not saved, so a power cycle restores the unit's own.
-  await open.setLed(0).catch(() => {});
+  // Keys back to the OS first: a hung command channel must not keep them captured until it times out.
   await capture?.close().catch(() => {});
+  if (restore) {
+    await open.setLed(restore.led).catch(() => {});
+    await open.setJackLed(restore.jackLed).catch(() => {});
+    await open.setKeypressBeep(restore.keypressBeep).catch(() => {});
+  }
   await open.close().catch(() => {});
   tell();
   log("info", "Keypad released to the OS");

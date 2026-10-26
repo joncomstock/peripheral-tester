@@ -61,3 +61,49 @@ Deno.test("the mock Gryphon reads, triggers, configures and identifies through t
   assertEquals(datalogic.state().barcode, null);
   await datalogic.disconnect(); // idempotent
 });
+
+Deno.test("datalogic: a scanner unplugged while listening closes the session", async () => {
+  datalogic.configure({ mock: true });
+  await datalogic.connect();
+  try {
+    await datalogic.actions.listen({});
+    datalogic.actions.simulate({ code: "unplug" });
+    await until(() => datalogic.state().status === "closed");
+    assertEquals([datalogic.state().status, datalogic.state().reading], ["closed", null]);
+  }
+  finally {
+    await datalogic.disconnect();
+  }
+});
+
+Deno.test("datalogic: a second read is refused while the first is still configuring", async () => {
+  datalogic.configure({ mock: true });
+  await datalogic.connect();
+  try {
+    const first = datalogic.actions.trigger({ seconds: 1 }) as Promise<{ decoded: boolean }>;
+    await assertRejects(async () => await datalogic.actions.trigger({ seconds: 1 }), Error, "Stop reading first");
+    await assertRejects(async () => await datalogic.actions.listen({}), Error, "Stop reading first");
+    assertEquals(await first, { decoded: false });
+  }
+  finally {
+    await datalogic.disconnect();
+  }
+});
+
+Deno.test("datalogic: disconnect puts every symbology back", async () => {
+  datalogic.configure({ mock: true });
+  await datalogic.connect();
+  await datalogic.actions.symbologies({ codes: ["QR"] });
+  await datalogic.disconnect();
+  // The mock's settings outlive the session, as the scanner's RAM does: the next one decodes PDF417.
+  await datalogic.connect();
+  try {
+    await datalogic.actions.listen({});
+    datalogic.actions.simulate({ code: "boarding-pass" });
+    await until(() => datalogic.state().barcode !== null);
+    assertEquals(datalogic.state().barcode?.symbology, "]L2");
+  }
+  finally {
+    await datalogic.disconnect();
+  }
+});

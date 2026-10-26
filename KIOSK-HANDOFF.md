@@ -311,14 +311,19 @@ For each check, record **what the page did**, **what Activity said**, and **what
       is still on the Windows print queue (section 1).
 - [ ] Print test pass: the operator confirms a pass marked NOT A BOARDING PASS is printed and cut.
 - [ ] The operator takes the roll out (or opens the head): the page reports paper out / the fault
-      within a few seconds (it polls every 2 s). Printing is refused while it lasts.
+      within a few seconds (it polls every 2 s). Printing is refused while it lasts, and nothing is
+      sent, so no job is left queued to print later.
+- [ ] Disconnect during a print waits for the print to finish (up to about 10 s) before releasing.
 
 **Assistive keypad (Storm Nav-Pad)**
 
-- [ ] Connect. Each physical key the operator presses lights on the page and joins the recent list;
-      plugging headphones into the jack shows "plugged in". Key names are the keypad's own.
+- [ ] Connect. Each physical key the operator presses lights on the drawn keypad and joins the
+      recent list; plugging headphones into the jack shows "plugged in". **Confirm the drawing's
+      mapping key by key**: the driver does not document positions, so ≪ = home and ≫ = end are a
+      guess. A mismatch is a tester finding.
 - [ ] Light levels and the keypress beep: the operator confirms what changes. Buzz: they hear it.
-- [ ] Disconnect hands the keys back to Windows.
+- [ ] Disconnect hands the keys back to Windows first, then restores the light, jack LED and
+      keypress beep to what they were at connect.
 
 **Together**
 

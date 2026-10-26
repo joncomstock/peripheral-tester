@@ -40,6 +40,8 @@
   /* The page field: below the panels in both themes, so panels read as raised. */
   --field-a: #f5f6f8;
   --field-b: #eceef1;
+  /* A top-edge highlight: bright on a light surface, faint on a dark one. */
+  --shine: rgb(255 255 255 / 80%);
   --c-16191d: #16191d;
   --c-1a6633: #1a6633;
   --c-1c6b36: #1c6b36;
@@ -119,6 +121,7 @@
   color-scheme: dark;
   --field-a: #0f1114;
   --field-b: #0b0d10;
+  --shine: rgb(255 255 255 / 8%);
   --c-16191d: #d8dce0;
   --c-1a6633: #a3e1b7;
   --c-1c6b36: #a0dfb5;
@@ -686,7 +689,7 @@ button {
   background: linear-gradient(var(--c-f8f9fb), var(--c-f1f3f6));
   border: 1px solid var(--c-e6e9ed);
   border-radius: 5px;
-  box-shadow: inset 0 1px 1px rgb(255 255 255 / 80%);
+  box-shadow: inset 0 1px 1px var(--shine);
 }
 
 .tower-base {
@@ -1331,4 +1334,158 @@ button {
   overflow-x: auto;
   font-size: var(--font-meta);
   letter-spacing: 0.06em;
+}
+
+/* Storm Nav-Pad */
+/* The keypad drawn as the unit looks: a black bezel round a brushed-steel face. The face and key
+   colours are the physical object's, so they are the same in both themes. */
+.stormpad {
+  width: min(100%, 300px);
+  aspect-ratio: 5 / 6;
+  margin: 0 auto;
+  padding: 12px;
+  border-radius: 28px;
+  background: #121416;
+  box-shadow: 0 2px 6px rgb(0 0 0 / 35%);
+}
+
+.stormpad-face {
+  height: 100%;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  grid-template-rows: repeat(4, 1fr);
+  gap: 6px;
+  padding: 14px;
+  border-radius: 18px;
+  background:
+    repeating-linear-gradient(90deg, rgb(255 255 255 / 6%) 0 1px, transparent 1px 3px),
+    linear-gradient(160deg, #c9ced3, #9aa1a8 55%, #b8bec4);
+}
+
+/* The hit area: a transparent cell at least --touch square; the shaped cap inside it is drawn. */
+.stormkey {
+  display: grid;
+  place-items: center;
+  min-width: var(--touch);
+  min-height: var(--touch);
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: inherit;
+  font: inherit;
+}
+
+button.stormkey:not(:disabled) {
+  cursor: pointer;
+}
+
+/* Clip-path cuts a box-shadow, so the glow is a drop-shadow on the unclipped parent. */
+.stormkey[data-down="true"] {
+  filter: drop-shadow(0 0 6px rgb(255 255 255 / 90%)) drop-shadow(0 0 12px rgb(255 240 160 / 70%));
+}
+
+.stormkey-cap {
+  display: grid;
+  place-items: center;
+  font-family: "IBM Plex Sans", sans-serif;
+  font-weight: 700;
+  box-shadow: inset 0 -3px 0 rgb(0 0 0 / 25%);
+  transition: transform 80ms, filter 80ms;
+}
+
+.stormkey[data-down="true"] .stormkey-cap {
+  transform: translateY(2px) scale(0.94);
+  filter: brightness(1.35);
+  box-shadow: inset 0 2px 3px rgb(0 0 0 / 35%);
+}
+
+.stormkey-home .stormkey-cap,
+.stormkey-end .stormkey-cap {
+  width: 78%;
+  height: 62%;
+  border-radius: 6px;
+  color: #fff;
+  font-size: 22px;
+}
+
+.stormkey-home .stormkey-cap {
+  background: #1b1d20;
+}
+
+.stormkey-end .stormkey-cap {
+  background: #c4232b;
+}
+
+.stormkey-help .stormkey-cap {
+  width: 74%;
+  aspect-ratio: 1;
+  clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%);
+  background: #1d5fbf;
+  color: #fff;
+  font-size: 22px;
+}
+
+.stormkey-back .stormkey-cap,
+.stormkey-next .stormkey-cap {
+  width: 92%;
+  height: 58%;
+  background: #f4f4f1;
+  color: #1b1d20;
+  font-size: 13px;
+  letter-spacing: 0.04em;
+}
+
+.stormkey-back .stormkey-cap {
+  clip-path: polygon(0 50%, 30% 0, 100% 0, 100% 100%, 30% 100%);
+  padding-left: 18%;
+}
+
+.stormkey-next .stormkey-cap {
+  clip-path: polygon(0 0, 70% 0, 100% 50%, 70% 100%, 0 100%);
+  padding-right: 18%;
+}
+
+.stormkey-up .stormkey-cap,
+.stormkey-down .stormkey-cap {
+  width: 74%;
+  height: 66%;
+  background: #f2c318;
+}
+
+.stormkey-up .stormkey-cap {
+  clip-path: polygon(50% 0, 100% 100%, 0 100%);
+}
+
+.stormkey-down .stormkey-cap {
+  clip-path: polygon(0 0, 100% 0, 50% 100%);
+}
+
+.stormkey-action .stormkey-cap {
+  width: 66%;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: #22a046;
+}
+
+/* The 3.5 mm headset jack: a socket, not a key. Plugged, a plug's silver barrel fills it. */
+.stormkey-jack .stormkey-cap {
+  width: 40%;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: radial-gradient(circle, #050607 38%, #2a2d31 40%);
+  border: 4px solid #d9dde1;
+  box-shadow: none;
+}
+
+.stormkey-jack[data-plugged="true"] .stormkey-cap {
+  background: radial-gradient(circle, #e6e9ec 30%, #8d949b 46%, #2a2d31 50%);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .stormkey-cap {
+    transition: none;
+  }
 }

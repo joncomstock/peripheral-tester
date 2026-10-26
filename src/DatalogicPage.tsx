@@ -12,12 +12,9 @@ export interface DatalogicState extends BaseState {
   presentationMode: string;
   symbologies: string[];
   presentationModes: string[];
+  /** The mock's simulated events, with their button labels. */
+  simulations: { code: string; label: string }[];
 }
-
-const SIMULATIONS = [
-  { code: "boarding-pass", label: "Boarding pass" },
-  { code: "qr", label: "QR code" },
-];
 
 const scanner = api.device("datalogic");
 /** `OBJECT_SENSE` → `Object sense`. */
@@ -173,7 +170,7 @@ export function DatalogicPage(
           <Card title="Mock scanner" aside="No hardware">
             <div className="doorsim">
               <span className="doorsim-label">Show</span>
-              {SIMULATIONS.map(({ code, label }) => (
+              {state.simulations.map(({ code, label }) => (
                 <button key={code} disabled={!open} onClick={() => guard(scanner.act("simulate", { code }))}>{label}</button>
               ))}
             </div>

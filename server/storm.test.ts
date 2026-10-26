@@ -1,5 +1,6 @@
 import { assertEquals, assertRejects, assertThrows } from "@std/assert";
 import { delay } from "@std/async";
+import { MSG_SET_JACK_LED, MSG_SET_KEYPRESS_BEEP, MSG_SET_LED } from "@eai/storm";
 import * as storm from "./storm.ts";
 
 Deno.test("the mock Nav-Pad reports keys and the jack, and answers its controls", async () => {
@@ -48,8 +49,16 @@ Deno.test("the mock Nav-Pad reports keys and the jack, and answers its controls"
     await assertRejects(async () => await storm.actions["keypress-beep"]({ on: "yes" }), Error, "true or false");
   }
   finally {
+    storm.mockTrace.length = 0;
     await storm.disconnect();
   }
+  // The keys go back to the OS before any command, then the settings found at connect are restored.
+  assertEquals(storm.mockTrace, [
+    "capture closed",
+    `${MSG_SET_LED}:9`,
+    `${MSG_SET_JACK_LED}:0`,
+    `${MSG_SET_KEYPRESS_BEEP}:1`,
+  ]);
   assertEquals(storm.state().status, "closed");
   assertThrows(() => storm.actions.simulate({ event: "press", key: "up" }), Error, "Only a mock");
   await storm.disconnect(); // idempotent

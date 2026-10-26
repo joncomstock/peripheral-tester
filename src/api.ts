@@ -104,6 +104,10 @@ export interface CardReaderState {
   ledBlinking: boolean;
   ledMode: LedControlMode;
   listening: boolean;
+  /** A card is in the slot, as the listen loop last polled. Only known while listening. */
+  present: boolean;
+  /** The bezel's colours, from the driver. */
+  ledColors: LedColor[];
   /** A listened-for card is held server-side until collected. The stream never carries the card. */
   cardWaiting: boolean;
   seconds: number;
@@ -157,6 +161,8 @@ export interface SankyoState {
   mockInserted: boolean;
   cardWaiting: boolean;
   led: SankyoLedColor;
+  /** The bezel's colours, from the driver, `off` included. */
+  ledColors: SankyoLedColor[];
   seconds: number;
 }
 

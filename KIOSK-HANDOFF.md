@@ -28,8 +28,10 @@ What changed in the port, so you know what is new and riskiest:
 
 - The light board now talks USB through libusb instead of a COM port. There is no port picker.
 - The card reader driver is a different driver. Shutter lock, IC contact control and the literal
-  probe were **deliberately removed**, so their absence is not a bug. "Listen" is now a loop of
-  read cycles in the tester (`server/cardreader.ts`) instead of the driver's own.
+  probe were **deliberately removed**, so their absence is not a bug. "Listen" lives in the tester
+  (`server/cardreader.ts`): it copies the driver's own monitor (poll card presence, then
+  `readInsertedCard`), because that monitor is tied to hotplug. A listen failure the driver's own
+  `OmronV4KLifecycle` would not have is a tester bug.
 - The dashboard has a kiosk picker: **IER 919**, **SITA D4**, **All Devices**.
 
 ## Rules
@@ -164,8 +166,9 @@ snapshots to find controls rather than CSS selectors. Check each of these:
 - [ ] Mock reader → Timeout, then Read once gives "No card arrived". Unreadable, then Read once gives
       the unreadable verdict. With nothing armed, a read waits, and **Cancel** ends it as "Read
       cancelled".
-- [ ] Listen, then arm Card: the card appears. Stop listening returns promptly (within about 2s),
-      even when clicked right after Listen.
+- [ ] Listen, then arm Card: "Read a card" shows "Card in slot", the card appears, then "Slot
+      empty". Stop listening returns promptly (within about a second), and a Read once straight
+      afterwards still works.
 - [ ] Transaction settings change the literal shown in the card header (`C:6…`). Track pairs map to
       wire digits 4/5/6, for example tracks 1+2 give `C:624..`.
 - [ ] Wait ±5s changes `C92xx`. LED colours, Off, Blink, and LED control Manual/Automatic all
@@ -175,7 +178,7 @@ snapshots to find controls rather than CSS selectors. Check each of these:
 **Card reader Sankyo (mock, SITA D4)**
 
 - [ ] Connect, Read once, then Mock reader "Insert card" within the wait: the card is read.
-- [ ] Remove the card. Listen, then Insert: the header shows "Card in slot", and the card appears.
+- [ ] Remove the card. Listen, then Insert: the "Read a card" panel shows "Card in slot", and the card appears.
       Remove shows "Slot empty". Stop listening.
 - [ ] Read once with no insert, then Cancel gives "Read cancelled". LED colours/Blink, and Identity
       reads.
@@ -229,7 +232,9 @@ For each check, record **what the page did**, **what Activity said**, and **what
       and that it is released afterwards. If a card gets stuck, Initial reset and Disconnect, then
       tell the operator. Do not leave a card captured.
 - [ ] Timeout: Read once with no card gives "No card arrived" after the wait. Cancel mid-wait ends it.
-- [ ] Listen: several dips in a row, each reported once. Stop listening returns promptly.
+- [ ] Listen: several dips in a row, each reported once, with "Card in slot" / "Slot empty"
+      following the card. Include **quick dips**: Listen exists to catch them, so a missed one is a
+      finding (tester bug, see "What you are testing"). Stop listening returns promptly.
 - [ ] LED: every colour, Off, Blink (1 Hz). The operator confirms the bezel. Automatic mode: the
       operator describes what the reader does with its own LED.
 - [ ] Identity reads the real version, serial and status.

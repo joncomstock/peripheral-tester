@@ -3,7 +3,6 @@ import type { ReactNode } from "react";
 import type {
   CardData,
   CardReaderState,
-  LedColor,
   LedControlMode,
   NextOutcome,
   ReadDirection,
@@ -99,7 +98,11 @@ export function CardReaderPage(
   return (
     <>
       <div className="col col-wide">
-        <Card title="Read a card" aside={state.literals.monitor} grow={4}>
+        <Card
+          title="Read a card"
+          aside={state.listening ? (state.present ? "Card in slot" : "Slot empty") : state.literals.monitor}
+          grow={4}
+        >
           <div className="readpane">
             <div className="readpane-actions">
               <button className="primary" onClick={read} disabled={!open || busy}>
@@ -230,7 +233,7 @@ export function CardReaderPage(
             <div className="setting">
               <span className="setting-label">Indicator</span>
               <div className="seg" data-enabled={open}>
-                {(["green", "orange", "red"] as LedColor[]).map((color) => (
+                {state.ledColors.map((color) => (
                   <button
                     key={color}
                     className={state.led === color ? "chooser chooser-on" : "chooser"}

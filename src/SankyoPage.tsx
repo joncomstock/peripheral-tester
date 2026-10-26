@@ -1,12 +1,10 @@
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
-import type { CardData, ReadResult, SankyoLedColor, SankyoState } from "./api.ts";
+import type { CardData, ReadResult, SankyoState } from "./api.ts";
 import * as api from "./api.ts";
 import { CardPanel, Verdict } from "./CardReaderPage.tsx";
 import { LAMP, lampStyle } from "./look.ts";
 import { Card, StatusPill } from "./ui.tsx";
-
-const COLORS: Exclude<SankyoLedColor, "off">[] = ["green", "yellow", "red"];
 
 /**
  * The Sankyo ICM330's screen: read a card once, or listen for cards, and drive the bezel LED.
@@ -96,7 +94,7 @@ export function SankyoPage(
             <div className="setting">
               <span className="setting-label">Indicator</span>
               <div className="seg" data-enabled={open}>
-                {COLORS.map((color) => (
+                {state.ledColors.filter((color) => color !== "off").map((color) => (
                   <button
                     key={color}
                     className={state.led === color ? "chooser chooser-on" : "chooser"}

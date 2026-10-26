@@ -18,10 +18,11 @@ import {
   ICM330CommandError,
   ICM330Monitor,
   ICM330Reader,
+  LED_COLOR_DIGIT,
   openICM330,
   packetize,
 } from "@eai/sankyo";
-import type { CardData, LedColor } from "@eai/sankyo";
+import type { CardData, LedColor, ReaderStatus } from "@eai/sankyo";
 import { announce, record } from "./activity.ts";
 
 const log = (kind: string, text: string) => record("sankyo", kind, text);
@@ -199,6 +200,8 @@ export const state = () => ({
   mockInserted: mockReader?.inserted ?? false,
   cardWaiting: waiting !== null,
   led,
+  /** The bezel's colours, from the driver's own vocabulary. `off` is one of them. */
+  ledColors: Object.keys(LED_COLOR_DIGIT) as LedColor[],
   seconds,
 });
 
@@ -273,6 +276,7 @@ export function monitorSeconds(next: number): void {
 }
 
 export async function setLed(color: LedColor, blink: boolean): Promise<void> {
+  if (!(color in LED_COLOR_DIGIT)) throw new Error(`'${color}' is not a colour the reader has`);
   await held().led(color, blink && color !== "off" ? "1s" : undefined);
   led = color;
   tell();
@@ -294,8 +298,16 @@ export async function read(): Promise<ReadResult> {
   try {
     // A previous card's data would otherwise pass for this one.
     await open.clearReadBuffer();
-    const status = await open.intake(seconds * 1000);
-    const card = await open.readCard(status);
+    let intake: ReaderStatus | undefined;
+    try {
+      intake = await open.intake(seconds * 1000);
+    }
+    catch (err) {
+      // `08`: the card stopped short of the rear, but a track was read on the way in. Read it.
+      if (!(err instanceof ICM330CommandError && err.code === "08")) throw err;
+      log("warned", "Card stopped short of the rear; reading what it gave up");
+    }
+    const card = await open.readCard(intake);
     log("ok", `Card read — ${decoded(card)}`);
     return { kind: "card", card };
   }
@@ -349,9 +361,10 @@ export async function startListening(): Promise<void> {
     log("error", "The reader stopped answering. Reconnect to continue.");
     tell();
   });
-  monitor = started;
   waiting = null;
+  // Held only once polling is under way: a start that fails must not leave the page "listening".
   await started.start();
+  monitor = started;
   tell();
   log("info", "Listening");
 }

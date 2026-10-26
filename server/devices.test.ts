@@ -39,7 +39,16 @@ Deno.test("all three mock devices run side by side", async () => {
     for (let i = 0; i < 50 && !sankyo.state().cardWaiting; i++) await new Promise((r) => setTimeout(r, 50));
     assert(sankyo.takeCard()?.track2?.fields, "the monitor should have read the inserted card");
     await sankyo.stopListening();
+
+    // The V4K's loop reads a card when presence reports one, once.
+    cardreader.arm("card");
+    for (let i = 0; i < 50 && !cardreader.state().cardWaiting; i++) await new Promise((r) => setTimeout(r, 50));
+    assert(cardreader.takeCard()?.track2?.fields, "the listen loop should have read the arriving card");
     await cardreader.stopListening();
+    assertEquals(cardreader.state().listening, false);
+    // Nothing the stop sent may cancel the next command.
+    cardreader.arm("card");
+    assertEquals((await cardreader.read()).kind, "card");
   }
   finally {
     await Promise.all([lightboard.disconnect(), cardreader.disconnect(), sankyo.disconnect()]);

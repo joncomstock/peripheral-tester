@@ -71,6 +71,11 @@ async function setMock(next: boolean): Promise<void> {
   if (!next && !hardwareAllowed) {
     throw new Error("Real devices need FFI permission: restart with `deno task dev`");
   }
+  // A device still opening has no handle to disconnect yet; switching under it would leave the
+  // devices split between modes. Refuse before anything changes.
+  if ([lightboard.state(), cardreader.state(), sankyo.state()].some((device) => device.status === "opening")) {
+    throw new Error("A device is still opening; try again once it has");
+  }
   await Promise.all([lightboard.disconnect(), cardreader.disconnect(), sankyo.disconnect()]);
   mock = next;
   lightboard.configure({ mock });
@@ -160,12 +165,11 @@ async function handle(request: Request): Promise<Response> {
   if (post && pathname === "/api/sankyo/disconnect") return await attempt(() => sankyo.disconnect());
   if (post && pathname === "/api/sankyo/seconds") {
     const { seconds } = await body<{ seconds: number }>();
-    return await attempt(() => sankyo.monitorSeconds(seconds ?? 30));
+    return await attempt(() => seconds !== undefined && sankyo.monitorSeconds(seconds));
   }
   if (post && pathname === "/api/sankyo/led") {
     const { color, blink } = await body<{ color: SankyoLedColor; blink: boolean }>();
-    const valid: SankyoLedColor[] = ["off", "red", "green", "yellow"];
-    return await attempt(() => sankyo.setLed(valid.includes(color as SankyoLedColor) ? color as SankyoLedColor : "off", blink === true));
+    return await attempt(() => sankyo.setLed(color ?? "off", blink === true));
   }
   // Like the V4K's: the card is answered to the caller and never recorded or broadcast.
   if (post && pathname === "/api/sankyo/read") return await attempt(() => sankyo.read());

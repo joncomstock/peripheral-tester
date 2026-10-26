@@ -1,24 +1,29 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { CardReaderState, LogEntry, PentaState, SankyoState, Snapshot } from "./api.ts";
+import type { ComponentType, ReactNode } from "react";
+import type { BaseState, LogEntry, Snapshot } from "./api.ts";
 import * as api from "./api.ts";
+import { stateOf } from "./api.ts";
 import { Activity } from "./Activity.tsx";
-import { Home } from "./Home.tsx";
-import { KIOSKS } from "./Home.tsx";
-import type { Kiosk, View } from "./Home.tsx";
-import { CardReaderControls, CardReaderPage } from "./CardReaderPage.tsx";
+import { DEVICES, Home, KIOSKS } from "./Home.tsx";
+import type { DeviceId, Kiosk, View } from "./Home.tsx";
+import { CardReaderPage } from "./CardReaderPage.tsx";
 import { LightBoardControls, LightBoardPage, phrase as lightboardPhrase } from "./LightBoardPage.tsx";
-import { SankyoControls, SankyoPage } from "./SankyoPage.tsx";
-import { PentaControls, PentaPage } from "./PentaPage.tsx";
+import { SankyoPage } from "./SankyoPage.tsx";
+import { PentaPage } from "./PentaPage.tsx";
 import { Settings } from "./Settings.tsx";
+import { DeviceControls } from "./ui.tsx";
 
 const MAX_LINES = 200;
 
-const TITLES: Record<View, { title: string; sub: string }> = {
-  home: { title: "Peripheral Tester", sub: "kiosk peripherals" },
-  lightboard: { title: "Light Board", sub: "IER S33380" },
-  cardreader: { title: "Card Reader", sub: "Hitachi-Omron V4K" },
-  sankyo: { title: "Card Reader", sub: "Sankyo ICM330" },
-  penta: { title: "Passport Reader", sub: "DESKO Penta Gen4" },
+/** A device's screen. Each takes its own state shape, so they are registered through this one type. */
+type DevicePage = ComponentType<{ state: BaseState; onFail: (message: string) => void; aside: ReactNode }>;
+
+/** The screen for each device. A device's header controls are the shared ones, except the light board's. */
+const PAGES: Partial<Record<DeviceId, DevicePage>> = {
+  lightboard: LightBoardPage as unknown as DevicePage,
+  cardreader: CardReaderPage as unknown as DevicePage,
+  sankyo: SankyoPage as unknown as DevicePage,
+  penta: PentaPage as unknown as DevicePage,
 };
 
 /**
@@ -64,16 +69,14 @@ export function App() {
           setSnapshot((previous) => previous && { ...previous, mock: event.mock });
           return;
         }
-        // A device's own state replaces its slice. The vocabulary only ever arrives in a snapshot,
-        // so it is carried forward rather than clobbered.
+        // A device's own state replaces its slice. The light board's vocabulary only ever arrives in
+        // a snapshot, so it is carried forward rather than clobbered.
         setSnapshot((previous) => {
           if (!previous) return previous;
           if (event.device === "lightboard") {
             return { ...previous, lightboard: { ...previous.lightboard, ...event.state } };
           }
-          if (event.device === "sankyo") return { ...previous, sankyo: event.state as SankyoState };
-          if (event.device === "penta") return { ...previous, penta: event.state as PentaState };
-          return { ...previous, cardreader: event.state as CardReaderState };
+          return { ...previous, [event.device]: event.state };
         });
       },
       (message) => setLog((previous) => [...previous, systemLine(message)].slice(-MAX_LINES)),
@@ -121,8 +124,10 @@ export function App() {
 
   if (!snapshot) return <div className="gate"><p>Loading…</p></div>;
 
-  const { title } = TITLES[view];
-  const sub = view === "home" ? `${KIOSKS[kiosk].name} · ${TITLES.home.sub}` : TITLES[view].sub;
+  const title = view === "home" ? "Peripheral Tester" : DEVICES[view].name;
+  const sub = view === "home" ? `${KIOSKS[kiosk].name} · kiosk peripherals` : DEVICES[view].model;
+  const deviceState = view === "home" ? undefined : stateOf(snapshot, view);
+  const Page = view === "home" ? undefined : PAGES[view];
   const chooseKiosk = (next: Kiosk) => {
     setKiosk(next);
     // Remembered per browser, so the kiosk's own screen keeps its model. Storage may be unavailable.
@@ -162,9 +167,15 @@ export function App() {
         </div>
 
         {view === "lightboard" && <LightBoardControls state={snapshot.lightboard} onFail={fail} />}
-        {view === "cardreader" && <CardReaderControls state={snapshot.cardreader} onFail={fail} />}
-        {view === "sankyo" && <SankyoControls state={snapshot.sankyo} onFail={fail} />}
-        {view === "penta" && <PentaControls state={snapshot.penta} onFail={fail} />}
+        {view !== "home" && view !== "lightboard" && deviceState && (
+          <DeviceControls
+            state={deviceState}
+            bus={DEVICES[view].bus}
+            onConnect={() => api.device(view).connect()}
+            onDisconnect={() => api.device(view).disconnect()}
+            onFail={fail}
+          />
+        )}
         <Settings snapshot={snapshot} onFail={fail} />
       </header>
 
@@ -178,10 +189,7 @@ export function App() {
             aside={activity}
           />
         )}
-        {view === "lightboard" && <LightBoardPage state={snapshot.lightboard} onFail={fail} aside={activity} />}
-        {view === "cardreader" && <CardReaderPage state={snapshot.cardreader} onFail={fail} aside={activity} />}
-        {view === "sankyo" && <SankyoPage state={snapshot.sankyo} onFail={fail} aside={activity} />}
-        {view === "penta" && <PentaPage state={snapshot.penta} onFail={fail} aside={activity} />}
+        {Page && deviceState && <Page state={deviceState} onFail={fail} aside={activity} />}
       </main>
     </div>
   );

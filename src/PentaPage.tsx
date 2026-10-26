@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 import type { PentaSimulation, PentaState } from "./api.ts";
 import * as api from "./api.ts";
 import { lampColor, lampStyle } from "./look.ts";
-import { Card, StatusPill } from "./ui.tsx";
+import { Card } from "./ui.tsx";
 
 const DOCUMENT_TEXT: Record<NonNullable<PentaState["document"]>, string> = {
   present: "A document is on the glass.",
@@ -182,35 +182,6 @@ export function PentaPage(
         )}
         {aside}
       </div>
-    </>
-  );
-}
-
-/** The header cluster for this device. */
-export function PentaControls({ state, onFail }: { state: PentaState; onFail: (message: string) => void }) {
-  const open = state.status === "open";
-  const opening = state.status === "opening";
-
-  const toggle = () => {
-    if (open) api.penta.disconnect().catch((err: Error) => onFail(err.message));
-    // A refused connection is already explained in the activity log by the backend.
-    else if (!opening) api.penta.connect().catch(() => {});
-  };
-
-  return (
-    <>
-      <div className="bar-group">
-        <div className="portbox">
-          <label htmlFor="bus">Bus</label>
-          <input id="bus" value={state.mock ? "mock" : "USB"} disabled readOnly />
-          <span className="baud">{state.usbId}</span>
-        </div>
-        <button className={open ? "connect connect-open" : "connect"} onClick={toggle} disabled={opening}>
-          {open ? "Disconnect" : opening ? "Opening…" : "Connect"}
-        </button>
-      </div>
-
-      <StatusPill status={state.status} open="Connected · reporting armed" opening="Opening scanner" shut="Not connected" />
     </>
   );
 }

@@ -12,8 +12,30 @@
 
 // ---- shared ---------------------------------------------------------------------------------
 
-export type Device = "system" | "lightboard" | "cardreader" | "sankyo" | "penta";
+export type Device = "system" | "lightboard" | "cardreader" | "sankyo" | "penta" | "xpm" | "storm" | "honeywell" | "itk38" | "adr300" | "idtech" | "datalogic" | "custom" | "k8" | "allpixel" | "embross";
 export type Status = "closed" | "opening" | "open";
+
+/** The fields every device's state carries, whatever else it holds. */
+export interface BaseState {
+  status: Status;
+  mock: boolean;
+  /** The USB vendor:product the driver opens, or how else it is reached. */
+  usbId: string;
+}
+
+/** A device's slice of the snapshot, for code that only needs what every device shares. */
+export const stateOf = (snapshot: Snapshot, id: Exclude<Device, "system">): BaseState | undefined =>
+  (snapshot as unknown as Record<string, BaseState | undefined>)[id];
+
+/**
+ * Commands for any device: connect, disconnect, and its own actions at `/api/<device>/<action>`.
+ * The first four devices also have the typed clients below.
+ */
+export const device = (id: Exclude<Device, "system">) => ({
+  connect: () => post(`/api/${id}/connect`),
+  disconnect: () => post(`/api/${id}/disconnect`),
+  act: <T = { ok: boolean }>(action: string, body?: unknown) => post<T>(`/api/${id}/${action}`, body),
+});
 
 export interface LogEntry {
   at: string;
@@ -217,7 +239,8 @@ export type Event =
   | { type: "state"; device: "lightboard"; state: Omit<LightBoardState, "vocabulary"> }
   | { type: "state"; device: "cardreader"; state: CardReaderState }
   | { type: "state"; device: "sankyo"; state: SankyoState }
-  | { type: "state"; device: "penta"; state: PentaState };
+  | { type: "state"; device: "penta"; state: PentaState }
+  | { type: "state"; device: Exclude<Device, "system" | "lightboard" | "cardreader" | "sankyo" | "penta">; state: BaseState };
 
 async function getJson<T>(path: string): Promise<T> {
   const response = await fetch(path);

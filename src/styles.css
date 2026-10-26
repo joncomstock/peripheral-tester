@@ -970,12 +970,6 @@ button {
   border-color: var(--c-c7ccd3);
 }
 
-.tile-planned {
-  background: var(--c-f7f8f9);
-  border: 1px dashed var(--c-d7dbe0);
-  box-shadow: none;
-  cursor: not-allowed;
-}
 
 .tile-head {
   display: flex;
@@ -1007,11 +1001,6 @@ button {
   border-color: var(--c-cfe8d8);
 }
 
-.tile-badge--planned {
-  color: var(--c-7d5207);
-  background: var(--c-fdf3e0);
-  border-color: var(--c-f2e1bf);
-}
 
 .tile-model {
   font-size: var(--font-label);
@@ -1032,9 +1021,6 @@ button {
   color: #2f5fd0;
 }
 
-.tile-planned .tile-action {
-  color: var(--c-a3aab2);
-}
 
 /* ---------------------------------------------------------------- card reader */
 

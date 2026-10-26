@@ -155,8 +155,7 @@ export function LightBoardControls(
 
   const toggle = () => {
     if (open) api.lightboard.disconnect().catch((err: Error) => onFail(err.message));
-    // A refused connection is already explained in the activity log by the backend.
-    else if (!opening) api.lightboard.connect().catch(() => {});
+    else if (!opening) api.lightboard.connect().catch((err: Error) => onFail(`Could not connect: ${err.message}`));
   };
 
   return (

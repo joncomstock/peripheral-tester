@@ -45,8 +45,22 @@ if (here === undefined) throw new Error("run this from a checkout: the built UI 
 const distDir = join(here, "..", "dist");
 const built = await Deno.stat(join(distDir, "index.html")).then(() => true).catch(() => false);
 
+/**
+ * What every device module exports. `actions` are its page's commands, reached generically at
+ * `/api/<device>/<action>` with the request body; each validates its own input, since the body comes
+ * straight off the wire. The first four devices predate this and route their commands explicitly.
+ */
+interface Session {
+  configure(options: { mock: boolean }): void;
+  state(): { status: string };
+  connect(): Promise<void>;
+  disconnect(): Promise<void>;
+  actions?: Record<string, (body: Record<string, unknown>) => unknown>;
+}
+
 /** Every device session. Whatever is done to all of them — mode, disconnect, shutdown — goes through here. */
-const devices = [lightboard, cardreader, sankyo, penta];
+const sessions: Record<string, Session> = { lightboard, cardreader, sankyo, penta };
+const devices = Object.values(sessions);
 const disconnectAll = () => Promise.all(devices.map((device) => device.disconnect())).then(() => {});
 
 for (const device of devices) device.configure({ mock });
@@ -59,10 +73,8 @@ const snapshot = () => ({
   mock,
   hardwareAllowed,
   log: activity.history(),
+  ...Object.fromEntries(Object.entries(sessions).map(([id, session]) => [id, session.state()])),
   lightboard: { ...lightboard.state(), vocabulary: lightboard.vocabulary() },
-  cardreader: cardreader.state(),
-  sankyo: sankyo.state(),
-  penta: penta.state(),
 });
 
 /** Set while a switch is disconnecting devices, so no device can be opened in the outgoing mode. */
@@ -230,6 +242,21 @@ async function handle(request: Request): Promise<Response> {
       if (!["place", "boarding-pass", "flip", "remove"].includes(action ?? "")) throw new Error(`unknown action '${action}'`);
       penta.simulate(action!);
     });
+  }
+
+  // ---- every other device: connect, disconnect, and its own actions ----
+
+  const route = post ? pathname.match(/^\/api\/([a-z0-9]+)\/([a-z0-9-]+)$/) : null;
+  const session = route ? sessions[route[1]] : undefined;
+  if (route && session) {
+    const action = route[2];
+    if (action === "connect") return await attempt(() => session.connect());
+    if (action === "disconnect") return await attempt(() => session.disconnect());
+    const run = session.actions && Object.hasOwn(session.actions, action) ? session.actions[action] : undefined;
+    if (run) {
+      const payload = await body<Record<string, unknown>>();
+      return await attempt(() => run(payload as Record<string, unknown>));
+    }
   }
 
   if (post && pathname === "/api/disconnect-all") {

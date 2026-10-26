@@ -9,7 +9,7 @@ import type {
 } from "./api.ts";
 import * as api from "./api.ts";
 import { LAMP, lampStyle } from "./look.ts";
-import { Card, StatusPill } from "./ui.tsx";
+import { Card } from "./ui.tsx";
 
 
 const TRACK_BITS: { bit: number; label: string }[] = [
@@ -395,35 +395,5 @@ function Identity({ state, onFail }: { state: CardReaderState; onFail: (message:
         </dl>
       )}
     </Card>
-  );
-}
-
-/** The header cluster for this device. */
-export function CardReaderControls(
-  { state, onFail }: { state: CardReaderState; onFail: (message: string) => void },
-) {
-  const open = state.status === "open";
-  const opening = state.status === "opening";
-
-  const toggle = () => {
-    if (open) api.cardreader.disconnect().catch((err: Error) => onFail(err.message));
-    else if (!opening) api.cardreader.connect().catch(() => {});
-  };
-
-  return (
-    <>
-      <div className="bar-group">
-        <div className="portbox">
-          <label htmlFor="bus">Bus</label>
-          <input id="bus" value={state.mock ? "mock" : "USB HID"} disabled readOnly />
-          <span className="baud">{state.usbId}</span>
-        </div>
-        <button className={open ? "connect connect-open" : "connect"} onClick={toggle} disabled={opening}>
-          {open ? "Disconnect" : opening ? "Opening…" : "Connect"}
-        </button>
-      </div>
-
-      <StatusPill status={state.status} open="Connected · reader ready" opening="Opening reader" shut="Not connected" />
-    </>
   );
 }

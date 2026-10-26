@@ -1,54 +1,53 @@
 import type { ReactNode } from "react";
-import type { Snapshot, Status } from "./api.ts";
+import type { Device, Snapshot } from "./api.ts";
+import { stateOf } from "./api.ts";
 import { LAMP, lampStyle } from "./look.ts";
 
-export type View = "home" | "lightboard" | "cardreader" | "sankyo" | "penta";
+export type DeviceId = Exclude<Device, "system">;
+export type View = "home" | DeviceId;
 
-interface Device {
+interface Entry {
+  /** What it is, as an operator would say it; the screen's title. */
   name: string;
+  /** Make and model; the screen's subtitle. */
   model: string;
-  bus: (snapshot: Snapshot) => string;
-  /** The screen that drives it, or null when no tester screen exists for it yet. */
-  view: Exclude<View, "home"> | null;
+  /** How the backend reaches it, shown beside its USB id. */
+  bus: string;
 }
 
-/**
- * Every device the tester knows of: the ones it drives, and the rest of hardware-libs' drivers, which
- * are listed so someone at a kiosk can see what exists even before a screen does.
- */
-const DEVICES: Record<string, Device> = {
-  lightboard: { name: "Light Board", model: "IER S33380", bus: (s) => `USB · ${s.lightboard.usbId}`, view: "lightboard" },
-  cardreader: { name: "Card Reader", model: "Hitachi-Omron V4K", bus: (s) => `USB HID · ${s.cardreader.usbId}`, view: "cardreader" },
-  sankyo: { name: "Card Reader", model: "Sankyo ICM330", bus: (s) => `USB HID · ${s.sankyo.usbId}`, view: "sankyo" },
-  penta: { name: "Passport Reader", model: "DESKO Penta Gen4", bus: (s) => `USB · ${s.penta.usbId}`, view: "penta" },
-  adr300: { name: "Document Reader", model: "Access-IS ADR300", bus: () => "USB HID · @eai/access-is", view: null },
-  idtech: { name: "Card Reader", model: "ID TECH Secure Mag Insert", bus: () => "USB HID · @eai/idtech", view: null },
-  honeywell: { name: "Barcode Scanner", model: "Honeywell N56xx / Vuquest 3310g", bus: () => "USB · @eai/honeywell", view: null },
-  datalogic: { name: "Barcode Scanner", model: "Datalogic Gryphon GFS4470", bus: () => "USB · @eai/datalogic", view: null },
-  itk38: { name: "Thermal Printer", model: "Practical Automation ITK 38", bus: () => "USB · @eai/itk38", view: null },
-  xpm: { name: "Thermal Printer", model: "Hengstler XPM", bus: () => "USB · @eai/xpm", view: null },
-  custom: { name: "Thermal Printer", model: "CUSTOM KPM150 / KPM180", bus: () => "USB · @eai/custom", view: null },
-  k8: { name: "Full-page Printer", model: "NCR K8", bus: () => "USB · @eai/k8", view: null },
-  storm: { name: "Assistive Keypad", model: "Storm EZ-Access Nav-Pad", bus: () => "USB HID · @eai/storm", view: null },
-  allpixel: { name: "LED Controller", model: "ManiacalLabs AllPixel", bus: () => "USB serial · @eai/maniacal-labs", view: null },
-  embross: { name: "Service Switches", model: "Embross V1 button and door", bus: () => "RS-232 lines · @eai/embross", view: null },
+/** Every device the tester drives, from hardware-libs' drivers. The screen for each is in App. */
+export const DEVICES: Record<DeviceId, Entry> = {
+  lightboard: { name: "Light Board", model: "IER S33380", bus: "USB" },
+  cardreader: { name: "Card Reader", model: "Hitachi-Omron V4K", bus: "USB HID" },
+  penta: { name: "Passport Reader", model: "DESKO Penta Gen4", bus: "USB" },
+  xpm: { name: "Boarding Pass Printer", model: "Hengstler XPM", bus: "USB" },
+  storm: { name: "Assistive Keypad", model: "Storm EZ-Access Nav-Pad", bus: "USB HID" },
+  sankyo: { name: "Card Reader", model: "Sankyo ICM330", bus: "USB HID" },
+  honeywell: { name: "Barcode Reader", model: "Honeywell 5X80", bus: "USB" },
+  itk38: { name: "Boarding Pass / Bag Tag Printer", model: "Practical Automation ITK38", bus: "USB" },
+  adr300: { name: "Document Reader", model: "Access-IS ADR300", bus: "USB HID" },
+  idtech: { name: "Card Reader", model: "ID TECH Secure Mag Insert", bus: "USB HID" },
+  datalogic: { name: "Barcode Scanner", model: "Datalogic Gryphon GFS4470", bus: "USB" },
+  custom: { name: "Thermal Printer", model: "CUSTOM KPM150 / KPM180", bus: "USB" },
+  k8: { name: "Full-page Printer", model: "NCR K8", bus: "USB" },
+  allpixel: { name: "LED Controller", model: "ManiacalLabs AllPixel", bus: "USB serial" },
+  embross: { name: "Service Switches", model: "Embross V1 button and door", bus: "RS-232" },
 };
 
-/** Which devices each kiosk model is fitted with. "All Devices" is every entry above. */
+/**
+ * Which devices each kiosk model is fitted with, from the knowledge base's audit of each lab unit.
+ * Fitted parts with no hardware-libs driver (the 919's IER 400 bag-tag printers and DESKO smart-card
+ * reader, the D4's Gemalto KR2400) are left out: there is nothing to drive. "All Devices" is every entry.
+ */
 export const KIOSKS = {
-  "ier-919": { name: "IER 919", devices: ["lightboard", "cardreader", "penta"] },
-  "sita-d4": { name: "SITA D4", devices: ["sankyo"] },
-  all: { name: "All Devices", devices: Object.keys(DEVICES) },
-} as const satisfies Record<string, { name: string; devices: readonly (keyof typeof DEVICES)[] }>;
+  "ier-919": { name: "IER 919", devices: ["lightboard", "cardreader", "penta", "xpm", "storm"] },
+  "sita-d4": { name: "SITA D4", devices: ["sankyo", "honeywell", "itk38"] },
+  all: { name: "All Devices", devices: Object.keys(DEVICES) as DeviceId[] },
+} as const satisfies Record<string, { name: string; devices: readonly DeviceId[] }>;
 
 export type Kiosk = keyof typeof KIOSKS;
 
-/**
- * The dashboard: the peripherals of the chosen kiosk, and which are connected.
- *
- * A device that is not wired up yet is shown rather than hidden — knowing it is planned is worth more
- * to someone at a kiosk than a shorter list.
- */
+/** The dashboard: the chosen kiosk's devices. A connected device is lit; any other is dark. */
 export function Home(
   { snapshot, kiosk, onKiosk, onOpen, aside }: {
     snapshot: Snapshot;
@@ -58,8 +57,6 @@ export function Home(
     aside: ReactNode;
   },
 ) {
-  const statusOf = (view: Exclude<View, "home">): Status => snapshot[view].status;
-
   return (
     <>
       <div className="col col-wide">
@@ -78,25 +75,18 @@ export function Home(
         <div className="tiles">
           {KIOSKS[kiosk].devices.map((id) => {
             const device = DEVICES[id];
-            const ready = device.view !== null;
-            const live = device.view !== null && statusOf(device.view) === "open";
+            const state = stateOf(snapshot, id);
+            const live = state?.status === "open";
             return (
-              <button
-                key={id}
-                className={ready ? "tile" : "tile tile-planned"}
-                disabled={!ready}
-                onClick={() => device.view && onOpen(device.view)}
-              >
+              <button key={id} className="tile" onClick={() => onOpen(id)}>
                 <div className="tile-head">
-                  <span style={lampStyle(live ? LAMP.green : LAMP.amber, live ? "on" : "off", 18)} />
+                  <span style={lampStyle(LAMP.green, live ? "on" : "off", 18)} />
                   <span className="tile-name">{device.name}</span>
-                  <span className={!ready ? "tile-badge tile-badge--planned" : live ? "tile-badge tile-badge--live" : "tile-badge"}>
-                    {ready ? (live ? "Connected" : "Ready") : "Planned"}
-                  </span>
+                  {live && <span className="tile-badge tile-badge--live">Connected</span>}
                 </div>
                 <span className="tile-model">{device.model}</span>
-                <span className="tile-bus">{device.bus(snapshot)}</span>
-                <span className="tile-action">{ready ? "Open tester →" : "Coming soon"}</span>
+                <span className="tile-bus">{device.bus}{state ? ` · ${state.usbId}` : ""}</span>
+                <span className="tile-action">Open tester →</span>
               </button>
             );
           })}

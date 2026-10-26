@@ -4,7 +4,24 @@ import { toneOf } from "./look.ts";
 import { Card } from "./ui.tsx";
 
 /** How each device's lines are tagged on the dashboard, where every device's lines are shown. */
-const DEVICE_TAG: Record<Device, string> = { system: "", lightboard: "board", cardreader: "v4k", sankyo: "sankyo", penta: "penta" };
+const DEVICE_TAG: Record<Device, string> = {
+  system: "",
+  lightboard: "board",
+  cardreader: "v4k",
+  sankyo: "sankyo",
+  penta: "penta",
+  xpm: "xpm",
+  storm: "storm",
+  honeywell: "honeywell",
+  itk38: "itk38",
+  adr300: "adr300",
+  idtech: "idtech",
+  datalogic: "datalogic",
+  custom: "custom",
+  k8: "k8",
+  allpixel: "allpixel",
+  embross: "embross",
+};
 
 /**
  * The activity log, shared by every device.

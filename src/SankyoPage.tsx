@@ -4,7 +4,7 @@ import type { CardData, ReadResult, SankyoState } from "./api.ts";
 import * as api from "./api.ts";
 import { CardPanel, Verdict } from "./CardReaderPage.tsx";
 import { LAMP, lampStyle } from "./look.ts";
-import { Card, StatusPill } from "./ui.tsx";
+import { Card } from "./ui.tsx";
 
 /**
  * The Sankyo ICM330's screen: read a card once, or listen for cards, and drive the bezel LED.
@@ -167,35 +167,6 @@ export function SankyoPage(
         )}
         {aside}
       </div>
-    </>
-  );
-}
-
-/** The header cluster for this device. */
-export function SankyoControls({ state, onFail }: { state: SankyoState; onFail: (message: string) => void }) {
-  const open = state.status === "open";
-  const opening = state.status === "opening";
-
-  const toggle = () => {
-    if (open) api.sankyo.disconnect().catch((err: Error) => onFail(err.message));
-    // A refused connection is already explained in the activity log by the backend.
-    else if (!opening) api.sankyo.connect().catch(() => {});
-  };
-
-  return (
-    <>
-      <div className="bar-group">
-        <div className="portbox">
-          <label htmlFor="bus">Bus</label>
-          <input id="bus" value={state.mock ? "mock" : "USB HID"} disabled readOnly />
-          <span className="baud">{state.usbId}</span>
-        </div>
-        <button className={open ? "connect connect-open" : "connect"} onClick={toggle} disabled={opening}>
-          {open ? "Disconnect" : opening ? "Opening…" : "Connect"}
-        </button>
-      </div>
-
-      <StatusPill status={state.status} open="Connected · reader ready" opening="Opening reader" shut="Not connected" />
     </>
   );
 }

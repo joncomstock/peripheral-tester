@@ -1,6 +1,9 @@
 import { useRef, useState } from "react";
 import type { Snapshot } from "./api.ts";
 import * as api from "./api.ts";
+import { stateOf } from "./api.ts";
+import { DEVICES } from "./Home.tsx";
+import type { DeviceId } from "./Home.tsx";
 
 type Theme = "dark" | "light";
 
@@ -18,7 +21,7 @@ const currentTheme = (): Theme => document.documentElement.dataset.theme === "li
 export function Settings({ snapshot, onFail }: { snapshot: Snapshot; onFail: (message: string) => void }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const [theme, setTheme] = useState<Theme>(currentTheme);
-  const anyOpen = [snapshot.lightboard, snapshot.cardreader, snapshot.sankyo, snapshot.penta].some((device) => device.status !== "closed");
+  const anyOpen = (Object.keys(DEVICES) as DeviceId[]).some((id) => (stateOf(snapshot, id)?.status ?? "closed") !== "closed");
 
   const guard = (work: Promise<unknown>) => work.catch((err: Error) => onFail(err.message));
 

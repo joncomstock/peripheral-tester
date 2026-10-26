@@ -10,6 +10,21 @@
     "@eai/omron-v4k": "jsr:@eai/omron-v4k@^1.2.2",
     "@eai/sankyo": "jsr:@eai/sankyo@^1.0.0",
     "@eai/desko/penta": "jsr:@eai/desko@^1.0.4/penta",
+    "@eai/xpm": "jsr:@eai/xpm@^1.1.3",
+    "@eai/storm": "jsr:@eai/storm@^1.0.2",
+    "@eai/honeywell": "jsr:@eai/honeywell@^1.4.0",
+    "@eai/itk38": "jsr:@eai/itk38@^1.1.3",
+    "@eai/access-is/adr300": "jsr:@eai/access-is@^3.0.0/adr300",
+    "@eai/idtech": "jsr:@eai/idtech@^1.2.0",
+    "@eai/datalogic": "jsr:@eai/datalogic@^1.0.0",
+    "@eai/custom": "jsr:@eai/custom@^1.2.0",
+    "@eai/k8": "jsr:@eai/k8@^1.0.1",
+    "@eai/maniacal-labs/allpixel": "jsr:@eai/maniacal-labs@^0.2.2/allpixel",
+    "@eai/embross": "jsr:@eai/embross@^1.0.0",
+    // The transports, for devices whose driver takes one rather than opening its own.
+    "@eai/usb": "jsr:@eai/usb@^1.10.0",
+    "@eai/hid": "jsr:@eai/hid@^1.3.0",
+    "@eai/serial": "jsr:@eai/serial@^1.3.1",
     // The driver's Transport contract — the mock board implements it. Pin matches
     // hardware-libs/deno.jsonc so we resolve the same version.
     "@eai/models": "jsr:@eai/models@^1.6.0",

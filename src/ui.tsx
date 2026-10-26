@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import type { BaseState } from "./api.ts";
 import { LAMP } from "./look.ts";
 
 /**
@@ -49,3 +50,42 @@ export function StatusPill(
   );
 }
 
+
+/**
+ * The header cluster any device can use: its bus, Connect / Disconnect, and the connection state.
+ *
+ * A failed connect is reported through `onFail` as well as the backend's activity line, so a device
+ * that is not there says so where the operator is looking.
+ */
+export function DeviceControls(
+  { state, bus, onConnect, onDisconnect, onFail }: {
+    state: BaseState;
+    bus: string;
+    onConnect: () => Promise<unknown>;
+    onDisconnect: () => Promise<unknown>;
+    onFail: (message: string) => void;
+  },
+) {
+  const open = state.status === "open";
+  const opening = state.status === "opening";
+  const toggle = () => {
+    if (open) onDisconnect().catch((err: Error) => onFail(err.message));
+    else if (!opening) onConnect().catch((err: Error) => onFail(`Could not connect: ${err.message}`));
+  };
+
+  return (
+    <>
+      <div className="bar-group">
+        <div className="portbox">
+          <label htmlFor="bus">Bus</label>
+          <input id="bus" value={state.mock ? "mock" : bus} disabled readOnly />
+          <span className="baud">{state.usbId}</span>
+        </div>
+        <button className={open ? "connect connect-open" : "connect"} onClick={toggle} disabled={opening}>
+          {open ? "Disconnect" : opening ? "Opening…" : "Connect"}
+        </button>
+      </div>
+      <StatusPill status={state.status} open="Connected" opening="Opening" shut="Not connected" />
+    </>
+  );
+}

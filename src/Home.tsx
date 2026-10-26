@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import type { Device, Snapshot } from "./api.ts";
+import * as api from "./api.ts";
 import { stateOf } from "./api.ts";
 import { LAMP, lampStyle } from "./look.ts";
 
@@ -47,13 +48,21 @@ export const KIOSKS = {
 
 export type Kiosk = keyof typeof KIOSKS;
 
-/** The dashboard: the chosen kiosk's devices. A connected device is lit; any other is dark. */
+/**
+ * The dashboard: the chosen kiosk's devices. A connected device is lit; any other is dark.
+ *
+ * Each tile opens its tester, and carries its own Connect / Disconnect so a kiosk's devices can be
+ * brought up from here without visiting every screen. The tile is not one button because a button
+ * may not contain another: the card body opens the tester for a pointer, and "Open tester" is the
+ * keyboard's way in.
+ */
 export function Home(
-  { snapshot, kiosk, onKiosk, onOpen, aside }: {
+  { snapshot, kiosk, onKiosk, onOpen, onFail, aside }: {
     snapshot: Snapshot;
     kiosk: Kiosk;
     onKiosk: (kiosk: Kiosk) => void;
     onOpen: (view: View) => void;
+    onFail: (message: string) => void;
     aside: ReactNode;
   },
 ) {
@@ -77,17 +86,33 @@ export function Home(
             const device = DEVICES[id];
             const state = stateOf(snapshot, id);
             const live = state?.status === "open";
+            const opening = state?.status === "opening";
+            const toggle = () => {
+              if (live) api.device(id).disconnect().catch((err: Error) => onFail(err.message));
+              else if (!opening) api.device(id).connect().catch((err: Error) => onFail(`Could not connect: ${err.message}`));
+            };
             return (
-              <button key={id} className="tile" onClick={() => onOpen(id)}>
+              <div key={id} className="tile" onClick={() => onOpen(id)}>
                 <div className="tile-head">
                   <span style={lampStyle(LAMP.green, live ? "on" : "off", 18)} />
                   <span className="tile-name">{device.name}</span>
-                  {live && <span className="tile-badge tile-badge--live">Connected</span>}
+                  <button
+                    className={live ? "connect connect-open tile-connect" : "connect tile-connect"}
+                    disabled={!state || opening}
+                    aria-label={`${live ? "Disconnect" : "Connect"} ${device.name}, ${device.model}`}
+                    // Its own action, not a way into the tester.
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      toggle();
+                    }}
+                  >
+                    {live ? "Disconnect" : opening ? "Opening…" : "Connect"}
+                  </button>
                 </div>
                 <span className="tile-model">{device.model}</span>
                 <span className="tile-bus">{device.bus}{state ? ` · ${state.usbId}` : ""}</span>
-                <span className="tile-action">Open tester →</span>
-              </button>
+                <button className="tile-action" onClick={() => onOpen(id)}>Open tester →</button>
+              </div>
             );
           })}
         </div>

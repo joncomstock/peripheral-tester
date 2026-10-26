@@ -987,22 +987,7 @@ button {
   color: var(--c-16191d);
 }
 
-.tile-badge {
-  margin-left: auto;
-  font-size: var(--font-chip);
-  padding: 5px 10px;
-  border-radius: 5px;
-  color: var(--c-4d545c);
-  background: var(--c-f4f5f7);
-  border: 1px solid var(--c-e8eaee);
-  white-space: nowrap;
-}
 
-.tile-badge--live {
-  color: var(--c-1a6633);
-  background: var(--c-eaf6ee);
-  border-color: var(--c-cfe8d8);
-}
 
 
 .tile-model {
@@ -1017,11 +1002,22 @@ button {
 }
 
 .tile-action {
+  align-self: flex-start;
   margin-top: auto;
-  padding-top: 12px;
+  padding: 12px 0 0;
+  border: 0;
+  background: none;
   font-size: var(--font-seg);
   font-weight: 500;
   color: #2f5fd0;
+  cursor: pointer;
+}
+
+/* The tile's own Connect / Disconnect: top right, the header's control at tile scale. */
+.tile-connect {
+  margin-left: auto;
+  height: 44px;
+  padding: 0 16px;
 }
 
 

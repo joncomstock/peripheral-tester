@@ -208,6 +208,7 @@ export function App() {
             kiosk={kiosk}
             onKiosk={chooseKiosk}
             onOpen={setView}
+            onFail={fail}
             aside={activity}
           />
         )}

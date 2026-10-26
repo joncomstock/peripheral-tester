@@ -3,7 +3,6 @@ import type { ReactNode } from "react";
 import type {
   CardData,
   CardReaderState,
-  LedControlMode,
   NextOutcome,
   ReadDirection,
   ReadResult,
@@ -217,7 +216,7 @@ export function CardReaderPage(
                 </span>
               </span>
               <div className="seg" data-enabled={open}>
-                {(["manual", "automatic"] as LedControlMode[]).map((mode) => (
+                {state.ledModes.map((mode) => (
                   <button
                     key={mode}
                     className={state.ledMode === mode ? "chooser chooser-on" : "chooser"}

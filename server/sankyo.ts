@@ -171,6 +171,8 @@ export type Status = "closed" | "opening" | "open";
 let reader: ICM330Reader | null = null;
 let mockReader: MockICM330 | null = null;
 let monitor: ICM330Monitor | null = null;
+/** The monitor's start in flight, so a stop can wait for it rather than miss it. */
+let starting: Promise<void> | null = null;
 let status: Status = "closed";
 let reading = false;
 let mock = false;
@@ -276,7 +278,7 @@ export function monitorSeconds(next: number): void {
 }
 
 export async function setLed(color: LedColor, blink: boolean): Promise<void> {
-  if (!(color in LED_COLOR_DIGIT)) throw new Error(`'${color}' is not a colour the reader has`);
+  if (!Object.hasOwn(LED_COLOR_DIGIT, color)) throw new Error(`'${color}' is not a colour the reader has`);
   await held().led(color, blink && color !== "off" ? "1s" : undefined);
   led = color;
   tell();
@@ -361,15 +363,28 @@ export async function startListening(): Promise<void> {
     log("error", "The reader stopped answering. Reconnect to continue.");
     tell();
   });
-  waiting = null;
-  // Held only once polling is under way: a start that fails must not leave the page "listening".
-  await started.start();
+  // Held at once, so a second Listen or a Read sees it; released again if the start fails.
   monitor = started;
+  waiting = null;
+  starting = started.start();
+  try {
+    await starting;
+  }
+  catch (err) {
+    if (monitor === started) monitor = null;
+    tell();
+    throw err;
+  }
+  finally {
+    starting = null;
+  }
   tell();
   log("info", "Listening");
 }
 
 export async function stopListening(): Promise<void> {
+  // A start still under way would begin polling after the stop; let it finish first.
+  await starting?.catch(() => {});
   const stopping = monitor;
   monitor = null;
   present = false;

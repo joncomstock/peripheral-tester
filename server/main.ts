@@ -66,8 +66,12 @@ const snapshot = () => ({
  * Everything is disconnected first, so nothing opened in one mode keeps running in the other: a page
  * that says "mock" while driving a real board, or the reverse, is the mistake this prevents.
  */
+/** Set while a switch is disconnecting devices, so no device can be opened in the outgoing mode. */
+let switching = false;
+
 async function setMock(next: boolean): Promise<void> {
   if (next === mock) return;
+  if (switching) throw new Error("Already switching mode");
   if (!next && !hardwareAllowed) {
     throw new Error("Real devices need FFI permission: restart with `deno task dev`");
   }
@@ -76,11 +80,17 @@ async function setMock(next: boolean): Promise<void> {
   if ([lightboard.state(), cardreader.state(), sankyo.state()].some((device) => device.status === "opening")) {
     throw new Error("A device is still opening; try again once it has");
   }
-  await Promise.all([lightboard.disconnect(), cardreader.disconnect(), sankyo.disconnect()]);
-  mock = next;
-  lightboard.configure({ mock });
-  cardreader.configure({ mock });
-  sankyo.configure({ mock });
+  switching = true;
+  try {
+    await Promise.all([lightboard.disconnect(), cardreader.disconnect(), sankyo.disconnect()]);
+    mock = next;
+    lightboard.configure({ mock });
+    cardreader.configure({ mock });
+    sankyo.configure({ mock });
+  }
+  finally {
+    switching = false;
+  }
   activity.announceMode(mock);
   activity.record("system", "info", mock ? "Mock mode on: every device is simulated" : "Mock mode off: devices are real");
 }
@@ -103,6 +113,10 @@ async function handle(request: Request): Promise<Response> {
   const body = async <T>(): Promise<Partial<T>> => post ? await request.json().catch(() => ({})) as Partial<T> : {};
 
   if (pathname === "/api/state") return json(snapshot());
+
+  if (post && switching && pathname.endsWith("/connect")) {
+    return json({ ok: false, error: "Switching between mock and real; connect again in a moment" }, 409);
+  }
 
   if (pathname === "/api/events") {
     return activity.eventStream(() => ({ type: "hello", ...snapshot() }));
@@ -165,7 +179,10 @@ async function handle(request: Request): Promise<Response> {
   if (post && pathname === "/api/sankyo/disconnect") return await attempt(() => sankyo.disconnect());
   if (post && pathname === "/api/sankyo/seconds") {
     const { seconds } = await body<{ seconds: number }>();
-    return await attempt(() => seconds !== undefined && sankyo.monitorSeconds(seconds));
+    return await attempt(() => {
+      if (typeof seconds !== "number") throw new Error("seconds is required");
+      sankyo.monitorSeconds(seconds);
+    });
   }
   if (post && pathname === "/api/sankyo/led") {
     const { color, blink } = await body<{ color: SankyoLedColor; blink: boolean }>();

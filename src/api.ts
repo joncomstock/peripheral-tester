@@ -108,6 +108,8 @@ export interface CardReaderState {
   present: boolean;
   /** The bezel's colours, from the driver. */
   ledColors: LedColor[];
+  /** Who can drive the bezel LED, from the driver. */
+  ledModes: LedControlMode[];
   /** A listened-for card is held server-side until collected. The stream never carries the card. */
   cardWaiting: boolean;
   seconds: number;

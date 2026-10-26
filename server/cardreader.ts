@@ -14,6 +14,7 @@ import type { MessageTransport } from "@eai/models";
 import {
   DEFAULT_TRANSACTION,
   LED_COLOR_DIGIT,
+  LED_CONTROL_MODE_DIGIT,
   monitorCardStatus,
   OmronV4K,
   openV4K,
@@ -242,6 +243,7 @@ export const state = () => ({
   cardWaiting: waiting !== null,
   /** The bezel's colours, from the driver's own vocabulary. */
   ledColors: Object.keys(LED_COLOR_DIGIT),
+  ledModes: Object.keys(LED_CONTROL_MODE_DIGIT),
   ledMode,
   seconds,
   transaction: { ...transaction },
@@ -451,45 +453,52 @@ export function startListening(): void {
   loop = (async () => {
     let ready = true;
     while (listening && reader === open) {
-      const presence = await open.cardPresence();
-      // "unknown" is the reader not answering with a media state; it neither arms nor reads.
-      if (presence !== "unknown") {
-        const now = presence !== "not-present";
-        if (now !== present) {
-          present = now;
-          log("info", now ? "Card in" : "Card out");
-          tell();
-        }
-        if (!now) ready = true;
-        else if (ready) {
-          ready = false;
-          const result = await cycle(() => open.readInsertedCard(seconds));
-          if (result.kind === "card") {
-            waiting = result.card ?? null;
-            log("ok", `Card read — ${decoded(waiting)}`);
+      try {
+        const presence = await open.cardPresence();
+        // "unknown" is the reader not answering with a media state; it neither arms nor reads.
+        if (presence !== "unknown") {
+          const now = presence !== "not-present";
+          if (now !== present) {
+            present = now;
+            log("info", now ? "Card in" : "Card out");
             tell();
           }
-          else if (result.kind === "timeout") log("info", `Card not withdrawn within ${seconds}s`);
-          else if (result.kind === "readFailed") log("error", `Card present but unreadable (${result.status})`);
+          if (!now) ready = true;
+          else if (ready) {
+            ready = false;
+            const result = await cycle(() => open.readInsertedCard(seconds));
+            if (result.kind === "card") {
+              waiting = result.card ?? null;
+              log("ok", `Card read — ${decoded(waiting)}`);
+              tell();
+            }
+            else if (result.kind === "timeout") log("info", `Card not withdrawn within ${seconds}s`);
+            else if (result.kind === "readFailed") log("error", `Card present but unreadable (${result.status})`);
+          }
         }
+      }
+      catch (err) {
+        // A stop cancels whatever the loop was waiting on; that is the stop working, not a fault.
+        if (!listening || reader !== open) break;
+        // Otherwise report it and back off, as the driver's own monitor does, rather than give up.
+        log("error", err instanceof Error ? err.message : String(err));
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+        continue;
       }
       await new Promise((resolve) => setTimeout(resolve, 250));
     }
-  })().catch((err: Error) => {
-    // A stop cancels whatever the loop was waiting on; that is the stop working, not a fault.
-    if (listening) log("error", err.message);
-    listening = false;
-    tell();
-  }).finally(() => {
+  })().finally(() => {
     present = false;
+    tell();
   });
 }
 
 /**
  * Stop the listen loop and wait until it has let go of the line.
  *
- * One cancel is not enough: sent between two commands, it is swallowed by the next one's drain, and
- * a read that follows can hold the line for its whole window. So it is repeated until the loop ends.
+ * A loop between polls sees the flag and ends by itself. One inside `readInsertedCard` is retrying
+ * until the card is withdrawn, for up to the whole wait, so it is cancelled — repeatedly, since a
+ * cancel that lands between two of its reads is answered without stopping the next one.
  */
 async function endListening(open: OmronV4K): Promise<void> {
   listening = false;

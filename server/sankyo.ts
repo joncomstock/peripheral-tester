@@ -245,6 +245,8 @@ export async function disconnect(): Promise<void> {
   if (!open) return;
   reader = null;
   status = "closed";
+  // A Listen still starting would begin polling after this stop, against a closing reader.
+  await starting?.catch(() => {});
   await monitor?.stop();
   monitor = null;
   present = false;

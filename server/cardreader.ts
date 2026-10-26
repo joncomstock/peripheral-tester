@@ -452,7 +452,7 @@ export function startListening(): void {
   // Not awaited: the loop runs until stopped, and the caller wants an answer now.
   loop = (async () => {
     let ready = true;
-    while (listening && reader === open) {
+    while (listening && reader === open && open.isOpen) {
       try {
         const presence = await open.cardPresence();
         // "unknown" is the reader not answering with a media state; it neither arms nor reads.
@@ -479,7 +479,7 @@ export function startListening(): void {
       }
       catch (err) {
         // A stop cancels whatever the loop was waiting on; that is the stop working, not a fault.
-        if (!listening || reader !== open) break;
+        if (!listening || reader !== open || !open.isOpen) break;
         // Otherwise report it and back off, as the driver's own monitor does, rather than give up.
         log("error", err instanceof Error ? err.message : String(err));
         await new Promise((resolve) => setTimeout(resolve, 1000));
@@ -489,6 +489,11 @@ export function startListening(): void {
     }
   })().finally(() => {
     present = false;
+    // Ended by the reader going away rather than a stop: say so, and stop claiming to listen.
+    if (listening && reader === open && !open.isOpen) {
+      listening = false;
+      log("error", "The reader stopped answering. Reconnect to continue.");
+    }
     tell();
   });
 }

@@ -60,15 +60,15 @@ const snapshot = () => ({
   sankyo: sankyo.state(),
 });
 
+/** Set while a switch is disconnecting devices, so no device can be opened in the outgoing mode. */
+let switching = false;
+
 /**
  * Switch every device between mock and real.
  *
  * Everything is disconnected first, so nothing opened in one mode keeps running in the other: a page
  * that says "mock" while driving a real board, or the reverse, is the mistake this prevents.
  */
-/** Set while a switch is disconnecting devices, so no device can be opened in the outgoing mode. */
-let switching = false;
-
 async function setMock(next: boolean): Promise<void> {
   if (next === mock) return;
   if (switching) throw new Error("Already switching mode");

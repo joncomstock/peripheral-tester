@@ -264,9 +264,9 @@ async function handle(request: Request): Promise<Response> {
   }
   if (post && pathname === "/api/penta/identity") return await attempt(() => penta.identity());
   if (post && pathname === "/api/penta/simulate") {
-    const { action } = await body<{ action: "place" | "boarding-pass" | "flip" | "remove" }>();
+    const { action } = await body<{ action: "place" | "passport" | "boarding-pass" | "flip" | "remove" }>();
     return await attempt(() => {
-      if (!["place", "boarding-pass", "flip", "remove"].includes(action ?? "")) throw new Error(`unknown action '${action}'`);
+      if (!["place", "passport", "boarding-pass", "flip", "remove"].includes(action ?? "")) throw new Error(`unknown action '${action}'`);
       penta.simulate(action!);
     });
   }

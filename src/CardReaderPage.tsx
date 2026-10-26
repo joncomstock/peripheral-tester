@@ -270,6 +270,19 @@ export function CardReaderPage(
         {state.mock && (
           <Card title="Mock reader" aside="No hardware">
             <div className="doorsim">
+              <span className="doorsim-label">Card</span>
+              <button
+                disabled={!open}
+                // A read or Listen already waiting takes the armed card; otherwise this reads it.
+                onClick={() =>
+                  api.cardreader.arm("card")
+                    .then(() => (busy || state.listening ? undefined : read()))
+                    .catch((err: Error) => onFail(err.message))}
+              >
+                Mock card scan
+              </button>
+            </div>
+            <div className="doorsim">
               <span className="doorsim-label">Next read</span>
               {(["card", "timeout", "unreadable"] as NextOutcome[]).map((next) => (
                 <button key={next} disabled={!open} onClick={() => guard(api.cardreader.arm(next))}>

@@ -1323,3 +1323,12 @@ button {
 .chooser-on:disabled {
   color: rgb(255 255 255 / 70%);
 }
+
+/* An MRZ is two fixed-width lines: kept as lines, scrolled rather than wrapped on a narrow screen. */
+.rawstripe code.mrz {
+  white-space: pre;
+  word-break: normal;
+  overflow-x: auto;
+  font-size: var(--font-meta);
+  letter-spacing: 0.06em;
+}

@@ -43,6 +43,12 @@ Deno.test("all four mock devices run side by side", async () => {
     await penta.setFloodLevel(18);
     assertEquals(penta.state().floodLevel, 18);
     penta.simulate("remove");
+    // The mock passport's MRZ is well formed: 2 lines of 44, and cleared when the document leaves.
+    penta.simulate("passport");
+    assertEquals(penta.state().passport?.mrz.map((line) => line.length), [44, 44]);
+    penta.simulate("remove");
+    for (let i = 0; i < 50 && penta.state().passport; i++) await new Promise((r) => setTimeout(r, 50));
+    assertEquals(penta.state().passport, null);
 
     // A refused track read surfaces as unreadable, not as a thrown error.
     cardreader.arm("unreadable");

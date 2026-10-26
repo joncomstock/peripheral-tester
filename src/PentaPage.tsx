@@ -12,8 +12,9 @@ const DOCUMENT_TEXT: Record<NonNullable<PentaState["document"]>, string> = {
 };
 
 const SIMULATIONS: { action: PentaSimulation; label: string }[] = [
-  { action: "boarding-pass", label: "Boarding pass" },
-  { action: "place", label: "Passport" },
+  { action: "passport", label: "Mock passport scan" },
+  { action: "boarding-pass", label: "Mock boarding pass scan" },
+  { action: "place", label: "Blank document" },
   { action: "flip", label: "Flip" },
   { action: "remove", label: "Remove" },
 ];
@@ -43,6 +44,36 @@ export function PentaPage(
                 ? DOCUMENT_TEXT[state.document]
                 : "Nothing reported since connecting. Place a document or a boarding pass."}
             </div>
+            {state.passport && (
+              <>
+                <dl className="fields">
+                  {([
+                    ["Document", state.passport.documentType],
+                    ["Issuing state", state.passport.issuingState],
+                    ["Surname", state.passport.surname],
+                    ["Given names", state.passport.givenNames],
+                    ["Document number", state.passport.documentNumber],
+                    ["Nationality", state.passport.nationality],
+                    ["Date of birth", state.passport.birthDate],
+                    ["Sex", state.passport.sex],
+                    ["Expires", state.passport.expiryDate],
+                  ] as const).map(([label, value]) => (
+                    <div className="field" key={label}>
+                      <dt>{label}</dt>
+                      <dd>{value}</dd>
+                    </div>
+                  ))}
+                </dl>
+                <div className="rawstripe">
+                  <span className="setting-label">MRZ</span>
+                  <code className="mrz">{state.passport.mrz.join("\n")}</code>
+                </div>
+                <p className="masknote">
+                  Mock data. The Penta driver reads barcodes and reports documents on the glass, but not a
+                  passport's MRZ: on a real kiosk this panel stays empty.
+                </p>
+              </>
+            )}
             {state.barcode && (
               <dl className="fields">
                 <div className="field">

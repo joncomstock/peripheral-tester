@@ -175,6 +175,47 @@ class MockPenta {
   }
 }
 
+/** ICAO 9303 check digit: weights 7, 3, 1 over digits, letters as 10..35, and filler as 0. */
+function checkDigit(field: string): string {
+  let sum = 0;
+  for (let i = 0; i < field.length; i++) {
+    const c = field[i];
+    const value = c === "<" ? 0 : c >= "A" ? c.charCodeAt(0) - 55 : Number(c);
+    sum += value * [7, 3, 1][i % 3];
+  }
+  return String(sum % 10);
+}
+
+/**
+ * A specimen passport for the mock: what a passport read would show. "UTO" is ICAO's own fictional
+ * issuing state, and the check digits are computed, so the MRZ is well formed and obviously not real.
+ * **The Penta driver does not read an MRZ**, so this exists only in mock mode, for a demo; on real
+ * hardware nothing fills it.
+ */
+function specimenPassport() {
+  const number = "XA1234567";
+  const birth = "900314";
+  const expiry = "310930";
+  const personal = "<".repeat(14);
+  const composite = number + checkDigit(number) + birth + checkDigit(birth) + expiry + checkDigit(expiry) + personal +
+    checkDigit(personal);
+  const line1 = "P<UTOSANDOVAL<<MARIA".padEnd(44, "<");
+  const line2 = number + checkDigit(number) + "UTO" + birth + checkDigit(birth) + "F" + expiry + checkDigit(expiry) + personal +
+    checkDigit(personal) + checkDigit(composite);
+  return {
+    mrz: [line1, line2],
+    documentType: "Passport",
+    issuingState: "UTO (Utopia, ICAO specimen)",
+    surname: "SANDOVAL",
+    givenNames: "MARIA",
+    documentNumber: number,
+    nationality: "UTO",
+    birthDate: "1990-03-14",
+    sex: "F",
+    expiryDate: "2031-09-30",
+  };
+}
+
 // ---------------------------------------------------------------------------------------------
 // Session
 // ---------------------------------------------------------------------------------------------
@@ -188,6 +229,8 @@ let mock = false;
 /** The last document event. Edge-triggered: unknown until the first one after connecting. */
 let document: DocumentEvent | null = null;
 let barcode: { symbology: string | null; text: string } | null = null;
+/** A mock passport's data page while it is on the glass. Mock mode only: see {@link specimenPassport}. */
+let passport: ReturnType<typeof specimenPassport> | null = null;
 /** What was last commanded; the device does not report its LEDs. */
 let statusLed: { mode: "on" | "flash"; color: LedColor } | null = null;
 let externalLed: ExternalLedColor | "off" = "off";
@@ -198,6 +241,7 @@ const usbId = [DESKO_VENDOR_ID, PENTA_PRODUCT_ID].map((id) => id.toString(16).pa
 export const state = () => ({
   status,
   mock,
+  passport,
   usbId,
   document,
   barcode,
@@ -223,6 +267,7 @@ export function configure(options: { mock: boolean }): void {
 function wire(opened: DeskoPenta): void {
   opened.on("document", (event: DocumentEvent) => {
     document = event;
+    if (event === "removed") passport = null;
     log("info", `Document ${event}`);
     tell();
   });
@@ -287,6 +332,7 @@ export async function disconnect(): Promise<void> {
   await open.close();
   mockPenta = null;
   document = null;
+  passport = null;
   barcode = null;
   statusLed = null;
   externalLed = "off";
@@ -342,8 +388,16 @@ export async function identity(): Promise<{ firmware: string; build: string; eng
 }
 
 /** Move a simulated document on the glass. The page offers this only when mocking. */
-export function simulate(action: "place" | "boarding-pass" | "flip" | "remove"): void {
+export function simulate(action: "place" | "passport" | "boarding-pass" | "flip" | "remove"): void {
   if (!mock || !mockPenta) throw new Error("Only a mock scanner has a simulated document");
+  if (action === "passport") {
+    // Placed like any document, so the driver reports it; the data page is the mock's alone.
+    passport = specimenPassport();
+    log("info", "Mock passport placed (specimen data)");
+    mockPenta.place(false);
+    tell();
+    return;
+  }
   if (action === "place") mockPenta.place(false);
   else if (action === "boarding-pass") mockPenta.place(true);
   else if (action === "flip") mockPenta.flip();

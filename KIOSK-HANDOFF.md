@@ -193,6 +193,7 @@ snapshots to find controls rather than CSS selectors. Check each of these:
 - [ ] Mock reader → Timeout, then Read once gives "No card arrived". Unreadable, then Read once gives
       the unreadable verdict. With nothing armed, a read waits, and **Cancel** ends it as "Read
       cancelled".
+- [ ] Mock reader → Mock card scan: the masked card appears at once (SANDOVAL/MARIA, `•••• 1111`).
 - [ ] Listen, then arm Card: "Read a card" shows "Card in slot", the card appears, then "Slot
       empty". Stop listening returns promptly (within about a second), and a Read once straight
       afterwards still works.
@@ -213,9 +214,10 @@ snapshots to find controls rather than CSS selectors. Check each of these:
 **Passport reader Penta (mock)**
 
 - [ ] Connect gives "Scanner answered; barcode reporting armed".
-- [ ] Mock scanner → Boarding pass: "On the glass" says a document is present, and the barcode shows
-      with symbology `]L2`. Activity logs the symbology and length only, never the text. Flip and
-      Remove update the glass. Passport places a document with no barcode.
+- [ ] Mock scanner → Mock boarding pass scan: "On the glass" says a document is present, and the
+      barcode shows with symbology `]L2`. Activity logs the symbology and length only, never the
+      text. Mock passport scan shows a specimen passport (Utopia, valid MRZ) labelled as mock data;
+      Remove clears it. Flip and Blank document update the glass.
 - [ ] Status LED: every colour, steady and Flash, and Off. LED strips: red/green/yellow/off. Flood:
       drag to a level and release; the level shown follows. Beep is accepted. Identity reads.
 

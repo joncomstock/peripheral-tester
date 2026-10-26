@@ -192,7 +192,7 @@ export interface SankyoState {
 
 // ---- DESKO Penta ------------------------------------------------------------------------------
 
-export type PentaSimulation = "place" | "boarding-pass" | "flip" | "remove";
+export type PentaSimulation = "place" | "passport" | "boarding-pass" | "flip" | "remove";
 
 export interface PentaState {
   status: Status;
@@ -200,6 +200,22 @@ export interface PentaState {
   usbId: string;
   /** The last document event. Edge-triggered: null until the first one after connecting. */
   document: "present" | "flipped" | "removed" | null;
+  /**
+   * A mock passport's data page while it is on the glass: mock mode only, because the Penta driver
+   * does not read an MRZ. Personal data in form, so shown here and never logged.
+   */
+  passport: {
+    mrz: string[];
+    documentType: string;
+    issuingState: string;
+    surname: string;
+    givenNames: string;
+    documentNumber: string;
+    nationality: string;
+    birthDate: string;
+    sex: string;
+    expiryDate: string;
+  } | null;
   /** The last decode. A boarding pass carries a passenger's name: shown here, never logged. */
   barcode: { symbology: string | null; text: string } | null;
   /** What was last commanded; the device does not report its LEDs. */

@@ -1319,3 +1319,8 @@ button {
   flex-shrink: 1;
   max-width: 100%;
 }
+
+/* A selected choice that cannot be changed right now stays legible on its accent fill. */
+.chooser-on:disabled {
+  color: rgb(255 255 255 / 70%);
+}

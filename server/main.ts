@@ -34,6 +34,17 @@ import * as lightboard from "./lightboard.ts";
 import * as cardreader from "./cardreader.ts";
 import * as sankyo from "./sankyo.ts";
 import * as penta from "./penta.ts";
+import * as custom from "./custom.ts";
+import * as datalogic from "./datalogic.ts";
+import * as honeywell from "./honeywell.ts";
+import * as idtech from "./idtech.ts";
+import * as adr300 from "./adr300.ts";
+import * as itk38 from "./itk38.ts";
+import * as allpixel from "./allpixel.ts";
+import * as k8 from "./k8.ts";
+import * as xpm from "./xpm.ts";
+import * as storm from "./storm.ts";
+import * as embross from "./embross.ts";
 
 let mock = Deno.args.includes("--mock");
 /** Real devices load libusb and hidapi, so they need FFI; `dev:mock` deliberately runs without it. */
@@ -59,7 +70,23 @@ interface Session {
 }
 
 /** Every device session. Whatever is done to all of them — mode, disconnect, shutdown — goes through here. */
-const sessions: Record<string, Session> = { lightboard, cardreader, sankyo, penta };
+const sessions: Record<string, Session> = {
+  lightboard,
+  cardreader,
+  penta,
+  xpm,
+  storm,
+  sankyo,
+  honeywell,
+  itk38,
+  adr300,
+  idtech,
+  datalogic,
+  custom,
+  k8,
+  allpixel,
+  embross,
+};
 const devices = Object.values(sessions);
 const disconnectAll = () => Promise.all(devices.map((device) => device.disconnect())).then(() => {});
 

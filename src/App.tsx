@@ -10,6 +10,17 @@ import { CardReaderPage } from "./CardReaderPage.tsx";
 import { LightBoardControls, LightBoardPage, phrase as lightboardPhrase } from "./LightBoardPage.tsx";
 import { SankyoPage } from "./SankyoPage.tsx";
 import { PentaPage } from "./PentaPage.tsx";
+import { EmbrossPage } from "./EmbrossPage.tsx";
+import { StormPage } from "./StormPage.tsx";
+import { XpmPage } from "./XpmPage.tsx";
+import { K8Page } from "./K8Page.tsx";
+import { AllpixelPage } from "./AllpixelPage.tsx";
+import { Itk38Page } from "./Itk38Page.tsx";
+import { Adr300Page } from "./Adr300Page.tsx";
+import { IdtechPage } from "./IdtechPage.tsx";
+import { HoneywellPage } from "./HoneywellPage.tsx";
+import { DatalogicPage } from "./DatalogicPage.tsx";
+import { CustomPage } from "./CustomPage.tsx";
 import { Settings } from "./Settings.tsx";
 import { DeviceControls } from "./ui.tsx";
 
@@ -24,6 +35,17 @@ const PAGES: Partial<Record<DeviceId, DevicePage>> = {
   cardreader: CardReaderPage as unknown as DevicePage,
   sankyo: SankyoPage as unknown as DevicePage,
   penta: PentaPage as unknown as DevicePage,
+  custom: CustomPage as unknown as DevicePage,
+  datalogic: DatalogicPage as unknown as DevicePage,
+  honeywell: HoneywellPage as unknown as DevicePage,
+  idtech: IdtechPage as unknown as DevicePage,
+  adr300: Adr300Page as unknown as DevicePage,
+  itk38: Itk38Page as unknown as DevicePage,
+  allpixel: AllpixelPage as unknown as DevicePage,
+  k8: K8Page as unknown as DevicePage,
+  xpm: XpmPage as unknown as DevicePage,
+  storm: StormPage as unknown as DevicePage,
+  embross: EmbrossPage as unknown as DevicePage,
 };
 
 /**

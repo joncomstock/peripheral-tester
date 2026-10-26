@@ -1,22 +1,34 @@
 # Peripheral Tester
 
-A standalone **local hardware test utility** for the peripherals of an IER **919** kiosk. A Deno
-backend owns every device handle; a React/Vite frontend drives them from a dashboard.
+A standalone **local hardware test utility** for kiosk peripherals. A Deno backend owns every device
+handle; a React/Vite frontend drives them from a dashboard. Every driver is from hardware-libs.
 
-| Device                     | Driver            | Bus                       |
-| -------------------------- | ----------------- | ------------------------- |
-| Light board                | `@eai/ier/s33380` | USB bulk, libusb (WinUSB) |
-| Card reader (Omron V4K)    | `@eai/omron-v4k`  | USB HID                   |
-| Card reader (Sankyo ICM330)| `@eai/sankyo`     | USB HID                   |
-| Passport reader (DESKO Penta Gen4) | `@eai/desko/penta` | USB, libusb (WinUSB) |
+| Kiosk        | Device                                      | Driver                        |
+| ------------ | ------------------------------------------- | ----------------------------- |
+| IER 919      | Light board (IER S33380)                    | `@eai/ier/s33380`             |
+| IER 919      | Card reader (Hitachi-Omron V4K)             | `@eai/omron-v4k`              |
+| IER 919      | Passport reader (DESKO Penta Gen4)          | `@eai/desko/penta`            |
+| IER 919      | Boarding pass printer (Hengstler XPM)       | `@eai/xpm`                    |
+| IER 919      | Assistive keypad (Storm EZ-Access Nav-Pad)  | `@eai/storm`                  |
+| SITA D4      | Card reader (Sankyo ICM330)                 | `@eai/sankyo`                 |
+| SITA D4      | Barcode reader (Honeywell 5X80)             | `@eai/honeywell`              |
+| SITA D4      | Boarding pass printer (Practical Automation ITK38) | `@eai/itk38`           |
+| —            | Document reader (Access-IS ADR300)          | `@eai/access-is/adr300`       |
+| —            | Card reader (ID TECH Secure Mag Insert)     | `@eai/idtech`                 |
+| —            | Barcode scanner (Datalogic Gryphon GFS4470) | `@eai/datalogic`              |
+| —            | Thermal printer (CUSTOM KPM150 / KPM180)    | `@eai/custom`                 |
+| —            | Full-page printer (NCR K8)                  | `@eai/k8`                     |
+| —            | LED controller (ManiacalLabs AllPixel)      | `@eai/maniacal-labs/allpixel` |
+| —            | Service switches (Embross V1)               | `@eai/embross`                |
 
 Every device is its own session, so any combination can be connected at once: a kiosk is tested
-as a whole.
+as a whole. A tile is lit when its device is connected and dark otherwise; connecting to a device
+that is not there fails with the driver's error, shown on the page.
 
-The dashboard opens on a **kiosk picker**: **IER 919** shows the light board, the Omron V4K and the
-DESKO Penta passport reader; **SITA D4** shows the Sankyo ICM330; **All Devices** shows every device,
-including the rest of hardware-libs' drivers, which are listed as planned until a screen drives them.
-The choice is remembered per browser. The kiosk-to-device map is `KIOSKS` in `src/Home.tsx`.
+The dashboard opens on a **kiosk picker**: **IER 919**, **SITA D4** (the lab's SITA unit), or **All
+Devices**. The kiosk lists follow the knowledge base's audits of the lab units; parts fitted with no
+hardware-libs driver (the 919's IER 400 bag-tag printers and DESKO smart-card reader, the D4's Gemalto
+KR2400) are left out. The choice is remembered per browser. The map is `KIOSKS` in `src/Home.tsx`.
 
 It is intentionally minimal — no auth, no database, no cloud.
 
@@ -142,7 +154,9 @@ backend attaches a log handler so those land in **Activity** instead, quoted ver
 | `server/cardreader.ts`      | The Omron V4K session. Owns its USB HID handle.                 |
 | `server/sankyo.ts`          | The Sankyo ICM330 session. Owns its USB HID handle.             |
 | `server/penta.ts`           | The DESKO Penta session. Owns its USB interface.                |
-| `server/devices.test.ts`    | All four mock devices connected and driven at once.             |
+| `server/devices.test.ts`    | The first four mock devices connected and driven at once.       |
+| `server/<device>.ts`        | One session per device, its mock, and `server/<device>.test.ts`. |
+| `src/<Device>Page.tsx`      | One screen per device; header controls are shared (`ui.tsx`).   |
 | `server/collisions.ts`      | Which indicator channels two sections share, from the live map. |
 | `src/App.tsx`               | The shell: which device is on screen, and the shared state.     |
 | `src/Home.tsx`              | The dashboard.                                                  |

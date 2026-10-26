@@ -21,13 +21,15 @@ On the 919, the devices you can test for real are:
 | Light board  | `@eai/ier/s33380` 1.2.3        | `171c:00a0` | USB bulk through **libusb**, WinUSB   |
 | Card reader  | `@eai/omron-v4k` 1.2.2         | `0590:0034` | USB HID through **hidapi**            |
 | Passport reader (DESKO Penta Gen4) | `@eai/desko/penta` 1.0.4 | `1ac2:000f` | USB through **libusb**, WinUSB |
+| Boarding pass printer (Hengstler XPM, TPM-200HR) | `@eai/xpm` 1.1.3 | `1bf1:0016` | USB through **libusb**, WinUSB |
+| Assistive keypad (Storm Nav-Pad) | `@eai/storm` 1.0.2 | `2047:09bf` | USB HID (**hidapi**) + key capture, see below |
 
 The Penta driver covers the barcode engine (boarding passes), document placed/flipped/removed, the
 status LED, the LED strips, the buzzer and the white flood. It does **not** read a passport's MRZ or
 images, so do not report that as missing.
 
-The Sankyo ICM330 page belongs to the SITA D4, not the 919. Test it in **mock mode only**. The other
-hardware-libs devices appear as "Planned" tiles under All Devices and do nothing yet.
+The SITA D4's devices (Sankyo, Honeywell, ITK38) and the devices under All Devices that belong to no
+kiosk are not on a 919: test them in **mock mode only**. Every tile is drivable; none is a placeholder.
 
 What changed in the port, so you know what is new and riskiest:
 
@@ -116,6 +118,15 @@ board never answers. Expect an `open()`/handshake failure in Activity.
 Zadig the same way (leave the sibling `1AC2 0300` SmartCard Reader alone), with the same warning:
 DESKO's software stops working until it is rolled back. Ask first.
 
+**The XPM printer needs the same.** On the 919 it is a Windows print queue ("Hengstler TPM-200HR
+(XPM)", `VID_1BF1&PID_0016`). Binding it to WinUSB takes it away from that queue, so the kiosk
+application cannot print until it is rolled back. Ask first.
+
+**The Storm keypad** opens its command channel through hidapi, then captures key input so only the
+tester sees presses. If that capture cannot be opened, connect fails with the driver's message; the
+driver's fix on Windows is binding the keypad's interface 0 to WinUSB. Ask before doing that too:
+the kiosk application loses the keypad until it is rolled back.
+
 The card reader is a standard HID device and needs no binding.
 
 ### The kiosk's own software
@@ -131,7 +142,7 @@ cd <parent>\peripheral-tester
 npm install
 npm run build              # dist/ is gitignored: build after every pull
 deno task check            # first error only: TS2307 means the links path or layout is wrong
-deno task test             # 7 backend tests, including all four mock devices at once
+deno task test             # 20 backend tests: one per device in mock mode, plus four devices at once
 npm test                   # 19 frontend tests
 ```
 
@@ -159,7 +170,10 @@ snapshots to find controls rather than CSS selectors. Check each of these:
 
 - [ ] Opens on **IER 919** (first visit) showing Light Board, Card Reader (Hitachi-Omron V4K) and
       Passport Reader (DESKO Penta Gen4).
-- [ ] **SITA D4** shows only Card Reader (Sankyo ICM330). **All Devices** shows 15 tiles.
+- [ ] **IER 919** shows five tiles (light board, V4K, Penta, XPM printer, Storm keypad). **SITA D4**
+      shows three (Sankyo, Honeywell 5X80, ITK38). **All Devices** shows 15. No tile says Planned;
+      a connected device's tile is lit, any other is dark.
+- [ ] Every device connects in mock mode, from its own page.
 - [ ] The header subtitle follows the picked kiosk. The choice survives a page reload.
 
 **Light board (mock)**
@@ -204,6 +218,18 @@ snapshots to find controls rather than CSS selectors. Check each of these:
       Remove update the glass. Passport places a document with no barcode.
 - [ ] Status LED: every colour, steady and Flash, and Off. LED strips: red/green/yellow/off. Flood:
       drag to a level and release; the level shown follows. Beep is accepted. Identity reads.
+
+**Boarding pass printer XPM (mock)** — Print test pass prints and cuts (the pass then waits in the
+chute until Take pass); Low / Out / Jam show as the printer's status, and printing refuses on Out or
+Jam. Identity reads.
+
+**Assistive keypad Storm (mock)** — each Mock keypad key shows as pressed then released and joins the
+recent presses; Plug in / Unplug changes the headset jack. Light and jack levels, keypress beep and
+Buzz are accepted.
+
+**SITA D4 devices (mock)** — Honeywell: Listen, then a simulated boarding pass or QR shows its
+symbology and text (Activity logs symbology and length only). ITK38: Print, then the document waits
+to be taken; Low / Out / Jam / head open show and Out refuses printing.
 
 **All at once**
 
@@ -276,6 +302,21 @@ For each check, record **what the page did**, **what Activity said**, and **what
       disconnecting unless turned off, so Disconnect turns them off: confirm that.
 - [ ] Flood: Off (a barcode should then fail to decode), a low level, and full. Beep: the operator
       hears it. Identity reads firmware, build and engine revision.
+
+**Boarding pass printer (Hengstler XPM)**
+
+- [ ] Connect, then the status shows paper and printhead temperature. If the device is not found, it
+      is still on the Windows print queue (section 1).
+- [ ] Print test pass: the operator confirms a pass marked NOT A BOARDING PASS is printed and cut.
+- [ ] The operator takes the roll out (or opens the head): the page reports paper out / the fault
+      within a few seconds (it polls every 2 s). Printing is refused while it lasts.
+
+**Assistive keypad (Storm Nav-Pad)**
+
+- [ ] Connect. Each physical key the operator presses lights on the page and joins the recent list;
+      plugging headphones into the jack shows "plugged in". Key names are the keypad's own.
+- [ ] Light levels and the keypress beep: the operator confirms what changes. Buzz: they hear it.
+- [ ] Disconnect hands the keys back to Windows.
 
 **Together**
 
